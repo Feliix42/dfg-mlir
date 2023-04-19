@@ -15,7 +15,19 @@ def Dfg_Dialect : Dialect {
     let name = "dfg";
     let cppNamespace = "::mlir::dfg";
 
+    let useFoldAPI = kEmitFoldAdaptorFolder;
+
     // TODO: Draw the rest of the fucking owl.
 }
+
+// Template for attributes.
+class Dfg_Attr<string name, list<Trait> traits = []>
+        : AttrDef<Dfg_Dialect, name, traits>;
+// Template for ops.
+class Dfg_Op<string mnemonic, list<Trait> traits = []>
+        : Op<Dfg_Dialect, mnemonic, traits>;
+// Template for types.
+class Dfg_Type<string name, list<Trait> traits = []>
+        : TypeDef<Dfg_Dialect, name, traits>;
 
 #endif

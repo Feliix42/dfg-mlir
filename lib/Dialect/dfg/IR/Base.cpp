@@ -16,9 +16,15 @@ using namespace mlir::dfg;
 
 //===----------------------------------------------------------------------===//
 
-void Base2Dialect::initialize()
+//===----------------------------------------------------------------------===//
+// DfgDialect
+//===----------------------------------------------------------------------===//
+
+void DfgDialect::initialize()
 {
-    registerAttributes();
-    registerOps();
-    registerTypes();
+    // TODO(feliix42): Any initialization operations go here (e.g., the following)
+
+    // registerAttributes();
+    // registerOps();
+    // registerTypes();
 }
