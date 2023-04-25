@@ -1,30 +1,36 @@
-/// Implements the dfg dialect base.
+/// Implements the dfg dialect ops.
 ///
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
+#include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Base.h"
 
-#include "dfg-mlir/Dialect/dfg/IR/Ops.h"
+#include "mlir/IR/OpImplementation.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeUtilities.h"
+
+#define DEBUG_TYPE "dfg-ops"
 
 using namespace mlir;
 using namespace mlir::dfg;
 
 //===- Generated implementation -------------------------------------------===//
 
-#include "dfg-mlir/Dialect/dfg/IR/Base.cpp.inc"
+#define GET_OP_CLASSES
+#include "dfg-mlir/Dialect/dfg/IR/Ops.cpp.inc"
 
 //===----------------------------------------------------------------------===//
+
 
 //===----------------------------------------------------------------------===//
 // DfgDialect
 //===----------------------------------------------------------------------===//
 
-void DfgDialect::initialize()
+void DfgDialect::registerOps()
 {
-    // TODO(feliix42): Any initialization operations go here (e.g., the following)
-
-    // registerAttributes();
-    registerOps();
-    registerTypes();
+    addOperations<
+#define GET_OP_LIST
+#include "dfg-mlir/Dialect/dfg/IR/Ops.cpp.inc"
+        >();
 }

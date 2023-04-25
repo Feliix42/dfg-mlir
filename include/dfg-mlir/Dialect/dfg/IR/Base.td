@@ -15,9 +15,14 @@ def Dfg_Dialect : Dialect {
     let name = "dfg";
     let cppNamespace = "::mlir::dfg";
 
+    let useDefaultAttributePrinterParser = 1;
     let useFoldAPI = kEmitFoldAdaptorFolder;
 
-    // TODO: Draw the rest of the fucking owl.
+    code extraClassDeclaration = [{
+    private:
+        void registerOps();
+        void registerTypes();
+    }];
 }
 
 // Template for attributes.
