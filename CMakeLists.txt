@@ -73,4 +73,4 @@ add_compile_options(
 add_subdirectory(include)
 add_subdirectory(lib)
 # add_subdirectory(test)
-# add_subdirectory(tools)
+add_subdirectory(tools)

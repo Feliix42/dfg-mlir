@@ -22,8 +22,10 @@ def Dfg_ChannelType : Dfg_Type<"Channel", []> {
     let parameters = (ins 
         "Type":$elementType);
 
-    let hasCustomAssemblyFormat = 1;
-    let genVerifyDecl = 1;
+    let assemblyFormat = "`<` $elementType `>`";
+
+    // TODO(feliix42): Optionally add a verifier
+    // let genVerifyDecl = 1;
 }
 
 #endif

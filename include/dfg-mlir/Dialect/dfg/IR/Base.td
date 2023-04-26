@@ -15,7 +15,7 @@ def Dfg_Dialect : Dialect {
     let name = "dfg";
     let cppNamespace = "::mlir::dfg";
 
-    let useDefaultAttributePrinterParser = 1;
+    let useDefaultTypePrinterParser = 1;
     let useFoldAPI = kEmitFoldAdaptorFolder;
 
     code extraClassDeclaration = [{

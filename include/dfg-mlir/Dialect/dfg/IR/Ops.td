@@ -11,28 +11,28 @@ include "dfg-mlir/Dialect/dfg/IR/Types.td"
 include "dfg-mlir/Dialect/dfg/IR/Base.td"
 
 
-def Dfg_OperatorOp : Dfg_Op<"operator", []> {
-    let summary = "Defines a node in the Dataflow Graph";
-    let description = [{
-        The `operator` operation produces a dataflow node which is linked to other
-        operators by hooking up their input and output ports.
-        This is done using the `instanciate` function.
+// def Dfg_OperatorOp : Dfg_Op<"operator", []> {
+//     let summary = "Defines a node in the Dataflow Graph";
+//     let description = [{
+//         The `operator` operation produces a dataflow node which is linked to other
+//         operators by hooking up their input and output ports.
+//         This is done using the `instanciate` function.
 
-        Syntax:
+//         Syntax:
 
-        ```
-        TODO
-        ```
+//         ```
+//         TODO
+//         ```
 
-        Examples:
+//         Examples:
 
-        ```
-        TODO
-        ```
-    }];
+//         ```
+//         TODO
+//         ```
+//     }];
 
-    // let arguments = (ins "Type":$value);
-    // let results = (outs "Type":$result);
-}
+//     // let arguments = (ins "Type":$value);
+//     // let results = (outs "Type":$result);
+// }
 
 #endif
