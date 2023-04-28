@@ -11,6 +11,6 @@
 
 //===- Generated includes -------------------------------------------------===//
 
-#include "dfg-mlir/Dialect/dfg/IR/Base.h.inc"
+#include "dfg-mlir/Dialect/dfg/IR/Dialect.h.inc"
 
 //===----------------------------------------------------------------------===//

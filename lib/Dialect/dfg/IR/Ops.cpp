@@ -4,7 +4,7 @@
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
-#include "dfg-mlir/Dialect/dfg/IR/Base.h"
+#include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/PatternMatch.h"

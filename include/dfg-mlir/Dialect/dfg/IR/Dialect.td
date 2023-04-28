@@ -1,4 +1,4 @@
-//===- Base.td ---------------------------------------------*- tablegen -*-===//
+//===- Dialect.td ---------------------------------------------*- tablegen -*-===//
 //
 // This is the definitions file for the DFG dialect base.
 //

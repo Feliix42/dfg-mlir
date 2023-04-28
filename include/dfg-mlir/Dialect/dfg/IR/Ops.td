@@ -8,7 +8,9 @@
 #define DFG_OPS
 
 include "dfg-mlir/Dialect/dfg/IR/Types.td"
-include "dfg-mlir/Dialect/dfg/IR/Base.td"
+include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
 
 
 // def Dfg_OperatorOp : Dfg_Op<"operator", []> {
@@ -34,5 +36,44 @@ include "dfg-mlir/Dialect/dfg/IR/Base.td"
 //     // let arguments = (ins "Type":$value);
 //     // let results = (outs "Type":$result);
 // }
+
+def Dfg_ChannelOp : Dfg_Op<
+        "channel",
+        [
+            ConstantLike,
+            Pure,
+            OpAsmOpInterface
+        ]> {
+    let summary = "Defines a channel with one input and one output port";
+    let description = [{
+        The `channel` operation produces a typed channel (i.e., an edge in the
+        dataflow graph) that links two operators (i.e., nodes) in the dataflow
+        graph.
+
+        Syntax:
+
+        ```
+        TODO
+        ```
+
+        Examples:
+
+        ```
+        TODO
+        ```
+    }];
+
+    // NOTE(feliix42): I want to _materialize_ the type attribute here -> derived attribute?
+    //                 Alternatively have it as attribute and derive from custom assembly
+    let arguments = (ins TypeAttr:$encapsulatedType);
+    let results = (outs
+        Dfg_InputType:$in_chan,
+        Dfg_OutputType:$out_chan
+    );
+
+    let assemblyFormat = [{ attr-dict `:` $encapsulatedType `(` type($in_chan) `->` type($out_chan) `)` }];
+
+    // TODO(feliix42): Ensure type matching on both results and the attribute
+}
 
 #endif

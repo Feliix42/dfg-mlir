@@ -1,5 +1,5 @@
 add_mlir_dialect_library(DfgDialect
-        Base.cpp
+        Dialect.cpp
         Ops.cpp
         Types.cpp
 
