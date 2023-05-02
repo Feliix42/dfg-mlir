@@ -46,8 +46,8 @@
             python3
             ninja
             cmake
-            llvmPackages_14.clang
-            llvmPackages_14.bintools
+            llvmPackages_15.clang
+            llvmPackages_15.bintools
             mlir.packages.x86_64-linux.mlir
             lit
           ];

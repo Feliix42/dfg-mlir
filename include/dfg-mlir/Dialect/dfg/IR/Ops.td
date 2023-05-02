@@ -40,9 +40,10 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
         [
-            ConstantLike,
-            Pure,
-            OpAsmOpInterface
+            // THIS ENFORCES OneResult ON THE OP!
+            // ConstantLike,
+            Pure
+            // OpAsmOpInterface
         ]> {
     let summary = "Defines a channel with one input and one output port";
     let description = [{

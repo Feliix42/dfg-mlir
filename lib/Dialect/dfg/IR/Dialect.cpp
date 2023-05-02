@@ -12,7 +12,7 @@ using namespace mlir::dfg;
 
 //===- Generated implementation -------------------------------------------===//
 
-#include "dfg-mlir/Dialect/dfg/IR/Base.cpp.inc"
+#include "dfg-mlir/Dialect/dfg/IR/Dialect.cpp.inc"
 
 //===----------------------------------------------------------------------===//
 
