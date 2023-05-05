@@ -21,7 +21,7 @@ def Dfg_OperatorOp : Dfg_Op<
             AffineScope,
             AutomaticAllocationScope,
             CallableOpInterface,
-            FunctionOpInterface,
+            // FunctionOpInterface,
             IsolatedFromAbove,
             OpAsmOpInterface
         ]> {
@@ -45,19 +45,24 @@ def Dfg_OperatorOp : Dfg_Op<
     }];
 
     // TODO: CONTINUE HERE -> make this similar to how `func.func` works, especially regarding the customAssemblyParser!
-    // NOTE(feliix42): One could add visibility in the form of `OptionalAttr<StrArray>:$sym_visibility` here
+    // TODO(feliix42): Ensure that all arguments in the attrset are of type `channel`!
     let arguments = (ins SymbolNameAttr: $sym_name,
-                         TypeAttrOf<FunctionType>: $function_type,
-                         OptionalAttr<DictArrayAttr>: $arg_attrs,
-                         OptionalAttr<DictArrayAttr>: $res_attrs);
+                         // TypeAttrOf<FunctionType>: $function_type,
+                         OptionalAttr<DictArrayAttr>: $input_attrs,
+                         OptionalAttr<DictArrayAttr>: $output_attrs);
 
     // The FunctionOpInterface requires exactly one region attached to the operator
     let regions = (region AnyRegion: $body);
 
-    // TODO(feliix42):
-    // let builders = [];
+    let builders = [OpBuilder<(ins
+        "StringRef": $name,
+        CArg<"ArrayRef<NamedAttribute>", "{}">: $inp_attrs,
+        CArg<"ArrayRef<NamedAttribute>", "{}">: $out_attrs
+    )>];
 
     let extraClassDeclaration = [{
+        bool isExternal();
+
         //===------------------------------------------------------------------===//
         // CallableOpInterface
         //===------------------------------------------------------------------===//
@@ -69,17 +74,17 @@ def Dfg_OperatorOp : Dfg_Op<
 
         /// Returns the results types that the callable region produces when
         /// executed.
-        ArrayRef<Type> getCallableResults() { return getFunctionType().getResults(); }
+        ArrayRef<Type> getCallableResults() { return ArrayRef<Type>(); }
 
         //===------------------------------------------------------------------===//
         // FunctionOpInterface Methods
         //===------------------------------------------------------------------===//
 
         /// Returns the argument types of this function.
-        ArrayRef<Type> getArgumentTypes() { return getFunctionType().getInputs(); }
+        // ArrayRef<Type> getArgumentTypes() { return getFunctionType().getInputs(); }
 
         /// Returns the result types of this function.
-        ArrayRef<Type> getResultTypes() { return getFunctionType().getResults(); }
+        // ArrayRef<Type> getResultTypes() { return getFunctionType().getResults(); }
 
         //===------------------------------------------------------------------===//
         // OpAsmOpInterface Methods
