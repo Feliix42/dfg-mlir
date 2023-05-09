@@ -62,9 +62,31 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result) {
 }
 
 void OperatorOp::print(OpAsmPrinter &p) {
-//   function_interface_impl::printFunctionOp(
-//       p, *this, /*isVariadic=*/false, getFunctionTypeAttrName(),
-//       getArgAttrsAttrName(), getResAttrsAttrName());
+    // print the operation and function name
+    Operation* op = getOperation();
+    
+    auto funcName =
+        op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName())
+            .getValue();
+    p << ' ';
+
+    p.printSymbolName(funcName); 
+    p << " inputs (";
+
+    auto input_args = op->getAttr("input_attrs");
+    p.printAttribute(input_args);
+
+    p << ')';
+    p.printNewline();
+    p.increaseIndent();
+    p << "outputs (";
+
+    auto output_args = op->getAttr("output_attrs");
+    p.printAttribute(output_args);
+
+    p << ')';
+
+    p.printRegion(getRegion());
 }
 
 //===----------------------------------------------------------------------===//
