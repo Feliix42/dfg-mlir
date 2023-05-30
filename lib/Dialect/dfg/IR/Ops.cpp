@@ -71,20 +71,27 @@ void OperatorOp::print(OpAsmPrinter &p) {
     p << ' ';
 
     p.printSymbolName(funcName); 
-    p << " inputs (";
-
     auto input_args = op->getAttr("input_attrs");
-    p.printAttribute(input_args);
-
-    p << ')';
-    p.printNewline();
-    p.increaseIndent();
-    p << "outputs (";
-
     auto output_args = op->getAttr("output_attrs");
-    p.printAttribute(output_args);
 
-    p << ')';
+    // only print the inputs and outputs lists when there's attributes inside
+    if (input_args) {
+        p << " inputs (";
+        p.printAttribute(input_args);
+        p << ')';
+    }
+
+    if (input_args && output_args) {
+        // you only need this when there's both inputs and outputs
+        p.printNewline();
+        p.increaseIndent();
+    }
+
+    if (output_args) {
+        p << "outputs (";
+        p.printAttribute(output_args);
+        p << ')';
+    }
 
     p.printRegion(getRegion());
 }
