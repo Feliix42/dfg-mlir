@@ -20,7 +20,7 @@ def Dfg_OperatorOp : Dfg_Op<
         [
             AffineScope,
             AutomaticAllocationScope,
-            CallableOpInterface,
+            // CallableOpInterface,
             // FunctionOpInterface,
             IsolatedFromAbove,
             OpAsmOpInterface
@@ -44,21 +44,19 @@ def Dfg_OperatorOp : Dfg_Op<
         ```
     }];
 
-    // TODO: CONTINUE HERE -> make this similar to how `func.func` works, especially regarding the customAssemblyParser!
-    // TODO(feliix42): Ensure that all arguments in the attrset are of type `channel`!
+    // TODO(feliix42): Ensure that all arguments are of type `channel`!
+
     let arguments = (ins SymbolNameAttr: $sym_name,
-                         // TypeAttrOf<FunctionType>: $function_type,
-                         OptionalAttr<DictArrayAttr>: $input_attrs,
-                         OptionalAttr<DictArrayAttr>: $output_attrs);
+                        TypeAttrOf<FunctionType>: $function_type);
 
     // The FunctionOpInterface requires exactly one region attached to the operator
     let regions = (region AnyRegion: $body);
 
+    // how can an option like this be *so* under-documented?!
+    let skipDefaultBuilders = 1;
+
     let builders = [OpBuilder<(ins
-        "StringRef": $name,
-        CArg<"ArrayRef<NamedAttribute>", "{}">: $inp_attrs,
-        CArg<"ArrayRef<NamedAttribute>", "{}">: $out_attrs
-    )>];
+        "StringRef": $sym_name, "FunctionType": $function_type)>];
 
     let extraClassDeclaration = [{
         bool isExternal();
@@ -70,11 +68,11 @@ def Dfg_OperatorOp : Dfg_Op<
         /// Returns the region on the current operation that is callable. This may
         /// return null in the case of an external callable object, e.g. an external
         /// function.
-        ::mlir::Region *getCallableRegion() { return isExternal() ? nullptr : &getBody(); }
+        // ::mlir::Region *getCallableRegion() { return isExternal() ? nullptr : &getBody(); }
 
         /// Returns the results types that the callable region produces when
         /// executed.
-        ArrayRef<Type> getCallableResults() { return ArrayRef<Type>(); }
+        // ArrayRef<Type> getCallableResults() { return ArrayRef<Type>(); }
 
         //===------------------------------------------------------------------===//
         // FunctionOpInterface Methods
