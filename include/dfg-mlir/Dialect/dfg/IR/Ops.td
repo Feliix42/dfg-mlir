@@ -98,7 +98,6 @@ def Dfg_OperatorOp : Dfg_Op<
         bool isDeclaration() { return isExternal(); }
     }];
 
-    // CONTINUE: Implement custom assembly printer/parser
     let hasCustomAssemblyFormat = 1;
 }
 
@@ -142,6 +141,41 @@ def Dfg_ChannelOp : Dfg_Op<
     let assemblyFormat = [{ attr-dict `:` $encapsulatedType `(` type($in_chan) `->` type($out_chan) `)` }];
 
     // TODO(feliix42): Ensure type matching on both results and the attribute
+}
+
+
+def Dfg_InstanciateOp : Dfg_Op<
+    "instanciate",
+    [
+        // Pure
+    ]> {
+    let summary = "Instanciates an operator with the given inputs, forming (part of) a data flow graph.";
+    let description = [{
+        The `instanciate` operation instanciates a data flow graph operator with
+        a concrete set of inputs and outputs. This instanciation creates a node
+        in the data flow graph. The data flow is derived from the arguments to
+        the instanciation as well as the results and their uses/origin.
+
+        Syntax:
+
+        ```
+        TODO
+        ```
+
+        Examples:
+
+        ```
+        TODO
+        ```
+
+    }];
+
+    let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands);
+    let results = (outs Variadic<AnyType>);
+
+    let assemblyFormat = [{
+        $callee `(` $operands `)` attr-dict `:` functional-type($operands, results)
+    }];
 }
 
 #endif
