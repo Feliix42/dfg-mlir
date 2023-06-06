@@ -150,10 +150,59 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result) {
 }
 
 void OperatorOp::print(OpAsmPrinter &p) {
-    // print the operation and function name
-    // Operation* op = getOperation();
+    Operation* op = getOperation();
+    Region &body = op->getRegion(0);
 
-    // CONTINUE
+    // print the operation and function name
+    auto funcName = op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()).getValue();
+
+    p << ' ';
+    p.printSymbolName(funcName);
+    p << ' ';
+
+    ArrayRef<Type> inputTypes = getFunctionType().getInputs();
+    ArrayRef<Type> outputTypes = getFunctionType().getResults();
+
+    // // NOTE(feliix42): Is this even necessary? There's no attributes supported afaik
+    // FunctionOpInterface fu = llvm::cast<FunctionOpInterface>(op);
+    // ArrayAttr argAttrs = fu.getArgAttrsAttr();
+
+    if (!inputTypes.empty()) {
+        p << " inputs (";
+        for (unsigned i = 0; i < inputTypes.size(); i++) {
+            if (i > 0)
+                p << ", ";
+
+            ArrayRef<NamedAttribute> attrs;
+            // if(argAttrs)
+            //     attrs = argAttrs[i].cast<DictionaryAttr>().getValue();
+
+            p.printRegionArgument(body.getArgument(i), attrs);
+        }
+        p << ')';
+    }
+
+    if (!outputTypes.empty()) {
+        p << " outputs (";
+        unsigned inpSize = inputTypes.size();
+        for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
+            if (i > inpSize)
+                p << ", ";
+
+            ArrayRef<NamedAttribute> attrs;
+            // if(argAttrs)
+            //     attrs = argAttrs[i].cast<DictionaryAttr>().getValue();
+
+            p.printRegionArgument(body.getArgument(i), attrs);
+        }
+        p << ')';
+    }
+
+    // Print the region
+    if (!body.empty()) {
+        p << ' ';
+        p.printRegion(body, /*printEntryBlockArgs =*/false, /*printBlockTerminators =*/true);
+    }
 }
 
 //===----------------------------------------------------------------------===//
