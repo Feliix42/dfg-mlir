@@ -137,10 +137,9 @@ def Dfg_ChannelOp : Dfg_Op<
         Dfg_OutputType:$out_chan
     );
 
-    // TODO(feliix42): Switch to custom assembly format + parser
-    let assemblyFormat = [{ attr-dict `:` $encapsulatedType `(` type($in_chan) `->` type($out_chan) `)` }];
+    let hasCustomAssemblyFormat = 1;
 
-    // TODO(feliix42): Ensure type matching on both results and the attribute
+    // TODO(feliix42): Verify type matching on both results and the attribute
 }
 
 

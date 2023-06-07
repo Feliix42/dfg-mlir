@@ -4,6 +4,7 @@
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
+#include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 
 #include "mlir/IR/OpImplementation.h"
@@ -203,6 +204,38 @@ void OperatorOp::print(OpAsmPrinter &p) {
         p << ' ';
         p.printRegion(body, /*printEntryBlockArgs =*/false, /*printBlockTerminators =*/true);
     }
+}
+
+//===----------------------------------------------------------------------===//
+// ChannelOp
+//===----------------------------------------------------------------------===//
+
+ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result) {
+    if (failed(parser.parseLSquare()))
+        return failure();
+
+    Type ty;
+    if (parser.parseType(ty))
+        return failure();
+
+    result.addAttribute(getEncapsulatedTypeAttrName(result.name), TypeAttr::get(ty));
+
+    SmallVector<Type> results;
+    InputType inp = InputType::get(ty.getContext(), ty);
+    results.push_back(inp);
+    OutputType out = OutputType::get(ty.getContext(), ty);
+    results.push_back(out);
+
+    // TODO(feliix42): Verify correctness: Is `getInChan` and `getOutChan` yielding the expected results??
+    result.addTypes(results);
+
+    return parser.parseRSquare();
+}
+
+void ChannelOp::print(OpAsmPrinter &p) {
+    p << '<';
+    p.printType(getEncapsulatedType());
+    p << '>';
 }
 
 //===----------------------------------------------------------------------===//
