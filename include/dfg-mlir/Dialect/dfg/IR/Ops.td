@@ -29,7 +29,7 @@ def Dfg_OperatorOp : Dfg_Op<
     let description = [{
         The `operator` operation produces a dataflow node which is linked to other
         operators by hooking up their input and output ports.
-        This is done using the `instanciate` function.
+        This is done using the `instantiate` function.
 
         Syntax:
 
@@ -143,14 +143,14 @@ def Dfg_ChannelOp : Dfg_Op<
 }
 
 
-def Dfg_InstanciateOp : Dfg_Op<
-    "instanciate",
+def Dfg_InstantiateOp : Dfg_Op<
+    "instantiate",
     [
         // Pure
     ]> {
-    let summary = "Instanciates an operator with the given inputs, forming (part of) a data flow graph.";
+    let summary = "Instantiates an operator with the given inputs, forming (part of) a data flow graph.";
     let description = [{
-        The `instanciate` operation instanciates a data flow graph operator with
+        The `instantiate` operation instantiates a data flow graph operator with
         a concrete set of inputs and outputs. This instanciation creates a node
         in the data flow graph. The data flow is derived from the arguments to
         the instanciation as well as the results and their uses/origin.
