@@ -147,6 +147,7 @@ def Dfg_InstantiateOp : Dfg_Op<
     "instantiate",
     [
         // Pure
+        AttrSizedOperandSegments
     ]> {
     let summary = "Instantiates an operator with the given inputs, forming (part of) a data flow graph.";
     let description = [{
@@ -169,12 +170,9 @@ def Dfg_InstantiateOp : Dfg_Op<
 
     }];
 
-    let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands);
-    let results = (outs Variadic<AnyType>);
+    let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<Dfg_OutputType>:$inputs, Variadic<Dfg_InputType>:$outputs);
 
-    let assemblyFormat = [{
-        $callee `(` $operands `)` attr-dict `:` functional-type($operands, results)
-    }];
+    let hasCustomAssemblyFormat = 1;
 }
 
 #endif

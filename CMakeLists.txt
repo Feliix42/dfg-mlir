@@ -30,6 +30,8 @@ if (${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR})
     set(MLIR_BINARY_DIR ${CMAKE_BINARY_DIR})
 endif()
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Fix for MLIR:
 # CMP0116: Ninja generators transform `DEPFILE`s from `add_custom_command()`
 # New in CMake 3.20. https://cmake.org/cmake/help/latest/policy/CMP0116.html
