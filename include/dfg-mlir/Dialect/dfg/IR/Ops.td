@@ -212,4 +212,72 @@ def Dfg_KernelOp : Dfg_Op<
     let hasCustomAssemblyFormat = 1;
 }
 
+
+def Dfg_PushOp : Dfg_Op<
+    "push",
+    [
+        // TODO
+    ]
+> {
+    let summary = "Pushes a value into a channel input to send it to the next operator.";
+    let description = [{
+        The `push` operation transfers a value to another operator by using a
+        channel supplied as argument. Since all channels are typed, the input
+        type must match the channel type.
+
+        Syntax:
+
+        ```
+        TODO
+        ```
+
+        Examples:
+
+        ```
+        TODO
+        ```
+    }];
+
+    // TODO(feliix42): verify type match!
+    let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
+
+    let assemblyFormat = [{
+        `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
+    }];
+}
+
+def Dfg_PullOp : Dfg_Op<
+    "pull",
+    [
+        // Any?
+    ]
+> {
+    let summary = "Pulls a value from a channel.";
+    let description = [{
+        The `pull` operation retrieves a value from another operator by using a
+        channel supplied as argument. Since all channels are typed, the output
+        type must match the channel type.
+
+        Syntax:
+
+        ```
+        TODO
+        ```
+
+        Examples:
+
+        ```
+        TODO
+        ```
+    }];
+
+    let arguments = (ins Dfg_OutputType: $chan);
+    let results = (outs AnyType: $outp);
+
+    let assemblyFormat = [{
+        $chan attr-dict `:` functional-type($chan, $outp)
+    }];
+
+}
+
 #endif
