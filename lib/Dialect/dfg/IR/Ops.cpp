@@ -203,6 +203,11 @@ void OperatorOp::print(OpAsmPrinter &p) {
         p << ')';
     }
 
+    if (!op->getAttrs().empty()) {
+        // NOTE(feliix42): Might needs a list of elided attrs -> inputs/...
+        p.printOptionalAttrDict(op->getAttrs());
+    }
+
     // Print the region
     if (!body.empty()) {
         p << ' ';
