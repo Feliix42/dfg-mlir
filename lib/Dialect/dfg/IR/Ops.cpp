@@ -136,6 +136,10 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result) {
     // merge both argument lists for the block arguments
     arguments.append(outputArgs);
 
+    if (parser.parseOptionalAttrDict(result.attributes)) {
+        return failure();
+    }
+
 
     auto *body = result.addRegion();
     SMLoc loc = parser.getCurrentLocation();

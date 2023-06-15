@@ -47,7 +47,8 @@ def Dfg_OperatorOp : Dfg_Op<
     // TODO(feliix42): Ensure that all arguments are of type `channel`!
 
     let arguments = (ins SymbolNameAttr: $sym_name,
-                        TypeAttrOf<FunctionType>: $function_type);
+                        TypeAttrOf<FunctionType>: $function_type,
+                        DefaultValuedAttr<BoolAttr, "false">: $looped);
 
     // The FunctionOpInterface requires exactly one region attached to the operator
     let regions = (region AnyRegion: $body);
