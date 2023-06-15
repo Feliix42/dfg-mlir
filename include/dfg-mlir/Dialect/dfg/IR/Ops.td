@@ -108,7 +108,7 @@ def Dfg_ChannelOp : Dfg_Op<
         [
             // THIS ENFORCES OneResult ON THE OP!
             // ConstantLike,
-            Pure
+            Pure,
             // OpAsmOpInterface
         ]> {
     let summary = "Defines a channel with one input and one output port";
@@ -130,8 +130,7 @@ def Dfg_ChannelOp : Dfg_Op<
         ```
     }];
 
-    // NOTE(feliix42): I want to _materialize_ the type attribute here -> derived attribute?
-    //                 Alternatively have it as attribute and derive from custom assembly
+    // TODO(feliix42): Verify that the encapsulated types in both results match the `encapsulatedType`
     let arguments = (ins TypeAttr:$encapsulatedType);
     let results = (outs
         Dfg_InputType:$in_chan,
@@ -139,8 +138,6 @@ def Dfg_ChannelOp : Dfg_Op<
     );
 
     let hasCustomAssemblyFormat = 1;
-
-    // TODO(feliix42): Verify type matching on both results and the attribute
 }
 
 
@@ -174,6 +171,10 @@ def Dfg_InstantiateOp : Dfg_Op<
     let arguments = (ins FlatSymbolRefAttr:$callee,
                          Variadic<Dfg_OutputType>:$inputs,
                          Variadic<Dfg_InputType>:$outputs);
+
+    // let assemblyFormat = [{
+    //     $callee `inputs` `(` $inputs `)` `outputs` `(` $outputs `)` attr-dict `:` functional-type($inputs, $outputs)
+    // }];
 
     let hasCustomAssemblyFormat = 1;
 }
@@ -216,7 +217,9 @@ def Dfg_KernelOp : Dfg_Op<
 def Dfg_PushOp : Dfg_Op<
     "push",
     [
-        // TODO
+        TypesMatchWith<"Channel type matches pushed type",
+                       "chan", "inp",
+                       "InputType::get($_ctxt, $_self).getElementType()">
     ]
 > {
     let summary = "Pushes a value into a channel input to send it to the next operator.";
@@ -238,7 +241,6 @@ def Dfg_PushOp : Dfg_Op<
         ```
     }];
 
-    // TODO(feliix42): verify type match!
     let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
 
     let assemblyFormat = [{
@@ -249,7 +251,9 @@ def Dfg_PushOp : Dfg_Op<
 def Dfg_PullOp : Dfg_Op<
     "pull",
     [
-        // Any?
+        TypesMatchWith<"Channel type matches pulled type",
+                       "chan", "outp",
+                       "OutputType::get($_ctxt, $_self).getElementType()">
     ]
 > {
     let summary = "Pulls a value from a channel.";
