@@ -106,12 +106,12 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result) {
     SMLoc signatureLocation = parser.getCurrentLocation();
 
     // parse inputs/outputs separately for later distinction
-    if (succeeded(parser.parseKeyword("inputs"))) {
+    if (succeeded(parser.parseOptionalKeyword("inputs"))) {
         if (parseFunctionArgumentList(parser, arguments))
             return failure();
     }
 
-    if (succeeded(parser.parseKeyword("outputs"))) {
+    if (succeeded(parser.parseOptionalKeyword("outputs"))) {
         if (parseFunctionArgumentList(parser, outputArgs))
             return failure();
     }
@@ -220,7 +220,7 @@ void OperatorOp::print(OpAsmPrinter &p) {
 //===----------------------------------------------------------------------===//
 
 ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result) {
-    if (failed(parser.parseLSquare()))
+    if (failed(parser.parseLess()))
         return failure();
 
     Type ty;
@@ -238,7 +238,7 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result) {
     // TODO(feliix42): Verify correctness: Is `getInChan` and `getOutChan` yielding the expected results??
     result.addTypes(results);
 
-    return parser.parseRSquare();
+    return parser.parseGreater();
 }
 
 void ChannelOp::print(OpAsmPrinter &p) {
@@ -261,7 +261,7 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result) {
 
     // parse the operator inputs and outpus
     SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs;
-    if (succeeded(parser.parseKeyword("inputs"))) {
+    if (succeeded(parser.parseOptionalKeyword("inputs"))) {
         if (parser.parseLParen() ||
             parser.parseOperandList(inputs) ||
             // parser.resolveOperands(inputs, opTy, result.operands)) {
@@ -271,12 +271,16 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result) {
     }
 
     SmallVector<OpAsmParser::UnresolvedOperand, 4> outputs;
-    if (succeeded(parser.parseKeyword("outputs"))) {
+    if (succeeded(parser.parseOptionalKeyword("outputs"))) {
         if (parser.parseLParen() ||
             parser.parseOperandList(outputs) ||
             parser.parseRParen()) {
                 return failure();
             }
+    }
+
+    if (parser.parseColon()) {
+        return failure();
     }
 
     // parse the signature & resolve the input/output types
@@ -345,7 +349,7 @@ ParseResult KernelOp::parse(OpAsmParser &parser, OperationState &result) {
 
     // parse the operator inputs and outpus
     SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs;
-    if (succeeded(parser.parseKeyword("inputs"))) {
+    if (succeeded(parser.parseOptionalKeyword("inputs"))) {
         if (parser.parseLParen() ||
             parser.parseOperandList(inputs) ||
             // parser.resolveOperands(inputs, opTy, result.operands)) {
@@ -355,12 +359,16 @@ ParseResult KernelOp::parse(OpAsmParser &parser, OperationState &result) {
     }
 
     SmallVector<OpAsmParser::UnresolvedOperand, 4> outputs;
-    if (succeeded(parser.parseKeyword("outputs"))) {
+    if (succeeded(parser.parseOptionalKeyword("outputs"))) {
         if (parser.parseLParen() ||
             parser.parseOperandList(outputs) ||
             parser.parseRParen()) {
                 return failure();
             }
+    }
+
+    if (parser.parseColon()) {
+        return failure();
     }
 
     // parse the signature & resolve the input/output types
