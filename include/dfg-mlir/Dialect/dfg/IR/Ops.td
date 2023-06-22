@@ -23,7 +23,8 @@ def Dfg_OperatorOp : Dfg_Op<
             // CallableOpInterface,
             // FunctionOpInterface,
             IsolatedFromAbove,
-            OpAsmOpInterface
+            OpAsmOpInterface,
+            NoTerminator
         ]> {
     let summary = "Defines a node in the Dataflow Graph";
     let description = [{
@@ -217,9 +218,9 @@ def Dfg_KernelOp : Dfg_Op<
 def Dfg_PushOp : Dfg_Op<
     "push",
     [
-        TypesMatchWith<"Channel type matches pushed type",
+        TypesMatchWith<"channel type matches pushed type",
                        "chan", "inp",
-                       "InputType::get($_ctxt, $_self).getElementType()">
+                       "$_self.cast<InputType>().getElementType()">
     ]
 > {
     let summary = "Pushes a value into a channel input to send it to the next operator.";
@@ -251,9 +252,9 @@ def Dfg_PushOp : Dfg_Op<
 def Dfg_PullOp : Dfg_Op<
     "pull",
     [
-        TypesMatchWith<"Channel type matches pulled type",
+        TypesMatchWith<"channel type matches pulled type",
                        "chan", "outp",
-                       "OutputType::get($_ctxt, $_self).getElementType()">
+                       "$_self.cast<OutputType>().getElementType()">
     ]
 > {
     let summary = "Pulls a value from a channel.";
