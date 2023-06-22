@@ -3,9 +3,8 @@
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
-#include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
-
+#include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/OpImplementation.h"
@@ -27,7 +26,6 @@ using namespace mlir::dfg;
 #include "dfg-mlir/Dialect/dfg/IR/Types.cpp.inc"
 
 //===----------------------------------------------------------------------===//
-
 
 //===----------------------------------------------------------------------===//
 // Base2Dialect
