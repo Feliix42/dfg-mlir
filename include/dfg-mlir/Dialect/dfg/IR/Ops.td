@@ -169,7 +169,7 @@ def Dfg_InstantiateOp : Dfg_Op<
 
     }];
 
-    let arguments = (ins FlatSymbolRefAttr:$callee,
+    let arguments = (ins SymbolNameAttr:$callee,
                          Variadic<Dfg_OutputType>:$inputs,
                          Variadic<Dfg_InputType>:$outputs);
 
@@ -207,7 +207,7 @@ def Dfg_KernelOp : Dfg_Op<
 
     }];
 
-    let arguments = (ins FlatSymbolRefAttr:$callee,
+    let arguments = (ins SymbolNameAttr:$callee,
                          Variadic<Dfg_OutputType>:$inputs,
                          Variadic<Dfg_InputType>:$outputs);
 
