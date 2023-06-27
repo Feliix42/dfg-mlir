@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.22)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
 project(dfg-mlir
-    VERSION     0.3.0
+    VERSION     0.1.1
     LANGUAGES   C CXX
 )
 
@@ -39,23 +39,29 @@ if(POLICY CMP0116)
     cmake_policy(SET CMP0116 OLD)
 endif()
 
-# Find MLIR.
+# Find MLIR and CIRCT
 find_package(MLIR REQUIRED CONFIG)
 message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
+find_package(CIRCT REQUIRED CONFIG)
+message(STATUS "Using CIRCTConfig.cmake in: ${CIRCT_DIR}")
 
-# Load LLVM and MLIR CMake modules.
+# Load LLVM and MLIR and CIRCT CMake modules.
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+list(APPEND CMAKE_MODULE_PATH "${CIRCT_CMAKE_DIR}")
 include(TableGen)
+include(AddCIRCT)
 include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
 
-# Apply target properties for LLVM/MLIR globally.
+# Apply target properties for LLVM/MLIR/CIRCT globally.
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 include_directories(SYSTEM ${MLIR_INCLUDE_DIRS})
+include_directories(SYSTEM ${CIRCT_INCLUDE_DIRS})
 link_directories(${LLVM_BUILD_LIBRARY_DIR})
+link_directories(${CIRCT_BUILD_LIBRARY_DIR})
 add_definitions(${LLVM_DEFINITIONS})
 
 # Apply target properties for this project globally.
