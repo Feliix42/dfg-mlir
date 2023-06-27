@@ -5,6 +5,9 @@
 
 #pragma once
 
+#include "circt/Dialect/Comb/CombDialect.h"
+#include "circt/Dialect/HW/HWDialect.h"
+#include "circt/Dialect/SV/SVDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
@@ -18,9 +21,21 @@ namespace async {
 class AsyncDialect;
 } // namespace async
 
+namespace comb {
+class CombDialect;
+} // namespace comb
+
 namespace dfg {
 class DfgDialect;
 } // namespace dfg
+
+namespace hw {
+class HWDialect;
+} // namespace hw
+
+namespace SV {
+class SVDialect;
+} // namespace SV
 
 //===- Generated passes ---------------------------------------------------===//
 

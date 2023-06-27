@@ -3,6 +3,8 @@
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
+#include "circt/InitAllDialects.h"
+#include "circt/InitAllPasses.h"
 #include "dfg-mlir/Conversion/Passes.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "mlir/IR/Dialect.h"
@@ -19,10 +21,13 @@ int main(int argc, char* argv[])
     DialectRegistry registry;
     registerAllDialects(registry);
 
-    registry.insert<dfg::DfgDialect>();
-
     registerAllPasses();
     registerConversionPasses();
+
+    registry.insert<dfg::DfgDialect>();
+    registry.insert<circt::comb::CombDialect>();
+    registry.insert<circt::hw::HWDialect>();
+    registry.insert<circt::sv::SVDialect>();
 
     return asMainReturnCode(
         MlirOptMain(argc, argv, "dfg-mlir optimizer driver\n", registry));

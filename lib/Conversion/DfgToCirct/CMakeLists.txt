@@ -11,4 +11,7 @@ add_mlir_conversion_library(DfgToCirct
         MLIRDialectUtils
         MLIRTransformUtils
         DfgDialect
+        CIRCTComb
+        CIRCTHW
+        CIRCTSV
 )
