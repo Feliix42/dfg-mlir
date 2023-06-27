@@ -7,6 +7,16 @@ enforcing a common naming scheme.
 
 #]========================================================================]
 
+function(mlir_gen_enums prefix)
+    set(LLVM_TARGET_DEFINITIONS Enums.td)
+
+    mlir_tablegen(Enums.h.inc -gen-enum-decls)
+    mlir_tablegen(Enums.cpp.inc -gen-enum-defs)
+
+    add_public_tablegen_target(${prefix}EnumsIncGen)
+    add_dependencies(${prefix}IncGen ${prefix}EnumsIncGen)
+endfunction()
+
 function(mlir_gen_iface prefix iface kind)
     set(LLVM_TARGET_DEFINITIONS ${iface}.td)
 
@@ -20,11 +30,10 @@ endfunction()
 function(mlir_gen_ir prefix)
     string(TOLOWER ${prefix} filter)
 
-    # set(LLVM_TARGET_DEFINITIONS Dialect.td)
     set(LLVM_TARGET_DEFINITIONS Ops.td)
 
-    mlir_tablegen(Dialect.h.inc -gen-dialect-decls -dialect=${filter})
-    mlir_tablegen(Dialect.cpp.inc -gen-dialect-defs -dialect=${filter})
+    mlir_tablegen(Base.h.inc -gen-dialect-decls -dialect=${filter})
+    mlir_tablegen(Base.cpp.inc -gen-dialect-defs -dialect=${filter})
     mlir_tablegen(Types.h.inc -gen-typedef-decls -typedefs-dialect=${filter})
     mlir_tablegen(Types.cpp.inc -gen-typedef-defs -typedefs-dialect=${filter})
     # mlir_tablegen(Attributes.h.inc -gen-attrdef-decls -attrdefs-dialect=${filter})
@@ -42,6 +51,8 @@ function(mlir_gen_passes prefix)
     set(LLVM_TARGET_DEFINITIONS Passes.td)
 
     mlir_tablegen(Passes.h.inc -gen-pass-decls -name ${prefix})
+    mlir_tablegen(Passes.capi.h.inc -gen-pass-capi-header --prefix ${prefix})
+    mlir_tablegen(Passes.capi.cpp.inc -gen-pass-capi-impl --prefix ${prefix})
 
     add_public_tablegen_target(${prefix}PassesIncGen)
     add_dependencies(${prefix}IncGen ${prefix}PassesIncGen)
