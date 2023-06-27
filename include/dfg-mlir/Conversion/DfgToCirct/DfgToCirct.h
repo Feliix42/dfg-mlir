@@ -10,6 +10,13 @@
 
 namespace mlir {
 
+//===- Generated includes -------------------------------------------------===//
+
+#define GEN_PASS_DECL_CONVERTDFGTOCIRCT
+#include "dfg-mlir/Conversion/Passes.h.inc"
+
+//===----------------------------------------------------------------------===//
+
 void populateDfgToCirctConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns);
