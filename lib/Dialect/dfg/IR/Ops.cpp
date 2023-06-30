@@ -7,6 +7,7 @@
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/FunctionImplementation.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
@@ -234,6 +235,21 @@ void OperatorOp::print(OpAsmPrinter &p)
             /*printEntryBlockArgs =*/false,
             /*printBlockTerminators =*/true);
     }
+}
+
+LogicalResult OperatorOp::verify()
+{
+    auto inputsType = getInputTypes();
+    for (const auto inTy : inputsType)
+        if (!inTy.isa<OutputType>())
+            return emitOpError("requires OutputType for input ports");
+
+    auto outputsType = getOutputTypes();
+    for (const auto outTy : outputsType)
+        if (!outTy.isa<InputType>())
+            return emitOpError("requires InputType for output ports");
+
+    return success();
 }
 
 //===----------------------------------------------------------------------===//
