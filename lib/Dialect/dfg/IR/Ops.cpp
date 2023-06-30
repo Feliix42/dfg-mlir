@@ -152,7 +152,7 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
         TypeAttr::get(type));
 
     // merge both argument lists for the block arguments
-    arguments.append(outputArgs);
+    // arguments.append(outputArgs);
 
     if (parser.parseOptionalAttrDict(result.attributes)) return failure();
 
