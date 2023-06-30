@@ -108,6 +108,10 @@ void ConvertDfgToCirctPass::runOnOperation()
     populateFunctionOpInterfaceTypeConversionPattern<handshake::FuncOp>(
         patterns,
         converter);
+    target.addDynamicallyLegalOp<handshake::FuncOp>([&](handshake::FuncOp op) {
+        return converter.isSignatureLegal(op.getFunctionType())
+               && converter.isLegal(&op.getBody());
+    });
 
     target.addLegalDialect<handshake::HandshakeDialect>();
     target.addIllegalDialect<dfg::DfgDialect>();
