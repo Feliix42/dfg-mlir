@@ -23,9 +23,7 @@ int main(int argc, char* argv[])
     registerAllDialects(registry);
 
     registry.insert<dfg::DfgDialect>();
-    registry.insert<circt::comb::CombDialect>();
-    registry.insert<circt::hw::HWDialect>();
-    registry.insert<circt::sv::SVDialect>();
+    registry.insert<circt::handshake::HandshakeDialect>();
 
     return asMainReturnCode(MlirLspServerMain(argc, argv, registry));
 }

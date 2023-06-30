@@ -26,10 +26,8 @@ def ConvertDfgToCirct : Pass<"convert-dfg-to-circt"> {
     let constructor = "mlir::createConvertDfgToCirctPass()";
 
     let dependentDialects = [
-        "circt::comb::CombDialect",
-        "dfg::DfgDialect",
-        "circt::hw::HWDialect",
-        "circt::sv::SVDialect"
+        "circt::handshake::HandshakeDialect",
+        "dfg::DfgDialect"
     ];
 }
 

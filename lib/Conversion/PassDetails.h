@@ -5,11 +5,17 @@
 
 #pragma once
 
-#include "circt/Dialect/Comb/CombDialect.h"
-#include "circt/Dialect/HW/HWDialect.h"
-#include "circt/Dialect/SV/SVDialect.h"
+#include "circt/Dialect/Handshake/HandshakeDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+
+namespace circt {
+
+namespace handshake {
+class HandshakeDialect;
+} // namespace handshake
+
+} // namespace circt
 
 namespace mlir {
 
@@ -21,21 +27,13 @@ namespace async {
 class AsyncDialect;
 } // namespace async
 
-namespace comb {
-class CombDialect;
-} // namespace comb
-
 namespace dfg {
 class DfgDialect;
 } // namespace dfg
 
-namespace hw {
-class HWDialect;
-} // namespace hw
-
-namespace SV {
-class SVDialect;
-} // namespace SV
+namespace func {
+class FuncDialect;
+} // namespace func
 
 //===- Generated passes ---------------------------------------------------===//
 

@@ -24,9 +24,7 @@ int main(int argc, char* argv[])
     dfg::registerConversionPasses();
 
     registry.insert<dfg::DfgDialect>();
-    registry.insert<circt::comb::CombDialect>();
-    registry.insert<circt::hw::HWDialect>();
-    registry.insert<circt::sv::SVDialect>();
+    registry.insert<circt::handshake::HandshakeDialect>();
 
     return asMainReturnCode(
         MlirOptMain(argc, argv, "dfg-mlir optimizer driver\n", registry));
