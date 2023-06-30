@@ -30,34 +30,23 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
         OperatorOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        TypeConverter* converter = this->typeConverter;
-
-        auto name = op.getSymNameAttr();
-        // auto inputTypes = op.getFunctionType().getInputs();
-        // auto outputTypes = op.getFunctionType().getResults();
-
-        // SmallVector<Type> inputs;
-        // for (const auto inTy : inputTypes)
-        //     inputs.push_back(converter->convertType(inTy));
-
-        // SmallVector<Type> outputs;
-        // for (const auto outTy : outputTypes)
-        //     inputs.push_back(converter->convertType(outTy));
-
-        // auto fnTy = rewriter.getFunctionType(inputs, outputs);
-
+        // create a handshake.func usin the same name
+        // and function_type of dfg.operator
         auto funcOp = rewriter.create<handshake::FuncOp>(
             op.getLoc(),
-            name,
+            op.getSymNameAttr(),
             op.getFunctionType());
+
+        // copy all the region inside the FuncOp
         rewriter.inlineRegionBefore(
             op.getBody(),
             funcOp.getBody(),
             funcOp.end());
+
         funcOp.setPrivate();
+        if (!funcOp.isExternal()) funcOp.resolveArgAndResNames();
 
         rewriter.eraseOp(op);
-
         return success();
     }
 };
@@ -115,6 +104,10 @@ void ConvertDfgToCirctPass::runOnOperation()
     RewritePatternSet patterns(&getContext());
 
     populateDfgToCirctConversionPatterns(converter, patterns);
+
+    populateFunctionOpInterfaceTypeConversionPattern<handshake::FuncOp>(
+        patterns,
+        converter);
 
     target.addLegalDialect<handshake::HandshakeDialect>();
     target.addIllegalDialect<dfg::DfgDialect>();

@@ -83,8 +83,14 @@ def Dfg_OperatorOp : Dfg_Op<
         /// Returns the argument types of this function.
         ArrayRef<Type> getInputTypes() { return getFunctionType().getInputs(); }
 
+        /// Return the number of types of inputs
+        // unsigned getNumInputTypes() { return getInputTypes().size(); }
+
         /// Returns the result types of this function.
         ArrayRef<Type> getOutputTypes() { return getFunctionType().getResults(); }
+
+        /// Return the number of types of outputs
+        // unsigned getNumOutputTypes() { return getOutputTypes().size(); }
 
         //===------------------------------------------------------------------===//
         // OpAsmOpInterface Methods
