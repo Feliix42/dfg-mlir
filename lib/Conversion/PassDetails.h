@@ -5,11 +5,16 @@
 
 #pragma once
 
+#include "circt/Dialect/ESI/ESIDialect.h"
 #include "circt/Dialect/Handshake/HandshakeDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
 namespace circt {
+
+namespace esi {
+class ESIDialect;
+} // namespace esi
 
 namespace handshake {
 class HandshakeDialect;

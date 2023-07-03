@@ -4,6 +4,7 @@
 /// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
 #include "../PassDetails.h"
+#include "circt/Dialect/ESI/ESIOps.h"
 #include "circt/Dialect/Handshake/HandshakeDialect.h"
 #include "circt/Dialect/Handshake/HandshakeOps.h"
 #include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
@@ -30,12 +31,20 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
         OperatorOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        // create a handshake.func usin the same name
+        // Create new FunctionType using both
+        // input and output ports
+        SmallVector<Type> inputTypes;
+        for (const auto inTy : op.getInputTypes()) inputTypes.push_back(inTy);
+        for (const auto outTy : op.getOutputTypes())
+            inputTypes.push_back(outTy);
+        auto newFuncTy = rewriter.getFunctionType(inputTypes, {});
+
+        // create a handshake.func using the same name
         // and function_type of dfg.operator
         auto funcOp = rewriter.create<handshake::FuncOp>(
             op.getLoc(),
             op.getSymNameAttr(),
-            op.getFunctionType());
+            newFuncTy);
 
         // copy all the region inside the FuncOp
         rewriter.inlineRegionBefore(
@@ -46,25 +55,14 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
         funcOp.setPrivate();
         if (!funcOp.isExternal()) funcOp.resolveArgAndResNames();
 
-        rewriter.eraseOp(op);
-        return success();
-    }
-};
+        // new builder to insert func.return
+        auto builder = OpBuilder::atBlockEnd(&funcOp.getBody().front());
 
-struct ConvertEnd : OpConversionPattern<EndOp> {
-    using OpConversionPattern<EndOp>::OpConversionPattern;
+        // return void
+        SmallVector<Value> values;
+        builder.create<handshake::ReturnOp>(funcOp.getLoc(), values);
 
-    ConvertEnd(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<EndOp>(typeConverter, context){};
-
-    LogicalResult matchAndRewrite(
-        EndOp op,
-        EndOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        ValueRange values;
-        rewriter.create<handshake::ReturnOp>(op.getLoc(), values);
-
+        // Erase the original OperatorOp
         rewriter.eraseOp(op);
 
         return success();
@@ -78,7 +76,6 @@ void mlir::populateDfgToCirctConversionPatterns(
     RewritePatternSet &patterns)
 {
     patterns.add<ConvertOperator>(typeConverter, patterns.getContext());
-    patterns.add<ConvertEnd>(typeConverter, patterns.getContext());
 }
 
 namespace {
@@ -94,10 +91,12 @@ void ConvertDfgToCirctPass::runOnOperation()
 
     converter.addConversion([&](Type type) { return type; });
     converter.addConversion([&](InputType type) -> Type {
-        return converter.convertType(type.getElementType());
+        return converter.convertType(
+            esi::ChannelType::get(&getContext(), type.getElementType()));
     });
     converter.addConversion([&](OutputType type) -> Type {
-        return converter.convertType(type.getElementType());
+        return converter.convertType(
+            esi::ChannelType::get(&getContext(), type.getElementType()));
     });
 
     ConversionTarget target(getContext());
@@ -113,7 +112,7 @@ void ConvertDfgToCirctPass::runOnOperation()
                && converter.isLegal(&op.getBody());
     });
 
-    target.addLegalDialect<handshake::HandshakeDialect>();
+    target.addLegalDialect<esi::ESIDialect, handshake::HandshakeDialect>();
     target.addIllegalDialect<dfg::DfgDialect>();
 
     if (failed(applyPartialConversion(
