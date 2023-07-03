@@ -24,7 +24,7 @@ def Dfg_OperatorOp : Dfg_Op<
             // FunctionOpInterface,
             IsolatedFromAbove,
             OpAsmOpInterface,
-            // NoTerminator
+            NoTerminator
         ]> {
     let summary = "Defines a node in the Dataflow Graph";
     let description = [{
@@ -111,14 +111,16 @@ def Dfg_OperatorOp : Dfg_Op<
     let hasVerifier = 1;
 }
 
-def Dfg_EndOp : Dfg_Op<"end", [Pure, HasParent<"OperatorOp">, Terminator]>
-{
-    // TODO: need more semantics
+// def Dfg_EndOp : Dfg_Op<"end", [Pure, HasParent<"OperatorOp">, Terminator]>
+// {
+//     // TODO: need more semantics
 
-    let builders = [OpBuilder<(ins), [{}]>];
+//     let builders = [OpBuilder<(ins), [{
+//         build($_builder, $_state, std::nullopt);
+//     }]>];
 
-    let assemblyFormat = [{ attr-dict }];
-}
+//     let assemblyFormat = [{ attr-dict }];
+// }
 
 
 def Dfg_ChannelOp : Dfg_Op<
