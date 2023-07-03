@@ -69,6 +69,40 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
     }
 };
 
+struct ConvertPull : OpConversionPattern<PullOp> {
+    using OpConversionPattern<PullOp>::OpConversionPattern;
+
+    ConvertPull(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PullOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        PullOp op,
+        PullOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        rewriter.eraseOp(op);
+
+        return success();
+    }
+};
+
+struct ConvertPush : OpConversionPattern<PushOp> {
+    using OpConversionPattern<PushOp>::OpConversionPattern;
+
+    ConvertPush(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PushOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        PushOp op,
+        PushOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        rewriter.eraseOp(op);
+
+        return success();
+    }
+};
+
 } // namespace
 
 void mlir::populateDfgToCirctConversionPatterns(
@@ -76,6 +110,8 @@ void mlir::populateDfgToCirctConversionPatterns(
     RewritePatternSet &patterns)
 {
     patterns.add<ConvertOperator>(typeConverter, patterns.getContext());
+    patterns.add<ConvertPull>(typeConverter, patterns.getContext());
+    patterns.add<ConvertPush>(typeConverter, patterns.getContext());
 }
 
 namespace {
