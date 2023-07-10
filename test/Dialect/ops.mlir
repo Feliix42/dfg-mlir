@@ -15,8 +15,6 @@ dfg.operator @sum
     dfg.push(%result) %a : (ui32) -> (!dfg.input<ui32>)
 
     // in Ops.td add NoTerminator to solve the terminator error
-
-    dfg.end
 }
 
 func.func @return_a_value() -> ui32
@@ -33,8 +31,6 @@ dfg.operator @get_op
 {
     %b = func.call @return_a_value() : () -> ui32
     dfg.push(%b) %op_b : (ui32) -> (!dfg.input<ui32>)
-
-    dfg.end
 }
 
 // Aren't the inputs and outputs arrays?
