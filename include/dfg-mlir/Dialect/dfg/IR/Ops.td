@@ -58,7 +58,7 @@ def Dfg_OperatorOp : Dfg_Op<
     let skipDefaultBuilders = 1;
 
     let builders = [OpBuilder<(ins
-        "StringRef": $sym_name, "FunctionType": $function_type)>];
+        "StringRef": $sym_name, "FunctionType": $type)>];
 
     let extraClassDeclaration = [{
         bool isExternal();
@@ -81,10 +81,10 @@ def Dfg_OperatorOp : Dfg_Op<
         //===------------------------------------------------------------------===//
 
         /// Returns the argument types of this function.
-        // ArrayRef<Type> getArgumentTypes() { return getFunctionType().getInputs(); }
+        ArrayRef<Type> getInputTypes() { return getFunctionType().getInputs(); }
 
         /// Returns the result types of this function.
-        // ArrayRef<Type> getResultTypes() { return getFunctionType().getResults(); }
+        ArrayRef<Type> getOutputTypes() { return getFunctionType().getResults(); }
 
         //===------------------------------------------------------------------===//
         // OpAsmOpInterface Methods
@@ -101,6 +101,8 @@ def Dfg_OperatorOp : Dfg_Op<
     }];
 
     let hasCustomAssemblyFormat = 1;
+
+    let hasVerifier = 1;
 }
 
 
