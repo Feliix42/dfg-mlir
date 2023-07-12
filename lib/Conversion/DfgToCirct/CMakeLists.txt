@@ -1,16 +1,15 @@
 add_mlir_conversion_library(DfgToCirct
-        DfgToCirct.cpp
+    DfgToCirct.cpp
 
     DEPENDS
-        ConversionIncGen
-    
+    ConversionIncGen
+
     LINK_COMPONENTS
-        Core
-    
+    Core
+
     LINK_LIBS PUBLIC
-        MLIRDialectUtils
-        MLIRTransformUtils
-        DfgDialect
-        CIRCTHandshake
-        CIRCTESI
+    MLIRDialectUtils
+    MLIRTransformUtils
+    DfgDialect
+    CIRCTFIRRTL
 )

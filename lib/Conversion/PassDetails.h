@@ -12,13 +12,9 @@
 
 namespace circt {
 
-namespace esi {
-class ESIDialect;
-} // namespace esi
-
-namespace handshake {
-class HandshakeDialect;
-} // namespace handshake
+namespace firrtl {
+class FIRRTLDialect;
+} // namespace firrtl
 
 } // namespace circt
 
