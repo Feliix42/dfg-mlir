@@ -309,6 +309,21 @@ void LoopOp::print(OpAsmPrinter &p)
     }
 }
 
+LogicalResult OperatorOp::verify()
+{
+    auto inputsType = getInputTypes();
+    for (const auto inTy : inputsType)
+        if (!inTy.isa<OutputType>())
+            return emitOpError("requires OutputType for input ports");
+
+    auto outputsType = getOutputTypes();
+    for (const auto outTy : outputsType)
+        if (!outTy.isa<InputType>())
+            return emitOpError("requires InputType for output ports");
+
+    return success();
+}
+
 //===----------------------------------------------------------------------===//
 // ChannelOp
 //===----------------------------------------------------------------------===//
