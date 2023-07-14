@@ -365,16 +365,19 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 void InstantiateOp::print(OpAsmPrinter &p)
 {
     // callee
+    p << ' ';
     p.printAttributeWithoutType(getCalleeAttr());
+    p << ' ';
 
     // print `inputs (...)` if existent
     if (!getInputs().empty()) p << "inputs (" << getInputs() << ")";
 
+    p << ' ';
     // print `outputs (...)` if existent
     if (!getOutputs().empty()) p << "outputs (" << getOutputs() << ")";
 
     // signature
-    p << ":";
+    p << " : ";
     p.printFunctionalType(getInputs().getTypes(), getOutputs().getTypes());
 }
 
@@ -444,16 +447,19 @@ ParseResult KernelOp::parse(OpAsmParser &parser, OperationState &result)
 void KernelOp::print(OpAsmPrinter &p)
 {
     // callee
+    p << ' ';
     p.printAttributeWithoutType(getCalleeAttr());
+    p << ' ';
 
     // print `inputs (...)` if existent
     if (!getInputs().empty()) p << "inputs(" << getInputs() << ")";
 
+    p << ' ';
     // print `outputs (...)` if existent
     if (!getOutputs().empty()) p << "outputs(" << getOutputs() << ")";
 
     // signature
-    p << ":";
+    p << " : ";
     p.printFunctionalType(getInputs().getTypes(), getOutputs().getTypes());
 }
 
