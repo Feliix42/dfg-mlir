@@ -48,8 +48,7 @@ def Dfg_OperatorOp : Dfg_Op<
     // TODO(feliix42): Ensure that all arguments are of type `channel`!
 
     let arguments = (ins SymbolNameAttr: $sym_name,
-                        TypeAttrOf<FunctionType>: $function_type,
-                        DefaultValuedAttr<BoolAttr, "false">: $looped);
+                        TypeAttrOf<FunctionType>: $function_type);
 
     // The FunctionOpInterface requires exactly one region attached to the operator
     let regions = (region AnyRegion: $body);
@@ -111,16 +110,36 @@ def Dfg_OperatorOp : Dfg_Op<
     let hasVerifier = 1;
 }
 
-// def Dfg_EndOp : Dfg_Op<"end", [Pure, HasParent<"OperatorOp">, Terminator]>
-// {
-//     // TODO: need more semantics
+def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
+{
+    let summary = "Defines a list of input/output ports maybe closed";
 
-//     let builders = [OpBuilder<(ins), [{
-//         build($_builder, $_state, std::nullopt);
-//     }]>];
+    let description = [{
+        The `loop` operation defines a list of input or output ports
+        that will be closed later. The close behavior will terminate
+        the operator and populate to other operators so that the whole
+        dataflow graph will be shut down.
 
-//     let assemblyFormat = [{ attr-dict }];
-// }
+        Example:
+        ```
+        dfg.operator @add inputs(%a:!dfg.output<type>) outputs(%b:!dfg.input<type>)
+        {
+            dfg.loop (%a, %b) {
+                ops ...
+            }
+        }
+        ```
+    }];
+
+    let arguments = (ins Variadic<AnyType>:$channels);
+
+    let regions = (region SizedRegion<1>: $body);
+
+    let skipDefaultBuilders = 1;
+    let builders = [OpBuilder<(ins "ValueRange":$channels)>];
+
+    let hasCustomAssemblyFormat = 1;
+}
 
 
 def Dfg_ChannelOp : Dfg_Op<
