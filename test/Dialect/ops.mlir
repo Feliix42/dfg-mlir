@@ -35,8 +35,8 @@ dfg.operator @get_op
 
 // Aren't the inputs and outputs arrays?
 func.func @run_dfg(%op_a: ui32) -> ui32 {
-    %op_a_in, %op_a_out = dfg.channel<ui32>
-    %op_b_in, %op_b_out = dfg.channel<ui32>
+    %op_a_in, %op_a_out = dfg.channel<ui32,2>
+    %op_b_in, %op_b_out = dfg.channel<ui32,2>
     %res_in, %res_out = dfg.channel<ui32>
 
     // inputs

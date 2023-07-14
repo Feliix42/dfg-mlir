@@ -156,7 +156,10 @@ def Dfg_ChannelOp : Dfg_Op<
     // TODO(feliix42): Verify that the encapsulated types in both results match the `encapsulatedType`
     // Thoughts(jibi): don't think we need one, we only take one type and then the elementType of
     //                 Intput/Output type would automatically be the same as encapulatedType
-    let arguments = (ins TypeAttr:$encapsulatedType);
+    let arguments = (ins
+        TypeAttr:$encapsulatedType,
+        OptionalAttr<I32Attr>:$bufferSize
+    );
     let results = (outs
         Dfg_InputType:$in_chan,
         Dfg_OutputType:$out_chan

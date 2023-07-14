@@ -277,6 +277,15 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
     // yielding the expected results??
     result.addTypes(results);
 
+    if (succeeded(parser.parseOptionalComma())) {
+        int size = 0;
+        if (parser.parseInteger(size)) return failure();
+        MLIRContext context;
+        result.addAttribute(
+            getBufferSizeAttrName(result.name),
+            parser.getBuilder().getI32IntegerAttr(size));
+    }
+
     return parser.parseGreater();
 }
 
@@ -284,6 +293,7 @@ void ChannelOp::print(OpAsmPrinter &p)
 {
     p << '<';
     p.printType(getEncapsulatedType());
+    if (const auto size = getBufferSize()) p << ',' << size;
     p << '>';
 }
 
