@@ -169,6 +169,7 @@ def Dfg_ChannelOp : Dfg_Op<
         ```
         TODO
         %input, %output : !dfg.channel<i32>
+        %input, %output : !dfg.channel<ui32, 4>
         ```
     }];
 

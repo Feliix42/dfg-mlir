@@ -350,7 +350,7 @@ void ChannelOp::print(OpAsmPrinter &p)
 {
     p << '<';
     p.printType(getEncapsulatedType());
-    if (const auto size = getBufferSize()) p << ',' << size;
+    if (const auto size = getBufferSize()) p << ", " << size;
     p << '>';
 }
 
@@ -425,14 +425,12 @@ void InstantiateOp::print(OpAsmPrinter &p)
     // callee
     p << ' ';
     p.printAttributeWithoutType(getCalleeAttr());
-    p << ' ';
 
     // print `inputs (...)` if existent
-    if (!getInputs().empty()) p << "inputs (" << getInputs() << ")";
+    if (!getInputs().empty()) p << " inputs (" << getInputs() << ")";
 
-    p << ' ';
     // print `outputs (...)` if existent
-    if (!getOutputs().empty()) p << "outputs (" << getOutputs() << ")";
+    if (!getOutputs().empty()) p << " outputs (" << getOutputs() << ")";
 
     // signature
     p << " : ";
@@ -508,14 +506,12 @@ void KernelOp::print(OpAsmPrinter &p)
     // callee
     p << ' ';
     p.printAttributeWithoutType(getCalleeAttr());
-    p << ' ';
 
     // print `inputs (...)` if existent
-    if (!getInputs().empty()) p << "inputs(" << getInputs() << ")";
+    if (!getInputs().empty()) p << " inputs(" << getInputs() << ")";
 
-    p << ' ';
     // print `outputs (...)` if existent
-    if (!getOutputs().empty()) p << "outputs(" << getOutputs() << ")";
+    if (!getOutputs().empty()) p << " outputs(" << getOutputs() << ")";
 
     // signature
     p << " : ";
