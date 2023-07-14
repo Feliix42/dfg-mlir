@@ -3,6 +3,7 @@
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
+#include "circt/InitAllDialects.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
@@ -22,6 +23,7 @@ int main(int argc, char* argv[])
     registerAllDialects(registry);
 
     registry.insert<dfg::DfgDialect>();
+    registry.insert<circt::firrtl::FIRRTLDialect>();
 
     return asMainReturnCode(MlirLspServerMain(argc, argv, registry));
 }

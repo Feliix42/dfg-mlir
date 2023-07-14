@@ -3,9 +3,8 @@
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
-#include "dfg-mlir/Dialect/dfg/IR/Ops.h"
-
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
+#include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
@@ -155,7 +154,7 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
     // merge both argument lists for the block arguments
     arguments.append(outputArgs);
 
-    if (parser.parseOptionalAttrDict(result.attributes)) return failure();
+    // if (parser.parseOptionalAttrDict(result.attributes)) return failure();
 
     auto* body = result.addRegion();
     SMLoc loc = parser.getCurrentLocation();
@@ -223,12 +222,84 @@ void OperatorOp::print(OpAsmPrinter &p)
         p << ')';
     }
 
-    if (!op->getAttrs().empty()) {
-        // NOTE(feliix42): Might needs a list of elided attrs -> inputs/...
-        p.printOptionalAttrDict(op->getAttrs());
-    }
+    // if (!op->getAttrs().empty()) {
+    //     // NOTE(feliix42): Might needs a list of elided attrs -> inputs/...
+    //     p.printOptionalAttrDict(op->getAttrs());
+    // }
 
     // Print the region
+    if (!body.empty()) {
+        p << ' ';
+        p.printRegion(
+            body,
+            /*printEntryBlockArgs =*/false,
+            /*printBlockTerminators =*/true);
+    }
+}
+
+LogicalResult OperatorOp::verify()
+{
+    // Check if all the input are OutputType
+    // and all output are InputType
+    auto inputsType = getInputTypes();
+    for (const auto inTy : inputsType)
+        if (!inTy.isa<OutputType>())
+            return emitOpError("requires OutputType for input ports");
+
+    auto outputsType = getOutputTypes();
+    for (const auto outTy : outputsType)
+        if (!outTy.isa<InputType>())
+            return emitOpError("requires InputType for output ports");
+
+    // If there is a LoopOp, it must be the first op in the body
+    auto ops = getBody().getOps();
+    bool isFirstLoop, hasLoop = false;
+    for (const auto &op : ops)
+        if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
+    if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
+        isFirstLoop = true;
+    if (hasLoop && !isFirstLoop)
+        return emitError("The LoopOp must be the first op of Operator");
+
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// LoopOp
+//===----------------------------------------------------------------------===//
+
+ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    if (parser.parseLParen()) return failure();
+
+    SmallVector<OpAsmParser::UnresolvedOperand> operands;
+    SmallVector<Type> types;
+    if (parser.parseOperandList(operands)) return failure();
+    if (parser.parseColonTypeList(types)) return failure();
+
+    assert(operands.size() == types.size());
+
+    for (size_t i = 0; i < operands.size(); i++)
+        if (parser.resolveOperand(operands[i], types[i], result.operands))
+            return failure();
+
+    if (parser.parseRParen()) return failure();
+
+    Region* body = result.addRegion();
+    if (parser.parseRegion(*body, {}, {})) return failure();
+
+    return success();
+}
+
+void LoopOp::print(OpAsmPrinter &p)
+{
+    assert(!getOperands().empty());
+
+    p << '(';
+    p << getOperands();
+    p << ')';
+
+    Region &body = getBody();
     if (!body.empty()) {
         p << ' ';
         p.printRegion(
@@ -278,6 +349,15 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
     // yielding the expected results??
     result.addTypes(results);
 
+    if (succeeded(parser.parseOptionalComma())) {
+        int size = 0;
+        if (parser.parseInteger(size)) return failure();
+        MLIRContext context;
+        result.addAttribute(
+            getBufferSizeAttrName(result.name),
+            parser.getBuilder().getI32IntegerAttr(size));
+    }
+
     return parser.parseGreater();
 }
 
@@ -285,6 +365,7 @@ void ChannelOp::print(OpAsmPrinter &p)
 {
     p << '<';
     p.printType(getEncapsulatedType());
+    if (const auto size = getBufferSize()) p << ", " << size;
     p << '>';
 }
 
@@ -309,17 +390,15 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
     if (succeeded(parser.parseOptionalKeyword("inputs"))) {
         if (parser.parseLParen() || parser.parseOperandList(inputs) ||
             // parser.resolveOperands(inputs, opTy, result.operands)) {
-            parser.parseRParen()) {
+            parser.parseRParen())
             return failure();
-        }
     }
 
     SmallVector<OpAsmParser::UnresolvedOperand, 4> outputs;
     if (succeeded(parser.parseOptionalKeyword("outputs"))) {
         if (parser.parseLParen() || parser.parseOperandList(outputs)
-            || parser.parseRParen()) {
+            || parser.parseRParen())
             return failure();
-        }
     }
 
     if (parser.parseColon()) return failure();
@@ -347,7 +426,8 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
     if (parser.resolveOperands(outputs, outTypes, location, result.operands))
         return failure();
 
-    // Add derived `operand_segment_sizes` attribute based on parsed operands.
+    // Add derived `operand_segment_sizes` attribute based on parsed
+    // operands.
     auto operandSegmentSizes =
         parser.getBuilder().getDenseI32ArrayAttr({numInputs, numOutputs});
     result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
@@ -358,16 +438,17 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 void InstantiateOp::print(OpAsmPrinter &p)
 {
     // callee
+    p << ' ';
     p.printAttributeWithoutType(getCalleeAttr());
 
     // print `inputs (...)` if existent
-    if (!getInputs().empty()) p << "inputs (" << getInputs() << ")";
+    if (!getInputs().empty()) p << " inputs (" << getInputs() << ")";
 
     // print `outputs (...)` if existent
-    if (!getOutputs().empty()) p << "outputs (" << getOutputs() << ")";
+    if (!getOutputs().empty()) p << " outputs (" << getOutputs() << ")";
 
     // signature
-    p << ":";
+    p << " : ";
     p.printFunctionalType(getInputs().getTypes(), getOutputs().getTypes());
 }
 
@@ -390,17 +471,15 @@ ParseResult KernelOp::parse(OpAsmParser &parser, OperationState &result)
     if (succeeded(parser.parseOptionalKeyword("inputs"))) {
         if (parser.parseLParen() || parser.parseOperandList(inputs) ||
             // parser.resolveOperands(inputs, opTy, result.operands)) {
-            parser.parseRParen()) {
+            parser.parseRParen())
             return failure();
-        }
     }
 
     SmallVector<OpAsmParser::UnresolvedOperand, 4> outputs;
     if (succeeded(parser.parseOptionalKeyword("outputs"))) {
         if (parser.parseLParen() || parser.parseOperandList(outputs)
-            || parser.parseRParen()) {
+            || parser.parseRParen())
             return failure();
-        }
     }
 
     if (parser.parseColon()) return failure();
@@ -428,7 +507,8 @@ ParseResult KernelOp::parse(OpAsmParser &parser, OperationState &result)
     if (parser.resolveOperands(outputs, outTypes, location, result.operands))
         return failure();
 
-    // Add derived `operand_segment_sizes` attribute based on parsed operands.
+    // Add derived `operand_segment_sizes` attribute based on parsed
+    // operands.
     auto operandSegmentSizes =
         parser.getBuilder().getDenseI32ArrayAttr({numInputs, numOutputs});
     result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
@@ -439,16 +519,17 @@ ParseResult KernelOp::parse(OpAsmParser &parser, OperationState &result)
 void KernelOp::print(OpAsmPrinter &p)
 {
     // callee
+    p << ' ';
     p.printAttributeWithoutType(getCalleeAttr());
 
     // print `inputs (...)` if existent
-    if (!getInputs().empty()) p << "inputs (" << getInputs() << ")";
+    if (!getInputs().empty()) p << " inputs(" << getInputs() << ")";
 
     // print `outputs (...)` if existent
-    if (!getOutputs().empty()) p << "outputs (" << getOutputs() << ")";
+    if (!getOutputs().empty()) p << " outputs(" << getOutputs() << ")";
 
     // signature
-    p << ":";
+    p << " : ";
     p.printFunctionalType(getInputs().getTypes(), getOutputs().getTypes());
 }
 

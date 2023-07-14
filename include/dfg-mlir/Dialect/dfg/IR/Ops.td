@@ -48,8 +48,7 @@ def Dfg_OperatorOp : Dfg_Op<
     // TODO(feliix42): Ensure that all arguments are of type `channel`!
 
     let arguments = (ins SymbolNameAttr: $sym_name,
-                        TypeAttrOf<FunctionType>: $function_type,
-                        DefaultValuedAttr<BoolAttr, "false">: $looped);
+                        TypeAttrOf<FunctionType>: $function_type);
 
     // The FunctionOpInterface requires exactly one region attached to the operator
     let regions = (region AnyRegion: $body);
@@ -105,6 +104,37 @@ def Dfg_OperatorOp : Dfg_Op<
     let hasVerifier = 1;
 }
 
+def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
+{
+    let summary = "Defines a list of input/output ports maybe closed";
+
+    let description = [{
+        The `loop` operation defines a list of input or output ports
+        that will be closed later. The close behavior will terminate
+        the operator and populate to other operators so that the whole
+        dataflow graph will be shut down.
+
+        Example:
+        ```
+        dfg.operator @add inputs(%a:!dfg.output<type>) outputs(%b:!dfg.input<type>)
+        {
+            dfg.loop (%a, %b) {
+                ops ...
+            }
+        }
+        ```
+    }];
+
+    let arguments = (ins Variadic<AnyType>:$channels);
+
+    let regions = (region SizedRegion<1>: $body);
+
+    let skipDefaultBuilders = 1;
+    let builders = [OpBuilder<(ins "ValueRange":$channels)>];
+
+    let hasCustomAssemblyFormat = 1;
+}
+
 
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
@@ -124,17 +154,26 @@ def Dfg_ChannelOp : Dfg_Op<
 
         ```
         TODO
+        The results of this op have a strict order, the first one should be the
+        input port of channel and the second is the output port.
         ```
 
         Examples:
 
         ```
         TODO
+        %input, %output : !dfg.channel<i32>
+        %input, %output : !dfg.channel<ui32, 4>
         ```
     }];
 
     // TODO(feliix42): Verify that the encapsulated types in both results match the `encapsulatedType`
-    let arguments = (ins TypeAttr:$encapsulatedType);
+    // Thoughts(jibi): don't think we need one, we only take one type and then the elementType of
+    //                 Intput/Output type would automatically be the same as encapulatedType
+    let arguments = (ins
+        TypeAttr:$encapsulatedType,
+        OptionalAttr<I32Attr>:$bufferSize
+    );
     let results = (outs
         Dfg_InputType:$in_chan,
         Dfg_OutputType:$out_chan
@@ -209,7 +248,7 @@ def Dfg_KernelOp : Dfg_Op<
 
     }];
 
-    let arguments = (ins SymbolNameAttr:$callee,
+    let arguments = (ins FlatSymbolRefAttr:$callee,
                          Variadic<Dfg_OutputType>:$inputs,
                          Variadic<Dfg_InputType>:$outputs);
 
@@ -220,9 +259,10 @@ def Dfg_KernelOp : Dfg_Op<
 def Dfg_PushOp : Dfg_Op<
     "push",
     [
-        TypesMatchWith<"channel type matches pushed type",
+        TypesMatchWith<"Channel type matches pushed type",
                        "chan", "inp",
-                       "$_self.cast<InputType>().getElementType()">
+                       "$_self.dyn_cast<InputType>().getElementType()">
+        //                "InputType::get($_ctxt, $_self).getElementType()">
     ]
 > {
     let summary = "Pushes a value into a channel input to send it to the next operator.";
@@ -254,9 +294,10 @@ def Dfg_PushOp : Dfg_Op<
 def Dfg_PullOp : Dfg_Op<
     "pull",
     [
-        TypesMatchWith<"channel type matches pulled type",
+        TypesMatchWith<"Channel type matches pulled type",
                        "chan", "outp",
-                       "$_self.cast<OutputType>().getElementType()">
+                       "$_self.dyn_cast<OutputType>().getElementType()">
+                    //    "OutputType::get($_ctxt, $_self).getElementType()">
     ]
 > {
     let summary = "Pulls a value from a channel.";
@@ -284,7 +325,6 @@ def Dfg_PullOp : Dfg_Op<
     let assemblyFormat = [{
         $chan attr-dict `:` functional-type($chan, $outp)
     }];
-
 }
 
 #endif

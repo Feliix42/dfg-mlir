@@ -20,6 +20,8 @@ def Dfg_InputType : Dfg_Type<"Input", []> {
     }];
 
     // FIXME(feliix42): Why does `AnyType` not work??
+    // Thoughts(jibi): Because AnyType is the type of a value,
+    // but here you want it to be a Type
     let parameters = (ins "Type":$elementType);
 
     let assemblyFormat = "`<` $elementType `>`";

@@ -30,7 +30,12 @@ Make sure, you have MLIR and LLVM built and available on your system. Then point
 cmake -S . -B build \
     -G Ninja \
     -DLLVM_DIR=$LLVM_PREFIX/lib/cmake/llvm \
-    -DMLIR_DIR=$MLIR_PREFIX/lib/cmake/mlir
+    -DMLIR_DIR=$MLIR_PREFIX/lib/cmake/mlir \
+    -DCIRCT_DIR=$CIRCT_PREFIX/lib/cmake/circt
+    (Optional)
+    -DCMAKE_C_COMPILER=<clang> \
+    -DCMAKE_CXX_COMPILER=<clang++> \
+    -DLLVM_USE_LINKER=<lld>
 
 # Build.
 cmake --build build
@@ -38,9 +43,10 @@ cmake --build build
 
 The following CMake variables can be configured:
 
-|       Name | Type     | Description |
-| ---------: | :------- | --- |
-| `LLVM_DIR` | `STRING` | Path to the CMake directory of an **LLVM** installation. <br/> *e.g. `~/tools/llvm-17/lib/cmake/llvm`* |
-| `MLIR_DIR` | `STRING` | Path to the CMake directory of an **MLIR** installation. <br/> *e.g. `~/tools/llvm-17/lib/cmake/mlir`* |
+|       Name  | Type     | Description |
+| ---------:  | :------- | --- |
+| `LLVM_DIR`  | `STRING` | Path to the CMake directory of an **LLVM** installation. <br/> *e.g. `~/tools/llvm-17/lib/cmake/llvm`* |
+| `MLIR_DIR`  | `STRING` | Path to the CMake directory of an **MLIR** installation. <br/> *e.g. `~/tools/llvm-17/lib/cmake/mlir`* |
+| `CIRCT_DIR` | `STRING` | Path to the CMake directory of an **CIRCT** installation. <br/> *e.g. `~/tools/circt/lib/cmake/circt`* |
 
 
