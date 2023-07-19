@@ -28,9 +28,9 @@ namespace {
 // be use in the new FModule when an op inside is trying to
 // use the old arguments.
 std::map<int, Value> newArgNums;
-std::optional<int> getArgNum(Value value)
+std::optional<int> getArgNum(Value value, std::map<int, Value> args)
 {
-    for (const auto &kv : newArgNums)
+    for (const auto &kv : args)
         if (kv.second == value) return kv.first;
     return std::nullopt;
 }
@@ -203,23 +203,24 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
 //     }
 // };
 
+// std::map<>
+
 void insertQueue(
     OpBuilder &builder,
     MLIRContext* context,
     Location loc,
     Type dataTy,
-    std::optional<int> size)
+    unsigned size)
 {
-    assert(size && "cannot create infinite fifo buffer on hardware");
     auto portTy = dyn_cast<IntegerType>(dataTy);
+    assert(portTy && "only integer type is supported on hardware");
+    auto portBit = portTy.getWidth();
     assert(
         !portTy.isSignless()
         && "signless integers are not supported in firrtl");
 
-    auto sizeNum = size.value();
-    auto suffix = (portTy.isSigned() ? "si" : "ui")
-                  + std::to_string(portTy.getWidth()) + "_"
-                  + std::to_string(sizeNum);
+    auto suffix = (portTy.isSigned() ? "si" : "ui") + std::to_string(portBit)
+                  + "_" + std::to_string(size);
 
     // Arguments needed to create a FModuleOp for Queue
     auto name = builder.getStringAttr("Queue_" + suffix);
@@ -245,12 +246,12 @@ void insertQueue(
     if (portTy.isSigned()) {
         ports.push_back(firrtl::PortInfo(
             builder.getStringAttr("io_enq_bits"),
-            firrtl::SIntType::get(context, sizeNum),
+            firrtl::SIntType::get(context, portBit),
             firrtl::Direction::In));
     } else if (portTy.isUnsigned()) {
         ports.push_back(firrtl::PortInfo(
             builder.getStringAttr("io_enq_bits"),
-            firrtl::UIntType::get(context, sizeNum),
+            firrtl::UIntType::get(context, portBit),
             firrtl::Direction::In));
     }
     ports.push_back(firrtl::PortInfo(
@@ -264,12 +265,12 @@ void insertQueue(
     if (portTy.isSigned()) {
         ports.push_back(firrtl::PortInfo(
             builder.getStringAttr("io_deq_bits"),
-            firrtl::SIntType::get(context, sizeNum),
+            firrtl::SIntType::get(context, portBit),
             firrtl::Direction::Out));
     } else if (portTy.isUnsigned()) {
         ports.push_back(firrtl::PortInfo(
             builder.getStringAttr("io_deq_bits"),
-            firrtl::UIntType::get(context, sizeNum),
+            firrtl::UIntType::get(context, portBit),
             firrtl::Direction::Out));
     }
 
@@ -281,29 +282,362 @@ void insertQueue(
     newBuilder.setInsertionPointToEnd(&moduleOp.getBodyRegion().front());
     auto newLoc = newBuilder.getUnknownLoc();
 
-    auto bitDepth = std::ceil(std::log2(sizeNum));
-    auto isTwoPower = sizeNum > 0 && (sizeNum & (sizeNum - 1)) == 0;
-    newBuilder.create<firrtl::ConstantOp>(
+    // Constants
+    uint64_t bitDepth = std::ceil(std::log2(size));
+    auto isTwoPower = size > 0 && (size & (size - 1)) == 0;
+    auto const0 = newBuilder.create<firrtl::ConstantOp>(
         newLoc,
         firrtl::UIntType::get(context, 1),
         llvm::APInt(/*numBits=*/1, /*value=*/1));
-    newBuilder.create<firrtl::ConstantOp>(
+    auto const1 = newBuilder.create<firrtl::ConstantOp>(
         newLoc,
         firrtl::UIntType::get(context, 1),
         llvm::APInt(1, 0));
+    firrtl::ConstantOp const2, const3;
     if (bitDepth > 1) {
-        newBuilder.create<firrtl::ConstantOp>(
+        const2 = newBuilder.create<firrtl::ConstantOp>(
             newLoc,
             firrtl::UIntType::get(context, bitDepth),
             llvm::APInt(bitDepth, 0));
         if (!isTwoPower) {
-            newBuilder.create<firrtl::ConstantOp>(
+            const3 = newBuilder.create<firrtl::ConstantOp>(
                 newLoc,
                 firrtl::UIntType::get(context, bitDepth),
-                llvm::APInt(bitDepth, sizeNum - 1));
+                llvm::APInt(bitDepth, size - 1));
         }
     }
-    // newBuilder.create<firrtl::MemOp>();
+
+    // Memory declaration
+    SmallVector<firrtl::BundleType::BundleElement> bundleMportField;
+    bundleMportField.push_back(firrtl::BundleType::BundleElement(
+        newBuilder.getStringAttr("addr"),
+        false,
+        firrtl::UIntType::get(context, bitDepth)));
+    bundleMportField.push_back(firrtl::BundleType::BundleElement(
+        newBuilder.getStringAttr("en"),
+        false,
+        firrtl::UIntType::get(context, 1)));
+    bundleMportField.push_back(firrtl::BundleType::BundleElement(
+        newBuilder.getStringAttr("clk"),
+        false,
+        firrtl::ClockType::get(context)));
+    if (portTy.isSigned()) {
+        bundleMportField.push_back(firrtl::BundleType::BundleElement(
+            newBuilder.getStringAttr("data"),
+            false,
+            firrtl::SIntType::get(context, portBit)));
+    } else if (portTy.isUnsigned()) {
+        bundleMportField.push_back(firrtl::BundleType::BundleElement(
+            newBuilder.getStringAttr("data"),
+            false,
+            firrtl::UIntType::get(context, portBit)));
+    }
+    bundleMportField.push_back(firrtl::BundleType::BundleElement(
+        newBuilder.getStringAttr("mask"),
+        false,
+        firrtl::UIntType::get(context, 1)));
+    auto bundleMport = firrtl::BundleType::get(context, bundleMportField);
+    SmallVector<firrtl::BundleType::BundleElement> bundleDeqField;
+    bundleDeqField.push_back(firrtl::BundleType::BundleElement(
+        newBuilder.getStringAttr("addr"),
+        false,
+        firrtl::UIntType::get(context, bitDepth)));
+    bundleDeqField.push_back(firrtl::BundleType::BundleElement(
+        newBuilder.getStringAttr("en"),
+        false,
+        firrtl::UIntType::get(context, 1)));
+    bundleDeqField.push_back(firrtl::BundleType::BundleElement(
+        newBuilder.getStringAttr("clk"),
+        false,
+        firrtl::ClockType::get(context)));
+    if (portTy.isSigned()) {
+        bundleDeqField.push_back(firrtl::BundleType::BundleElement(
+            newBuilder.getStringAttr("data"),
+            true,
+            firrtl::SIntType::get(context, portBit)));
+    } else if (portTy.isUnsigned()) {
+        bundleDeqField.push_back(firrtl::BundleType::BundleElement(
+            newBuilder.getStringAttr("data"),
+            true,
+            firrtl::UIntType::get(context, portBit)));
+    }
+    auto bundleDeq = firrtl::BundleType::get(context, bundleDeqField);
+    SmallVector<Type> memResultTypes;
+    memResultTypes.push_back(bundleMport);
+    memResultTypes.push_back(bundleDeq);
+    SmallVector<Attribute> portNames;
+    portNames.push_back(newBuilder.getStringAttr("MPORT"));
+    portNames.push_back(newBuilder.getStringAttr("io_deq_bits_MPORT"));
+    auto memOp = newBuilder.create<firrtl::MemOp>(
+        newLoc,
+        memResultTypes,
+        0,
+        1,
+        size,
+        RUWAttr::Undefined,
+        portNames,
+        "ram");
+
+    // Extract value from memory bundle field
+    // auto test = memOp.getPortNamed("MPORT");
+    auto addrMport = newBuilder.create<firrtl::SubfieldOp>(
+        newLoc,
+        memOp.getPortNamed("MPORT"),
+        "addr");
+    auto enMport = newBuilder.create<firrtl::SubfieldOp>(
+        newLoc,
+        memOp.getPortNamed("MPORT"),
+        "en");
+    auto clkMport = newBuilder.create<firrtl::SubfieldOp>(
+        newLoc,
+        memOp.getPortNamed("MPORT"),
+        "clk");
+    auto dataMport = newBuilder.create<firrtl::SubfieldOp>(
+        newLoc,
+        memOp.getPortNamed("MPORT"),
+        "data");
+    auto maskMport = newBuilder.create<firrtl::SubfieldOp>(
+        newLoc,
+        memOp.getPortNamed("MPORT"),
+        "mask");
+    auto addrDeq = newBuilder.create<firrtl::SubfieldOp>(
+        newLoc,
+        memOp.getPortNamed("io_deq_bits_MPORT"),
+        "addr");
+    auto enDeq = newBuilder.create<firrtl::SubfieldOp>(
+        newLoc,
+        memOp.getPortNamed("io_deq_bits_MPORT"),
+        "en");
+    auto clkDeq = newBuilder.create<firrtl::SubfieldOp>(
+        newLoc,
+        memOp.getPortNamed("io_deq_bits_MPORT"),
+        "clk");
+    auto dataDeq = newBuilder.create<firrtl::SubfieldOp>(
+        newLoc,
+        memOp.getPortNamed("io_deq_bits_MPORT"),
+        "data");
+
+    // Get RegReset value
+    auto value = newBuilder.create<firrtl::RegResetOp>(
+        newLoc,
+        firrtl::UIntType::get(context, bitDepth),
+        moduleOp.getArgument(0),
+        moduleOp.getArgument(1),
+        const2.getResult(),
+        "value");
+    value->setAttr(
+        "firrtl.random_init_start",
+        newBuilder.getIntegerAttr(newBuilder.getIntegerType(64, false), 0));
+    auto value_1 = newBuilder.create<firrtl::RegResetOp>(
+        newLoc,
+        firrtl::UIntType::get(context, bitDepth),
+        moduleOp.getArgument(0),
+        moduleOp.getArgument(1),
+        const2.getResult(),
+        "value_1");
+    value_1->setAttr(
+        "firrtl.random_init_start",
+        newBuilder.getIntegerAttr(
+            newBuilder.getIntegerType(64, false),
+            bitDepth));
+    auto maybe_full = newBuilder.create<firrtl::RegResetOp>(
+        newLoc,
+        firrtl::UIntType::get(context, 1),
+        moduleOp.getArgument(0),
+        moduleOp.getArgument(1),
+        const1.getResult(),
+        "maybe_full");
+    maybe_full->setAttr(
+        "firrtl.random_init_start",
+        newBuilder.getIntegerAttr(
+            newBuilder.getIntegerType(64, false),
+            bitDepth * 2));
+
+    // Semantics used to determine empty or full
+    auto ptr_match = newBuilder.create<firrtl::EQPrimOp>(
+        newLoc,
+        value.getResult(),
+        value_1.getResult());
+    auto _empty_T =
+        newBuilder.create<firrtl::NotPrimOp>(newLoc, maybe_full.getResult());
+    auto empty = newBuilder.create<firrtl::AndPrimOp>(
+        newLoc,
+        ptr_match.getResult(),
+        _empty_T.getResult());
+    auto full = newBuilder.create<firrtl::AndPrimOp>(
+        newLoc,
+        ptr_match.getResult(),
+        maybe_full.getResult());
+    auto _do_enq_T = newBuilder.create<firrtl::AndPrimOp>(
+        newLoc,
+        moduleOp.getArgument(2),
+        moduleOp.getArgument(3));
+    auto do_enq = newBuilder.create<firrtl::WireOp>(
+        newLoc,
+        firrtl::UIntType::get(context, 1),
+        "do_enq");
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        do_enq.getResult(),
+        _do_enq_T.getResult());
+    auto _do_deq_T = newBuilder.create<firrtl::AndPrimOp>(
+        newLoc,
+        moduleOp.getArgument(5),
+        moduleOp.getArgument(6));
+    auto do_deq = newBuilder.create<firrtl::WireOp>(
+        newLoc,
+        firrtl::UIntType::get(context, 1),
+        "do_deq");
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        do_deq.getResult(),
+        _do_deq_T.getResult());
+
+    // Connect enq to memory
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        addrMport.getResult(),
+        value.getResult());
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        enMport.getResult(),
+        do_enq.getResult());
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        clkMport.getResult(),
+        moduleOp.getArgument(0));
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        maskMport.getResult(),
+        const0.getResult());
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        dataMport.getResult(),
+        moduleOp.getArgument(4));
+
+    // Addr +1 when enq -1 when deq
+    // if full then back to 0
+    firrtl::EQPrimOp wrap;
+    if (!isTwoPower)
+        wrap = newBuilder.create<firrtl::EQPrimOp>(
+            newLoc,
+            value.getResult(),
+            const3.getResult());
+    auto _value_T = newBuilder.create<firrtl::AddPrimOp>(
+        newLoc,
+        value.getResult(),
+        const0.getResult());
+    auto _value_T_1 = newBuilder.create<firrtl::BitsPrimOp>(
+        newLoc,
+        _value_T.getResult(),
+        bitDepth - 1,
+        0);
+    firrtl::MuxPrimOp mux_do_enq;
+    if (isTwoPower)
+        mux_do_enq = newBuilder.create<firrtl::MuxPrimOp>(
+            newLoc,
+            do_enq.getResult(),
+            _value_T_1.getResult(),
+            value.getResult());
+    else {
+        auto mux_wrap = newBuilder.create<firrtl::MuxPrimOp>(
+            newLoc,
+            wrap.getResult(),
+            const2.getResult(),
+            _value_T_1.getResult());
+        mux_do_enq = newBuilder.create<firrtl::MuxPrimOp>(
+            newLoc,
+            do_enq.getResult(),
+            mux_wrap.getResult(),
+            value.getResult());
+    }
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        value.getResult(),
+        mux_do_enq.getResult());
+    firrtl::EQPrimOp wrap_1;
+    if (!isTwoPower)
+        wrap_1 = newBuilder.create<firrtl::EQPrimOp>(
+            newLoc,
+            value_1.getResult(),
+            const3.getResult());
+    auto _value_T_2 = newBuilder.create<firrtl::AddPrimOp>(
+        newLoc,
+        value_1.getResult(),
+        const0.getResult());
+    auto _value_T_3 = newBuilder.create<firrtl::BitsPrimOp>(
+        newLoc,
+        _value_T_2.getResult(),
+        bitDepth - 1,
+        0);
+    firrtl::MuxPrimOp mux_do_deq;
+    if (isTwoPower)
+        mux_do_deq = newBuilder.create<firrtl::MuxPrimOp>(
+            newLoc,
+            do_deq.getResult(),
+            _value_T_3.getResult(),
+            value_1.getResult());
+    else {
+        auto mux_wrap_1 = newBuilder.create<firrtl::MuxPrimOp>(
+            newLoc,
+            wrap_1.getResult(),
+            const2.getResult(),
+            _value_T_3.getResult());
+        mux_do_deq = newBuilder.create<firrtl::MuxPrimOp>(
+            newLoc,
+            do_deq.getResult(),
+            mux_wrap_1.getResult(),
+            value_1.getResult());
+    }
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        value_1.getResult(),
+        mux_do_deq.getResult());
+
+    // Check if full or empty
+    auto check_maybe_full = newBuilder.create<firrtl::NEQPrimOp>(
+        newLoc,
+        do_enq.getResult(),
+        do_deq.getResult());
+    auto mux_maybe_full = newBuilder.create<firrtl::MuxPrimOp>(
+        newLoc,
+        check_maybe_full.getResult(),
+        do_enq.getResult(),
+        maybe_full.getResult());
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        maybe_full.getResult(),
+        mux_maybe_full.getResult());
+    auto _io_deq_valid_T =
+        newBuilder.create<firrtl::NotPrimOp>(newLoc, empty.getResult());
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        moduleOp.getArgument(6),
+        _io_deq_valid_T.getResult());
+    auto _io_enq_ready_T =
+        newBuilder.create<firrtl::NotPrimOp>(newLoc, full.getResult());
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        moduleOp.getArgument(2),
+        _io_enq_ready_T.getResult());
+
+    // Connect deq to memory
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        addrDeq.getResult(),
+        value_1.getResult());
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        enDeq.getResult(),
+        const0.getResult());
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        clkDeq.getResult(),
+        moduleOp.getArgument(0));
+    newBuilder.create<firrtl::StrictConnectOp>(
+        newLoc,
+        moduleOp.getArgument(7),
+        dataDeq.getResult());
 }
 
 struct ConvertChannel : OpConversionPattern<ChannelOp> {
@@ -370,31 +704,37 @@ void ConvertDfgToCirctPass::runOnOperation()
     target.addLegalDialect<firrtl::FIRRTLDialect>();
     target.addIllegalDialect<dfg::DfgDialect>();
 
-    // if (failed(applyPartialConversion(
-    //         getOperation(),
-    //         target,
-    //         std::move(patterns)))) {
-    //     signalPassFailure();
-    // }
-
+    // Insert Queue at the top if there is one channel
+    // also check if a specific queue already exists
+    std::map<unsigned, Type> queueList;
     auto module = dyn_cast<ModuleOp>(getOperation());
     OpBuilder builder(&getContext());
     builder.setInsertionPointToStart(&module.getBodyRegion().front());
     module.walk([&](OperatorOp operatorOp) {
         operatorOp.walk([&](ChannelOp channelOp) {
-            insertQueue(
-                builder,
-                &getContext(),
-                builder.getUnknownLoc(),
-                channelOp.getEncapsulatedType(),
-                channelOp.getBufferSize());
+            auto channelTy = channelOp.getEncapsulatedType();
+            auto size = channelOp.getBufferSize();
+            assert(size && "cannot create infinite fifo buffer on hardware");
+            auto isExist = queueList.find(size.value());
+            if (isExist == queueList.end() || isExist->second != channelTy) {
+                insertQueue(
+                    builder,
+                    &getContext(),
+                    builder.getUnknownLoc(),
+                    channelTy,
+                    size.value());
+                queueList.emplace(size.value(), channelTy);
+            }
         });
     });
     // func::FuncOp top;
     // module.walk([&](func::FuncOp funcOp) { top = funcOp; });
+
+    // Insert CircuitOp into module and move every op into it
     auto circuitOp = builder.create<firrtl::CircuitOp>(
         builder.getUnknownLoc(),
-        builder.getStringAttr("TopModule"));
+        builder.getStringAttr("TopModule")); // or, walk to find the last FuncOp
+                                             // and then use its name
     for (auto &op :
          llvm::make_early_inc_range(module.getBodyRegion().getOps())) {
         if (dyn_cast<firrtl::CircuitOp>(op)) continue;
