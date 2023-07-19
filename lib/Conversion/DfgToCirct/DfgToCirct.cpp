@@ -203,27 +203,19 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
 //     }
 // };
 
-// std::map<>
-
-void insertQueue(
+// Helper to instantiate Queue according to the channel
+std::map<std::string, firrtl::FModuleOp> queueList;
+firrtl::FModuleOp insertQueue(
     OpBuilder &builder,
     MLIRContext* context,
     Location loc,
-    Type dataTy,
+    std::string name,
+    bool isSigned,
+    unsigned portBit,
     unsigned size)
 {
-    auto portTy = dyn_cast<IntegerType>(dataTy);
-    assert(portTy && "only integer type is supported on hardware");
-    auto portBit = portTy.getWidth();
-    assert(
-        !portTy.isSignless()
-        && "signless integers are not supported in firrtl");
-
-    auto suffix = (portTy.isSigned() ? "si" : "ui") + std::to_string(portBit)
-                  + "_" + std::to_string(size);
-
     // Arguments needed to create a FModuleOp for Queue
-    auto name = builder.getStringAttr("Queue_" + suffix);
+    auto nameStrAttr = builder.getStringAttr(name);
     auto convention =
         firrtl::ConventionAttr::get(context, Convention::Internal);
     SmallVector<firrtl::PortInfo> ports;
@@ -243,12 +235,12 @@ void insertQueue(
         builder.getStringAttr("io_enq_valid"),
         firrtl::UIntType::get(context, 1),
         firrtl::Direction::In));
-    if (portTy.isSigned()) {
+    if (isSigned) {
         ports.push_back(firrtl::PortInfo(
             builder.getStringAttr("io_enq_bits"),
             firrtl::SIntType::get(context, portBit),
             firrtl::Direction::In));
-    } else if (portTy.isUnsigned()) {
+    } else {
         ports.push_back(firrtl::PortInfo(
             builder.getStringAttr("io_enq_bits"),
             firrtl::UIntType::get(context, portBit),
@@ -262,12 +254,12 @@ void insertQueue(
         builder.getStringAttr("io_deq_valid"),
         firrtl::UIntType::get(context, 1),
         firrtl::Direction::Out));
-    if (portTy.isSigned()) {
+    if (isSigned) {
         ports.push_back(firrtl::PortInfo(
             builder.getStringAttr("io_deq_bits"),
             firrtl::SIntType::get(context, portBit),
             firrtl::Direction::Out));
-    } else if (portTy.isUnsigned()) {
+    } else {
         ports.push_back(firrtl::PortInfo(
             builder.getStringAttr("io_deq_bits"),
             firrtl::UIntType::get(context, portBit),
@@ -275,7 +267,7 @@ void insertQueue(
     }
 
     auto moduleOp =
-        builder.create<firrtl::FModuleOp>(loc, name, convention, ports);
+        builder.create<firrtl::FModuleOp>(loc, nameStrAttr, convention, ports);
 
     // Create the Queue behavior one by one
     OpBuilder newBuilder(context);
@@ -321,12 +313,12 @@ void insertQueue(
         newBuilder.getStringAttr("clk"),
         false,
         firrtl::ClockType::get(context)));
-    if (portTy.isSigned()) {
+    if (isSigned) {
         bundleMportField.push_back(firrtl::BundleType::BundleElement(
             newBuilder.getStringAttr("data"),
             false,
             firrtl::SIntType::get(context, portBit)));
-    } else if (portTy.isUnsigned()) {
+    } else {
         bundleMportField.push_back(firrtl::BundleType::BundleElement(
             newBuilder.getStringAttr("data"),
             false,
@@ -350,12 +342,12 @@ void insertQueue(
         newBuilder.getStringAttr("clk"),
         false,
         firrtl::ClockType::get(context)));
-    if (portTy.isSigned()) {
+    if (isSigned) {
         bundleDeqField.push_back(firrtl::BundleType::BundleElement(
             newBuilder.getStringAttr("data"),
             true,
             firrtl::SIntType::get(context, portBit)));
-    } else if (portTy.isUnsigned()) {
+    } else {
         bundleDeqField.push_back(firrtl::BundleType::BundleElement(
             newBuilder.getStringAttr("data"),
             true,
@@ -638,7 +630,12 @@ void insertQueue(
         newLoc,
         moduleOp.getArgument(7),
         dataDeq.getResult());
+
+    return moduleOp;
 }
+
+// Help to determine the queue number
+int queueNum = 0;
 
 struct ConvertChannel : OpConversionPattern<ChannelOp> {
     using OpConversionPattern<ChannelOp>::OpConversionPattern;
@@ -653,6 +650,27 @@ struct ConvertChannel : OpConversionPattern<ChannelOp> {
     {
         const auto bufferSize = op.getBufferSize();
         assert(bufferSize && "need to specify the size of channel");
+
+        auto channelTy = op.getEncapsulatedType();
+        auto portTy = dyn_cast<IntegerType>(channelTy);
+        assert(portTy && "only integer type is supported on hardware");
+        auto portBit = portTy.getWidth();
+        auto size = op.getBufferSize();
+        assert(size && "cannot create infinite fifo buffer on hardware");
+        auto suffix = (portTy.isSigned() ? "si" : "ui")
+                      + std::to_string(portBit) + "_"
+                      + std::to_string(size.value());
+        auto name = "Queue_" + suffix;
+
+        auto queueModule = queueList.find(name)->second;
+
+        auto queueName =
+            queueNum == 0 ? "queue" : "queue" + std::to_string(queueNum);
+        rewriter.create<firrtl::InstanceOp>(
+            op.getLoc(),
+            queueModule,
+            rewriter.getStringAttr(queueName));
+        queueNum++;
 
         rewriter.eraseOp(op);
 
@@ -706,24 +724,33 @@ void ConvertDfgToCirctPass::runOnOperation()
 
     // Insert Queue at the top if there is one channel
     // also check if a specific queue already exists
-    std::map<unsigned, Type> queueList;
+    // std::map<unsigned, Type> queueList;
     auto module = dyn_cast<ModuleOp>(getOperation());
     OpBuilder builder(&getContext());
     builder.setInsertionPointToStart(&module.getBodyRegion().front());
     module.walk([&](OperatorOp operatorOp) {
         operatorOp.walk([&](ChannelOp channelOp) {
             auto channelTy = channelOp.getEncapsulatedType();
+            auto portTy = dyn_cast<IntegerType>(channelTy);
+            assert(portTy && "only integer type is supported on hardware");
+            auto portBit = portTy.getWidth();
             auto size = channelOp.getBufferSize();
             assert(size && "cannot create infinite fifo buffer on hardware");
-            auto isExist = queueList.find(size.value());
-            if (isExist == queueList.end() || isExist->second != channelTy) {
-                insertQueue(
+            auto suffix = (portTy.isSigned() ? "si" : "ui")
+                          + std::to_string(portBit) + "_"
+                          + std::to_string(size.value());
+            auto name = "Queue_" + suffix;
+            auto isExist = queueList.find(name);
+            if (isExist == queueList.end()) {
+                auto queueModule = insertQueue(
                     builder,
                     &getContext(),
                     builder.getUnknownLoc(),
-                    channelTy,
+                    name,
+                    portTy.isSigned(),
+                    portBit,
                     size.value());
-                queueList.emplace(size.value(), channelTy);
+                queueList.emplace(name, queueModule);
             }
         });
     });
