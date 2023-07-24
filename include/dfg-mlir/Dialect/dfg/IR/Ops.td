@@ -214,10 +214,6 @@ def Dfg_InstantiateOp : Dfg_Op<
                          Variadic<Dfg_OutputType>:$inputs,
                          Variadic<Dfg_InputType>:$outputs);
 
-    // let assemblyFormat = [{
-    //     $callee `inputs` `(` $inputs `)` `outputs` `(` $outputs `)` attr-dict `:` functional-type($inputs, $outputs)
-    // }];
-
     let hasCustomAssemblyFormat = 1;
 }
 
@@ -262,7 +258,6 @@ def Dfg_PushOp : Dfg_Op<
         TypesMatchWith<"Channel type matches pushed type",
                        "chan", "inp",
                        "$_self.dyn_cast<InputType>().getElementType()">
-        //                "InputType::get($_ctxt, $_self).getElementType()">
     ]
 > {
     let summary = "Pushes a value into a channel input to send it to the next operator.";
@@ -286,8 +281,11 @@ def Dfg_PushOp : Dfg_Op<
 
     let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
 
+    // let assemblyFormat = [{
+    //     `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
+    // }];
     let assemblyFormat = [{
-        `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
+        `(` $inp `)` $chan attr-dict `:` type($inp) `to` type($chan)
     }];
 }
 
@@ -297,7 +295,6 @@ def Dfg_PullOp : Dfg_Op<
         TypesMatchWith<"Channel type matches pulled type",
                        "chan", "outp",
                        "$_self.dyn_cast<OutputType>().getElementType()">
-                    //    "OutputType::get($_ctxt, $_self).getElementType()">
     ]
 > {
     let summary = "Pulls a value from a channel.";
@@ -322,8 +319,11 @@ def Dfg_PullOp : Dfg_Op<
     let arguments = (ins Dfg_OutputType: $chan);
     let results = (outs AnyType: $outp);
 
+    // let assemblyFormat = [{
+    //     $chan attr-dict `:` functional-type($chan, $outp)
+    // }];
     let assemblyFormat = [{
-        $chan attr-dict `:` functional-type($chan, $outp)
+        $chan attr-dict `:` type($outp) `from` type($chan)
     }];
 }
 
