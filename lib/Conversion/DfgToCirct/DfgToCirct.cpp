@@ -3,11 +3,12 @@
 /// @file
 /// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
+#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
+
 #include "../PassDetails.h"
 #include "circt/Dialect/FIRRTL/FIRRTLDialect.h"
 #include "circt/Dialect/FIRRTL/FIRRTLOpInterfaces.h"
 #include "circt/Dialect/FIRRTL/FIRRTLOps.h"
-#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -27,11 +28,15 @@ namespace {
 // Helper map&func to determine which three arguments should
 // be use in the new FModule when an op inside is trying to
 // use the old arguments.
-std::map<int, Value> newArgNums;
-std::optional<int> getArgNum(Value value, std::map<int, Value> args)
+SmallVector<std::pair<int, Value>> oldArgNums;
+SmallVector<Value> newArgs;
+SmallVector<std::pair<Value, Value>> newOperands;
+template<typename T1, typename T2>
+std::optional<T1>
+getNewArgOrOperand(T2 find, SmallVector<std::pair<T1, T2>> args)
 {
     for (const auto &kv : args)
-        if (kv.second == value) return kv.first;
+        if (kv.second == find) return kv.first;
     return std::nullopt;
 }
 
@@ -60,7 +65,8 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
         int in_num = 1;
         int out_num = 1;
         int port_num = 0;
-        newArgNums.clear();
+        oldArgNums.clear();
+        newArgs.clear();
         for (size_t i = 0; i < size; i++) {
             const auto arg = args[i];
             const auto type = types[i];
@@ -71,6 +77,11 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
                     !elemTy.isSignless()
                     && "signless integers are not supported in firrtl");
                 auto width = elemTy.getWidth();
+                ports.push_back(firrtl::PortInfo(
+                    rewriter.getStringAttr(
+                        "io_in" + std::to_string(in_num) + "_ready"),
+                    firrtl::UIntType::get(context, 1),
+                    firrtl::Direction::Out));
                 ports.push_back(firrtl::PortInfo(
                     rewriter.getStringAttr(
                         "io_in" + std::to_string(in_num) + "_valid"),
@@ -89,12 +100,7 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
                         firrtl::UIntType::get(context, width),
                         firrtl::Direction::In));
                 }
-                newArgNums.emplace(port_num, arg);
-                ports.push_back(firrtl::PortInfo(
-                    rewriter.getStringAttr(
-                        "io_in" + std::to_string(in_num) + "_ready"),
-                    firrtl::UIntType::get(context, 1),
-                    firrtl::Direction::Out));
+                oldArgNums.push_back(std::make_pair(port_num, arg));
                 in_num++;
                 port_num++;
             } else if (const auto outTy = dyn_cast<InputType>(type)) {
@@ -109,6 +115,11 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
                         "io_out" + std::to_string(out_num) + "_ready"),
                     firrtl::UIntType::get(context, 1),
                     firrtl::Direction::In));
+                ports.push_back(firrtl::PortInfo(
+                    rewriter.getStringAttr(
+                        "io_out" + std::to_string(out_num) + "_valid"),
+                    firrtl::UIntType::get(context, 1),
+                    firrtl::Direction::Out));
                 if (elemTy.isSigned()) {
                     ports.push_back(firrtl::PortInfo(
                         rewriter.getStringAttr(
@@ -122,12 +133,7 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
                         firrtl::UIntType::get(context, width),
                         firrtl::Direction::Out));
                 }
-                newArgNums.emplace(port_num, arg);
-                ports.push_back(firrtl::PortInfo(
-                    rewriter.getStringAttr(
-                        "io_out" + std::to_string(out_num) + "_valid"),
-                    firrtl::UIntType::get(context, 1),
-                    firrtl::Direction::Out));
+                oldArgNums.push_back(std::make_pair(port_num, arg));
                 out_num++;
                 port_num++;
             }
@@ -140,6 +146,9 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
             name,
             convention,
             ports);
+
+        // Store the new args for later use for pull/push
+        for (const auto &arg : module.getArguments()) newArgs.push_back(arg);
 
         // Move the Ops in Operator into new FIRRTL Module
         rewriter.setInsertionPointToStart(&module.getBody().front());
@@ -169,39 +178,81 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
 //     }
 // };
 
-// struct ConvertPull : OpConversionPattern<PullOp> {
-//     using OpConversionPattern<PullOp>::OpConversionPattern;
+struct ConvertPull : OpConversionPattern<PullOp> {
+    using OpConversionPattern<PullOp>::OpConversionPattern;
 
-//     ConvertPull(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<PullOp>(typeConverter, context){};
+    ConvertPull(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PullOp>(typeConverter, context){};
 
-//     LogicalResult matchAndRewrite(
-//         PullOp op,
-//         PullOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         rewriter.eraseOp(op);
+    LogicalResult matchAndRewrite(
+        PullOp op,
+        PullOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto context = this->getContext();
+        auto loc = op.getLoc();
 
-//         return success();
-//     }
-// };
+        // Get the position of the original argument
+        auto port = getNewArgOrOperand<int, Value>(op.getChan(), oldArgNums);
+        assert(port && "cannot use undefined argument");
 
-// struct ConvertPush : OpConversionPattern<PushOp> {
-//     using OpConversionPattern<PushOp>::OpConversionPattern;
+        // Output ready signal
+        auto deq_ready = newArgs[3 * port.value()];
+        // Input valid signal and data
+        auto deq_valid = newArgs[3 * port.value() + 1];
+        auto deq_bits = newArgs[3 * port.value() + 2];
 
-//     ConvertPush(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<PushOp>(typeConverter, context){};
+        auto const0 = rewriter.create<firrtl::ConstantOp>(
+            loc,
+            firrtl::UIntType::get(context, 1),
+            llvm::APInt(/*numBits=*/1, /*value=*/0));
+        rewriter.create<firrtl::StrictConnectOp>(
+            loc,
+            /*dest=*/deq_ready,
+            /*src=*/deq_valid);
+        auto wire = rewriter.create<firrtl::WireOp>(loc, deq_bits.getType());
+        rewriter.create<firrtl::StrictConnectOp>(
+            loc,
+            wire.getResult(),
+            deq_bits);
+        rewriter.create<firrtl::StrictConnectOp>(
+            loc,
+            deq_ready,
+            const0.getResult());
+        newOperands.push_back(std::make_pair(wire.getResult(), op.getResult()));
 
-//     LogicalResult matchAndRewrite(
-//         PushOp op,
-//         PushOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         rewriter.eraseOp(op);
+        rewriter.eraseOp(op);
 
-//         return success();
-//     }
-// };
+        return success();
+    }
+};
+
+struct ConvertPush : OpConversionPattern<PushOp> {
+    using OpConversionPattern<PushOp>::OpConversionPattern;
+
+    ConvertPush(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PushOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        PushOp op,
+        PushOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto context = this->getContext();
+        auto loc = op.getLoc();
+
+        auto toPush =
+            getNewArgOrOperand<Value, Value>(op.getInp(), newOperands);
+
+        // TODO: solve the push behavior
+
+        rewriter.create<firrtl::AndPrimOp>(loc, toPush.value(), toPush.value());
+
+        rewriter.eraseOp(op);
+
+        return success();
+    }
+};
 
 // Helper to instantiate Queue according to the channel
 std::map<std::string, firrtl::FModuleOp> queueList;
@@ -685,8 +736,8 @@ void mlir::populateDfgToCirctConversionPatterns(
     RewritePatternSet &patterns)
 {
     patterns.add<ConvertOperator>(typeConverter, patterns.getContext());
-    // patterns.add<ConvertPull>(typeConverter, patterns.getContext());
-    // patterns.add<ConvertPush>(typeConverter, patterns.getContext());
+    patterns.add<ConvertPull>(typeConverter, patterns.getContext());
+    patterns.add<ConvertPush>(typeConverter, patterns.getContext());
     // patterns.add<ConvertLoop>(typeConverter, patterns.getContext());
     patterns.add<ConvertChannel>(typeConverter, patterns.getContext());
 }
