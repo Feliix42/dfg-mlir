@@ -3,12 +3,11 @@
 /// @file
 /// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
-#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
-
 #include "../PassDetails.h"
 #include "circt/Dialect/FIRRTL/FIRRTLDialect.h"
 #include "circt/Dialect/FIRRTL/FIRRTLOpInterfaces.h"
 #include "circt/Dialect/FIRRTL/FIRRTLOps.h"
+#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -241,12 +240,37 @@ struct ConvertPush : OpConversionPattern<PushOp> {
         auto context = this->getContext();
         auto loc = op.getLoc();
 
+        // Get the position of the original argument
+        auto port = getNewArgOrOperand<int, Value>(op.getChan(), oldArgNums);
+        assert(port && "cannot use undefined argument");
+
+        // Output ready signal
+        auto enq_ready = newArgs[3 * port.value()];
+        // Input valid signal and data
+        auto enq_valid = newArgs[3 * port.value() + 1];
+        auto enq_bits = newArgs[3 * port.value() + 2];
+
+        auto const0 = rewriter.create<firrtl::ConstantOp>(
+            loc,
+            firrtl::UIntType::get(context, 1),
+            llvm::APInt(/*numBits=*/1, /*value=*/0));
+        rewriter.create<firrtl::StrictConnectOp>(
+            loc,
+            /*dest=*/enq_valid,
+            /*src=*/enq_ready);
+
         auto toPush =
             getNewArgOrOperand<Value, Value>(op.getInp(), newOperands);
+        assert(toPush && "cannot push nothing to channel");
+
+        // auto wire = rewriter.create<firrtl::WireOp>(loc, deq_bits.getType());
+        rewriter.create<firrtl::StrictConnectOp>(loc, enq_bits, toPush.value());
+        rewriter.create<firrtl::StrictConnectOp>(
+            loc,
+            enq_valid,
+            const0.getResult());
 
         // TODO: solve the push behavior
-
-        rewriter.create<firrtl::AndPrimOp>(loc, toPush.value(), toPush.value());
 
         rewriter.eraseOp(op);
 
