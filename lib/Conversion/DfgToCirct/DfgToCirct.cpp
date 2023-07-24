@@ -24,9 +24,9 @@ using namespace circt;
 
 namespace {
 
-// Helper map&func to determine which three arguments should
-// be use in the new FModule when an op inside is trying to
-// use the old arguments.
+// Helper to determine which arguments should to be used in
+// the new FModule when an op inside is trying to use the
+// old arguments.
 SmallVector<std::pair<int, Value>> oldArgNums;
 SmallVector<Value> newArgs;
 SmallVector<std::pair<Value, Value>> newOperands;
@@ -38,6 +38,11 @@ getNewArgOrOperand(T2 find, SmallVector<std::pair<T1, T2>> args)
         if (kv.second == find) return kv.first;
     return std::nullopt;
 }
+
+// Helper to determine which module and operators to use
+// when instantiating an operator.
+std::map<std::string, firrtl::FModuleOp> operatorList;
+SmallVector<std::pair<SmallVector<Value>, Value>> newChannels;
 
 struct ConvertOperator : OpConversionPattern<OperatorOp> {
     using OpConversionPattern<OperatorOp>::OpConversionPattern;
@@ -145,6 +150,7 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
             name,
             convention,
             ports);
+        operatorList.emplace(op.getSymName(), module);
 
         // Store the new args for later use for pull/push
         for (const auto &arg : module.getArguments()) newArgs.push_back(arg);
@@ -263,14 +269,11 @@ struct ConvertPush : OpConversionPattern<PushOp> {
             getNewArgOrOperand<Value, Value>(op.getInp(), newOperands);
         assert(toPush && "cannot push nothing to channel");
 
-        // auto wire = rewriter.create<firrtl::WireOp>(loc, deq_bits.getType());
         rewriter.create<firrtl::StrictConnectOp>(loc, enq_bits, toPush.value());
         rewriter.create<firrtl::StrictConnectOp>(
             loc,
             enq_valid,
             const0.getResult());
-
-        // TODO: solve the push behavior
 
         rewriter.eraseOp(op);
 
@@ -711,7 +714,7 @@ firrtl::FModuleOp insertQueue(
 
 // Help to determine the queue number
 int queueNum = 0;
-
+// SmallVector<>
 struct ConvertChannel : OpConversionPattern<ChannelOp> {
     using OpConversionPattern<ChannelOp>::OpConversionPattern;
 
@@ -741,11 +744,107 @@ struct ConvertChannel : OpConversionPattern<ChannelOp> {
 
         auto queueName =
             queueNum == 0 ? "queue" : "queue" + std::to_string(queueNum);
-        rewriter.create<firrtl::InstanceOp>(
+        auto queueOp = rewriter.create<firrtl::InstanceOp>(
             op.getLoc(),
             queueModule,
             rewriter.getStringAttr(queueName));
         queueNum++;
+
+        SmallVector<Value> enqValues;
+        for (int i = 2; i < 5; i++) enqValues.push_back(queueOp.getResult(i));
+        newChannels.push_back(std::make_pair(enqValues, op.getResult(0)));
+        SmallVector<Value> deqValues;
+        for (int i = 5; i < 8; i++) deqValues.push_back(queueOp.getResult(i));
+        newChannels.push_back(std::make_pair(deqValues, op.getResult(1)));
+
+        rewriter.eraseOp(op);
+
+        return success();
+    }
+};
+
+// Helper to determine if an operator is already instantiated.
+// If so, change the name by multiple instantiation.
+std::map<std::string, int> instantiatedOperators;
+int getNameOfInstance(std::string to_find)
+{
+    auto it = instantiatedOperators.find(to_find);
+    if (it != instantiatedOperators.end()) {
+        auto num = it->second;
+        it->second++;
+        return num;
+    } else {
+        instantiatedOperators.emplace(to_find, 1);
+        return 0;
+    }
+}
+
+struct ConvertInstantiate : OpConversionPattern<InstantiateOp> {
+    using OpConversionPattern<InstantiateOp>::OpConversionPattern;
+
+    ConvertInstantiate(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<InstantiateOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        InstantiateOp op,
+        InstantiateOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto context = this->getContext();
+        auto loc = op.getLoc();
+
+        auto name = op.getCallee().str();
+        auto fmoduleOp = operatorList.find(name)->second;
+
+        auto nameIndex = getNameOfInstance(name);
+        auto instanceName =
+            nameIndex == 0 ? name : name + std::to_string(nameIndex);
+
+        auto newInstance = rewriter.create<firrtl::InstanceOp>(
+            loc,
+            fmoduleOp,
+            rewriter.getStringAttr(instanceName));
+
+        auto inputs = op.getInputs();
+        int i = 0;
+        int j = 0;
+        for (const auto &input : inputs) {
+            j = 0;
+            auto deqBundle = getNewArgOrOperand<SmallVector<Value>, Value>(
+                input,
+                newChannels);
+            rewriter.create<firrtl::StrictConnectOp>(
+                loc,
+                deqBundle.value()[j++],
+                newInstance.getResult(i++));
+            rewriter.create<firrtl::StrictConnectOp>(
+                loc,
+                newInstance.getResult(i++),
+                deqBundle.value()[j++]);
+            rewriter.create<firrtl::StrictConnectOp>(
+                loc,
+                newInstance.getResult(i++),
+                deqBundle.value()[j]);
+        }
+        auto outputs = op.getOutputs();
+        for (const auto &output : outputs) {
+            j = 0;
+            auto enqBundle = getNewArgOrOperand<SmallVector<Value>, Value>(
+                output,
+                newChannels);
+            rewriter.create<firrtl::StrictConnectOp>(
+                loc,
+                newInstance.getResult(i++),
+                enqBundle.value()[j++]);
+            rewriter.create<firrtl::StrictConnectOp>(
+                loc,
+                enqBundle.value()[j++],
+                newInstance.getResult(i++));
+            rewriter.create<firrtl::StrictConnectOp>(
+                loc,
+                enqBundle.value()[j],
+                newInstance.getResult(i++));
+        }
 
         rewriter.eraseOp(op);
 
@@ -764,6 +863,7 @@ void mlir::populateDfgToCirctConversionPatterns(
     patterns.add<ConvertPush>(typeConverter, patterns.getContext());
     // patterns.add<ConvertLoop>(typeConverter, patterns.getContext());
     patterns.add<ConvertChannel>(typeConverter, patterns.getContext());
+    patterns.add<ConvertInstantiate>(typeConverter, patterns.getContext());
 }
 
 namespace {
@@ -782,12 +882,12 @@ void ConvertDfgToCirctPass::runOnOperation()
     // into FIRRTL type.
     // ??? how could we convert a signless(MLIR) into signed(FIRRTL)?
     // treat everything as UInt?
-    converter.addConversion([&](InputType type) -> Type {
-        return converter.convertType(type.getElementType());
-    });
-    converter.addConversion([&](OutputType type) -> Type {
-        return converter.convertType(type.getElementType());
-    });
+    // converter.addConversion([&](InputType type) -> Type {
+    //     return converter.convertType(type.getElementType());
+    // });
+    // converter.addConversion([&](OutputType type) -> Type {
+    //     return converter.convertType(type.getElementType());
+    // });
 
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
