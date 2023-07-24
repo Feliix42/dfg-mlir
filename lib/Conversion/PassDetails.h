@@ -5,8 +5,6 @@
 
 #pragma once
 
-#include "circt/Dialect/ESI/ESIDialect.h"
-#include "circt/Dialect/Handshake/HandshakeDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
@@ -23,6 +21,10 @@ namespace mlir {
 // Forward declaration from Dialect.h
 template<typename ConcreteDialect>
 void registerDialect(DialectRegistry &registry);
+
+namespace arith {
+class ArithDialect;
+} // namespace arith
 
 namespace async {
 class AsyncDialect;

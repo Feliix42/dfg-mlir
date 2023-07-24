@@ -31,4 +31,16 @@ def ConvertDfgToCirct : Pass<"convert-dfg-to-circt"> {
     ];
 }
 
+def ConvertStdToCirct : Pass<"convert-std-to-circt"> {
+    let summary = "Convert Std dialect to CIRCT";
+
+    let constructor = "mlir::createConvertStdToCirctPass()";
+
+    let dependentDialects = [
+        "circt::firrtl::FIRRTLDialect",
+        "arith::ArithDialect",
+        "dfg::DfgDialect"
+    ];
+}
+
 #endif // DFG_MLIR_CONVERSION_PASSES

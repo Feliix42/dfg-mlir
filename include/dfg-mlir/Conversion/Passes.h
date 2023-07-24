@@ -7,6 +7,7 @@
 
 #include "dfg-mlir/Conversion/DfgToAsync/DfgToAsync.h"
 #include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
+#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
 
 namespace mlir::dfg {
 
