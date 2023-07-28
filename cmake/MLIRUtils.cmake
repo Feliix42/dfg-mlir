@@ -32,8 +32,8 @@ function(mlir_gen_ir prefix)
 
     set(LLVM_TARGET_DEFINITIONS Ops.td)
 
-    mlir_tablegen(Base.h.inc -gen-dialect-decls -dialect=${filter})
-    mlir_tablegen(Base.cpp.inc -gen-dialect-defs -dialect=${filter})
+    mlir_tablegen(Dialect.h.inc -gen-dialect-decls -dialect=${filter})
+    mlir_tablegen(Dialect.cpp.inc -gen-dialect-defs -dialect=${filter})
     mlir_tablegen(Types.h.inc -gen-typedef-decls -typedefs-dialect=${filter})
     mlir_tablegen(Types.cpp.inc -gen-typedef-defs -typedefs-dialect=${filter})
     # mlir_tablegen(Attributes.h.inc -gen-attrdef-decls -attrdefs-dialect=${filter})

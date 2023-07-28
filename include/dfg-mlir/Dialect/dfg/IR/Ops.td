@@ -12,18 +12,18 @@ include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/IR/FunctionInterfaces.td"
+// include "mlir/IR/BuiltinOps.td"
 
 
 def Dfg_OperatorOp : Dfg_Op<
         "operator",
         [
-            AffineScope,
             AutomaticAllocationScope,
-            // CallableOpInterface,
-            // FunctionOpInterface,
             IsolatedFromAbove,
-            OpAsmOpInterface,
+            HasParent<"ModuleOp">,
+            // OpAsmOpInterface, // for eliding namespaces of dfg
             NoTerminator
         ]> {
     let summary = "Defines a node in the Dataflow Graph";
@@ -61,19 +61,7 @@ def Dfg_OperatorOp : Dfg_Op<
 
     let extraClassDeclaration = [{
         bool isExternal();
-
-        //===------------------------------------------------------------------===//
-        // CallableOpInterface
-        //===------------------------------------------------------------------===//
-
-        /// Returns the region on the current operation that is callable. This may
-        /// return null in the case of an external callable object, e.g. an external
-        /// function.
-        // ::mlir::Region *getCallableRegion() { return isExternal() ? nullptr : &getBody(); }
-
-        /// Returns the results types that the callable region produces when
-        /// executed.
-        // ArrayRef<Type> getCallableResults() { return ArrayRef<Type>(); }
+        // ^ is the body there or not?
 
         //===------------------------------------------------------------------===//
         // FunctionOpInterface Methods
@@ -84,13 +72,6 @@ def Dfg_OperatorOp : Dfg_Op<
 
         /// Returns the result types of this function.
         ArrayRef<Type> getOutputTypes() { return getFunctionType().getResults(); }
-
-        //===------------------------------------------------------------------===//
-        // OpAsmOpInterface Methods
-        //===------------------------------------------------------------------===//
-
-        /// Allow the dialect prefix to be omitted.
-        static StringRef getDefaultDialect() { return "dfg"; }
 
         //===------------------------------------------------------------------===//
         // SymbolOpInterface Methods
@@ -118,16 +99,17 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
         ```
         dfg.operator @add inputs(%a:!dfg.output<type>) outputs(%b:!dfg.input<type>)
         {
-            dfg.loop (%a, %b) {
+            dfg.loop (%a: !dfg.output<type>, %b: !dfg.input<type>) {
                 ops ...
             }
         }
         ```
     }];
 
+    // TODO: Constraint to any channel types
     let arguments = (ins Variadic<AnyType>:$channels);
 
-    let regions = (region SizedRegion<1>: $body);
+    let regions = (region MinSizedRegion<1>: $body);
 
     let skipDefaultBuilders = 1;
     let builders = [OpBuilder<(ins "ValueRange":$channels)>];
@@ -139,10 +121,9 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
         [
-            // THIS ENFORCES OneResult ON THE OP!
-            // ConstantLike,
             Pure,
-            // OpAsmOpInterface
+            // TODO: actually implement!
+            // OpAsmOpInterface // for return names
         ]> {
     let summary = "Defines a channel with one input and one output port";
     let description = [{
@@ -179,6 +160,7 @@ def Dfg_ChannelOp : Dfg_Op<
         Dfg_OutputType:$out_chan
     );
 
+    // TODO: replace angled brackets with braces
     let hasCustomAssemblyFormat = 1;
 }
 
@@ -210,7 +192,7 @@ def Dfg_InstantiateOp : Dfg_Op<
 
     }];
 
-    let arguments = (ins SymbolNameAttr:$callee,
+    let arguments = (ins SymbolRefAttr:$callee,
                          Variadic<Dfg_OutputType>:$inputs,
                          Variadic<Dfg_InputType>:$outputs);
 
@@ -262,7 +244,6 @@ def Dfg_PushOp : Dfg_Op<
         TypesMatchWith<"Channel type matches pushed type",
                        "chan", "inp",
                        "$_self.dyn_cast<InputType>().getElementType()">
-        //                "InputType::get($_ctxt, $_self).getElementType()">
     ]
 > {
     let summary = "Pushes a value into a channel input to send it to the next operator.";
@@ -286,6 +267,7 @@ def Dfg_PushOp : Dfg_Op<
 
     let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
 
+    // TODO: custom assembly parser
     let assemblyFormat = [{
         `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
     }];
@@ -297,7 +279,8 @@ def Dfg_PullOp : Dfg_Op<
         TypesMatchWith<"Channel type matches pulled type",
                        "chan", "outp",
                        "$_self.dyn_cast<OutputType>().getElementType()">
-                    //    "OutputType::get($_ctxt, $_self).getElementType()">
+        // TODO:
+        // InferTypeOpInterface // (for generating builders, verification, etc)
     ]
 > {
     let summary = "Pulls a value from a channel.";
@@ -325,6 +308,8 @@ def Dfg_PullOp : Dfg_Op<
     let assemblyFormat = [{
         $chan attr-dict `:` functional-type($chan, $outp)
     }];
+
+    // let hasCustomAssemblyFormat = 1;
 }
 
 #endif
