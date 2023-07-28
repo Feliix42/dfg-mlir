@@ -3,8 +3,9 @@
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
-#include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
+
+#include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
@@ -307,21 +308,6 @@ void LoopOp::print(OpAsmPrinter &p)
             /*printEntryBlockArgs =*/false,
             /*printBlockTerminators =*/true);
     }
-}
-
-LogicalResult OperatorOp::verify()
-{
-    auto inputsType = getInputTypes();
-    for (const auto inTy : inputsType)
-        if (!inTy.isa<OutputType>())
-            return emitOpError("requires OutputType for input ports");
-
-    auto outputsType = getOutputTypes();
-    for (const auto outTy : outputsType)
-        if (!outTy.isa<InputType>())
-            return emitOpError("requires InputType for output ports");
-
-    return success();
 }
 
 //===----------------------------------------------------------------------===//
