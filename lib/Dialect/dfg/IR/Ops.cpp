@@ -206,11 +206,10 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = 0; i < inputTypes.size(); i++) {
             if (i > 0) p << ", ";
 
-            ArrayRef<NamedAttribute> attrs;
-            // if(argAttrs)
-            //     attrs = argAttrs[i].cast<DictionaryAttr>().getValue();
-
-            p.printRegionArgument(body.getArgument(i), attrs);
+            BlockArgument arg = body.getArgument(i);
+            p.printOperand(arg);
+            p << ": ";
+            p.printType(arg.getType().cast<OutputType>().getElementType());
         }
         p << ')';
     }
@@ -221,19 +220,15 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
 
-            ArrayRef<NamedAttribute> attrs;
-            // if(argAttrs)
-            //     attrs = argAttrs[i].cast<DictionaryAttr>().getValue();
-
-            p.printRegionArgument(body.getArgument(i), attrs);
+            BlockArgument arg = body.getArgument(i);
+            p.printOperand(arg);
+            p << ": ";
+            p.printType(arg.getType().cast<InputType>().getElementType());
         }
         p << ')';
     }
 
-    // if (!op->getAttrs().empty()) {
-    //     // NOTE(feliix42): Might needs a list of elided attrs -> inputs/...
-    //     p.printOptionalAttrDict(op->getAttrs());
-    // }
+    if (!op->getAttrs().empty()) p.printOptionalAttrDict(op->getAttrs());
 
     // Print the region
     if (!body.empty()) {
