@@ -27,6 +27,9 @@ using namespace mlir::dfg;
 
 //===----------------------------------------------------------------------===//
 
+// -> for multiple variadic attributes
+constexpr char kOperandSegmentSizesAttr[] = "operand_segment_sizes";
+
 //===----------------------------------------------------------------------===//
 // OperatorOp
 //===----------------------------------------------------------------------===//
@@ -35,19 +38,24 @@ void OperatorOp::build(
     OpBuilder &builder,
     OperationState &state,
     StringRef name,
-    FunctionType type)
+    ValueRange inputs,
+    ValueRange outputs)
 {
-
     state.addAttribute(
         SymbolTable::getSymbolAttrName(),
         builder.getStringAttr(name));
-    state.addAttribute(
-        getFunctionTypeAttrName(state.name),
-        TypeAttr::get(type));
-    state.addRegion();
+    state.addOperands(inputs);
+    state.addOperands(outputs);
 
-    // FIXME(feliix42): addArgAndResultAttrs to register the function arguments
-    // as block arguments (?) -> maybe also not needed, we'll see
+    int32_t numInputs = inputs.size();
+    int32_t numOutputs = outputs.size();
+
+    // set sizes of the inputs and outputs
+    auto operandSegmentSizes =
+        builder.getDenseI32ArrayAttr({numInputs, numOutputs});
+    state.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
+
+    state.addRegion();
 }
 
 /// @brief  Returns whether the operator is externally defined, i.e., has no
@@ -66,7 +74,7 @@ bool OperatorOp::isExternal()
 /// @param arguments A list of arguments to parse
 /// @return A parse result indicating success or failure to parse.
 template<typename T>
-static ParseResult parseFunctionArgumentList(
+static ParseResult parseChannelArgumentList(
     OpAsmParser &parser,
     SmallVectorImpl<OpAsmParser::Argument> &arguments)
 {
@@ -128,36 +136,36 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 
     // parse the signature of the operator
     SmallVector<OpAsmParser::Argument> arguments, outputArgs;
-    SMLoc signatureLocation = parser.getCurrentLocation();
 
     // parse inputs/outputs separately for later distinction
     if (succeeded(parser.parseOptionalKeyword("inputs"))) {
-        if (parseFunctionArgumentList<OutputType>(parser, arguments))
+        if (parseChannelArgumentList<OutputType>(parser, arguments))
             return failure();
     }
 
     if (succeeded(parser.parseOptionalKeyword("outputs"))) {
-        if (parseFunctionArgumentList<InputType>(parser, outputArgs))
+        if (parseChannelArgumentList<InputType>(parser, outputArgs))
             return failure();
     }
 
+    int32_t numInputs = arguments.size();
+    int32_t numOutputs = outputArgs.size();
+
     SmallVector<Type> argTypes;
-    argTypes.reserve(arguments.size());
+    argTypes.reserve(numInputs);
     SmallVector<Type> resultTypes;
-    resultTypes.reserve(outputArgs.size());
+    resultTypes.reserve(numOutputs);
+
+    // set sizes of the inputs and outputs
+    auto operandSegmentSizes =
+        builder.getDenseI32ArrayAttr({numInputs, numOutputs});
+    result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
     for (auto &arg : arguments) argTypes.push_back(arg.type);
     for (auto &arg : outputArgs) resultTypes.push_back(arg.type);
-    Type type = builder.getFunctionType(argTypes, resultTypes);
-
-    if (!type) {
-        return parser.emitError(signatureLocation)
-               << "Failed to construct operator type";
-    }
-
-    result.addAttribute(
-        getFunctionTypeAttrName(result.name),
-        TypeAttr::get(type));
+    if (parser.addTypesToList(argTypes, result.types)
+        || parser.addTypesToList(resultTypes, result.types))
+        return failure();
 
     // merge both argument lists for the block arguments
     arguments.append(outputArgs);
@@ -193,8 +201,8 @@ void OperatorOp::print(OpAsmPrinter &p)
     p.printSymbolName(funcName);
     p << ' ';
 
-    ArrayRef<Type> inputTypes = getFunctionType().getInputs();
-    ArrayRef<Type> outputTypes = getFunctionType().getResults();
+    ValueRange inputTypes = getInputs();
+    ValueRange outputTypes = getOutputs();
 
     // // NOTE(feliix42): Is this even necessary? There's no attributes
     // supported afaik FunctionOpInterface fu =
@@ -242,17 +250,20 @@ void OperatorOp::print(OpAsmPrinter &p)
 
 LogicalResult OperatorOp::verify()
 {
-    // Check if all the input are OutputType
-    // and all output are InputType
-    auto inputsType = getInputTypes();
-    for (const auto inTy : inputsType)
-        if (!inTy.isa<OutputType>())
-            return emitOpError("requires OutputType for input ports");
+    // NOTE(feliix42): This check failed to compile but it should be enforced by
+    // type bounds now.
 
-    auto outputsType = getOutputTypes();
-    for (const auto outTy : outputsType)
-        if (!outTy.isa<InputType>())
-            return emitOpError("requires InputType for output ports");
+    // // Check if all the input are OutputType
+    // // and all output are InputType
+    // auto inputsType = getInputs();
+    // for (const auto inTy : inputsType)
+    //     if (!inTy.isa<OutputType>())
+    //         return emitOpError("requires OutputType for input ports");
+
+    // auto outputsType = getOutputs();
+    // for (const auto outTy : outputsType)
+    //     if (!outTy.isa<InputType>())
+    //         return emitOpError("requires InputType for output ports");
 
     // If there is a LoopOp, it must be the first op in the body
     auto ops = getBody().getOps();
@@ -360,8 +371,6 @@ void ChannelOp::print(OpAsmPrinter &p)
 //===----------------------------------------------------------------------===//
 // InstantiateOp
 //===----------------------------------------------------------------------===//
-
-constexpr char kOperandSegmentSizesAttr[] = "operand_segment_sizes";
 
 ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 {

@@ -21,6 +21,7 @@ def Dfg_OperatorOp : Dfg_Op<
         "operator",
         [
             AutomaticAllocationScope,
+            AttrSizedOperandSegments,
             IsolatedFromAbove,
             HasParent<"ModuleOp">,
             NoTerminator
@@ -44,9 +45,9 @@ def Dfg_OperatorOp : Dfg_Op<
         ```
     }];
 
-    // TODO(feliix42): Make dedicated inputs/outputs attrs
     let arguments = (ins SymbolNameAttr: $sym_name,
-                        TypeAttrOf<FunctionType>: $function_type);
+                         Variadic<Dfg_OutputType>:$inputs,
+                         Variadic<Dfg_InputType>:$outputs);
 
     // The FunctionOpInterface requires zero or one region attached to the operator
     let regions = (region AnyRegion: $body);
@@ -54,22 +55,13 @@ def Dfg_OperatorOp : Dfg_Op<
     // how can an option like this be *so* under-documented?!
     let skipDefaultBuilders = 1;
 
+    // TODO(feliix42): add builder with attached region   
     let builders = [OpBuilder<(ins
-        "StringRef": $sym_name, "FunctionType": $type)>];
+        "StringRef": $sym_name, "ValueRange": $inputs, "ValueRange": $outputs)>];
 
     let extraClassDeclaration = [{
         /// Returns whether the operator is externally defined
         bool isExternal();
-
-        //===------------------------------------------------------------------===//
-        // FunctionOpInterface Methods
-        //===------------------------------------------------------------------===//
-
-        /// Returns the argument types of this function.
-        ArrayRef<Type> getInputTypes() { return getFunctionType().getInputs(); }
-
-        /// Returns the result types of this function.
-        ArrayRef<Type> getOutputTypes() { return getFunctionType().getResults(); }
 
         //===------------------------------------------------------------------===//
         // SymbolOpInterface Methods
