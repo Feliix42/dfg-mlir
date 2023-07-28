@@ -1,8 +1,8 @@
 dfg.operator @sum
-    inputs (%op_a: !dfg.output<ui32>, %op_b: !dfg.output<ui32>)
-    outputs (%a: !dfg.input<ui32>)
+    inputs (%op_a: ui32, %op_b: ui32)
+    outputs (%a: ui32)
 {
-    loop (%op_a: !dfg.output<ui32>) {
+    dfg.loop (%op_a: !dfg.output<ui32>) {
         %inp1 = dfg.pull %op_a : (!dfg.output<ui32>) -> (ui32)
         %inp2 = dfg.pull %op_b : (!dfg.output<ui32>) -> (ui32)
 
@@ -25,7 +25,7 @@ func.func @return_a_value() -> ui32
 
 dfg.operator @get_op
     inputs()
-    outputs(%op_b: !dfg.input<ui32>)
+    outputs(%op_b: ui32)
 {
     %b = func.call @return_a_value() : () -> ui32
     dfg.push(%b) %op_b : (ui32) -> (!dfg.input<ui32>)

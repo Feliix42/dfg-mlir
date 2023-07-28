@@ -50,13 +50,22 @@ void OperatorOp::build(
     // as block arguments (?) -> maybe also not needed, we'll see
 }
 
-// temporary workaround
+/// @brief  Returns whether the operator is externally defined, i.e., has no
+/// body.
+/// @return `true` if there is no body attached, `false` the operator has a
+/// body.
 bool OperatorOp::isExternal()
 {
     Region &body = getRegion();
     return body.empty();
 }
 
+/// @brief Parses a function argument list for inputs or outputs
+/// @tparam T The class of the argument. Must be either InputType or OutputType
+/// @param parser The currently used parser
+/// @param arguments A list of arguments to parse
+/// @return A parse result indicating success or failure to parse.
+template<typename T>
 static ParseResult parseFunctionArgumentList(
     OpAsmParser &parser,
     SmallVectorImpl<OpAsmParser::Argument> &arguments)
@@ -64,12 +73,6 @@ static ParseResult parseFunctionArgumentList(
     return parser.parseCommaSeparatedList(
         OpAsmParser::Delimiter::Paren,
         [&]() -> ParseResult {
-            // // Handle ellipsis as a special case.
-            // if (succeeded(parser.parseOptionalEllipsis())) {
-            //   // This is a variadic designator.
-            //   return failure(); // Stop parsing arguments.
-            // }
-
             // Parse argument name if present.
             OpAsmParser::Argument argument;
             auto argPresent = parser.parseOptionalArgument(
@@ -85,7 +88,6 @@ static ParseResult parseFunctionArgumentList(
                     return parser.emitError(
                         argument.ssaName.location,
                         "expected type instead of SSA identifier");
-
             } else {
                 argument.ssaName.location = parser.getCurrentLocation();
                 // Otherwise we just have a type list without SSA names.  Reject
@@ -104,6 +106,9 @@ static ParseResult parseFunctionArgumentList(
                     return failure();
                 argument.attrs = attrs.getDictionary(parser.getContext());
             }
+
+            argument.type = T::get(argument.type.getContext(), argument.type);
+
             arguments.push_back(argument);
             return success();
         });
@@ -127,11 +132,13 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 
     // parse inputs/outputs separately for later distinction
     if (succeeded(parser.parseOptionalKeyword("inputs"))) {
-        if (parseFunctionArgumentList(parser, arguments)) return failure();
+        if (parseFunctionArgumentList<OutputType>(parser, arguments))
+            return failure();
     }
 
     if (succeeded(parser.parseOptionalKeyword("outputs"))) {
-        if (parseFunctionArgumentList(parser, outputArgs)) return failure();
+        if (parseFunctionArgumentList<InputType>(parser, outputArgs))
+            return failure();
     }
 
     SmallVector<Type> argTypes;

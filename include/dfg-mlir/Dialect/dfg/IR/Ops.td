@@ -23,7 +23,6 @@ def Dfg_OperatorOp : Dfg_Op<
             AutomaticAllocationScope,
             IsolatedFromAbove,
             HasParent<"ModuleOp">,
-            // OpAsmOpInterface, // for eliding namespaces of dfg
             NoTerminator
         ]> {
     let summary = "Defines a node in the Dataflow Graph";
@@ -45,12 +44,11 @@ def Dfg_OperatorOp : Dfg_Op<
         ```
     }];
 
-    // TODO(feliix42): Ensure that all arguments are of type `channel`!
-
+    // TODO(feliix42): Make dedicated inputs/outputs attrs
     let arguments = (ins SymbolNameAttr: $sym_name,
                         TypeAttrOf<FunctionType>: $function_type);
 
-    // The FunctionOpInterface requires exactly one region attached to the operator
+    // The FunctionOpInterface requires zero or one region attached to the operator
     let regions = (region AnyRegion: $body);
 
     // how can an option like this be *so* under-documented?!
@@ -60,8 +58,8 @@ def Dfg_OperatorOp : Dfg_Op<
         "StringRef": $sym_name, "FunctionType": $type)>];
 
     let extraClassDeclaration = [{
+        /// Returns whether the operator is externally defined
         bool isExternal();
-        // ^ is the body there or not?
 
         //===------------------------------------------------------------------===//
         // FunctionOpInterface Methods
