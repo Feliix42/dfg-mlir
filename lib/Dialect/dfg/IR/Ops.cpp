@@ -15,6 +15,9 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 
+// TODO: REMOVE
+#include <iostream>
+
 #define DEBUG_TYPE "dfg-ops"
 
 using namespace mlir;
@@ -76,7 +79,8 @@ bool OperatorOp::isExternal()
 template<typename T>
 static ParseResult parseChannelArgumentList(
     OpAsmParser &parser,
-    SmallVectorImpl<OpAsmParser::Argument> &arguments)
+    SmallVectorImpl<OpAsmParser::Argument> &arguments,
+    SmallVectorImpl<Value> &values)
 {
     return parser.parseCommaSeparatedList(
         OpAsmParser::Delimiter::Paren,
@@ -95,109 +99,147 @@ static ParseResult parseChannelArgumentList(
             // 4. resolve all operands at the end with the list and some bs.
             // location info
 
-            // Parse argument name if present.
+            // OpAsmParser::UnresolvedOperand opname;
+            // mlir::Type ty;
+            // if (parser.parseOperand(opname) || parser.parseColon()
+            //     || parser.parseType(ty))
+            //     return failure();
+
+            // ty = T::get(ty.getContext(), ty);
+
             OpAsmParser::Argument argument;
-            auto argPresent = parser.parseOptionalArgument(
-                argument,
-                /*allowType=*/true,
-                /*allowAttrs=*/false);
-            if (argPresent.has_value()) {
-                if (failed(argPresent.value()))
-                    return failure(); // Present but malformed.
-
-                // Reject this if the preceding argument was missing a name.
-                if (!arguments.empty() && arguments.back().ssaName.name.empty())
-                    return parser.emitError(
-                        argument.ssaName.location,
-                        "expected type instead of SSA identifier");
-            } else {
-                argument.ssaName.location = parser.getCurrentLocation();
-                // Otherwise we just have a type list without SSA names.  Reject
-                // this if the preceding argument had a name.
-                if (!arguments.empty()
-                    && !arguments.back().ssaName.name.empty())
-                    return parser.emitError(
-                        argument.ssaName.location,
-                        "expected SSA identifier");
-
-                NamedAttrList attrs;
-                if (parser.parseType(argument.type)
-                    || parser.parseOptionalAttrDict(attrs)
-                    || parser.parseOptionalLocationSpecifier(
-                        argument.sourceLoc))
-                    return failure();
-                argument.attrs = attrs.getDictionary(parser.getContext());
-            }
+            if (parser.parseArgument(
+                    argument,
+                    /*allowType=*/true,
+                    /*allowAttrs=*/false))
+                return failure();
 
             argument.type = T::get(argument.type.getContext(), argument.type);
-
             arguments.push_back(argument);
-            return success();
+
+            // additionally store the result as Value
+            return parser.resolveOperand(
+                argument.ssaName,
+                argument.type,
+                values);
+
+            // auto argPresent = parser.parseOptionalArgument(
+            //     argument,
+            //     /*allowType=*/true,
+            //     /*allowAttrs=*/false);
+            // if (argPresent.has_value()) {
+            //     if (failed(argPresent.value()))
+            //         return failure(); // Present but malformed.
+
+            //     // Reject this if the preceding argument was missing a name.
+            //     if (!arguments.empty() &&
+            //     arguments.back().ssaName.name.empty())
+            //         return parser.emitError(
+            //             argument.ssaName.location,
+            //             "expected type instead of SSA identifier");
+            // } else {
+            //     argument.ssaName.location = parser.getCurrentLocation();
+            //     // Otherwise we just have a type list without SSA names.
+            //     Reject
+            //     // this if the preceding argument had a name.
+            //     if (!arguments.empty()
+            //         && !arguments.back().ssaName.name.empty())
+            //         return parser.emitError(
+            //             argument.ssaName.location,
+            //             "expected SSA identifier");
+
+            //     NamedAttrList attrs;
+            //     if (parser.parseType(argument.type)
+            //         || parser.parseOptionalAttrDict(attrs)
+            //         || parser.parseOptionalLocationSpecifier(
+            //             argument.sourceLoc))
+            //         return failure();
+            //     argument.attrs = attrs.getDictionary(parser.getContext());
+            // }
+
+            // argument.type = T::get(argument.type.getContext(),
+            // argument.type);
+
+            // arguments.push_back(argument);
+            // return success();
         });
 }
 
 ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 {
-    auto &builder = parser.getBuilder();
+    // auto &builder = parser.getBuilder();
 
     // parse the operator name
     StringAttr nameAttr;
-    if (parser.parseSymbolName(
-            nameAttr,
-            SymbolTable::getSymbolAttrName(),
-            result.attributes))
-        return failure();
+    if (parser.parseSymbolName(nameAttr)) return failure();
 
     // parse the signature of the operator
-    SmallVector<OpAsmParser::Argument> arguments, outputArgs;
+    SmallVector<OpAsmParser::Argument> arguments;
+    SmallVector<Value> inVals, outVals;
 
     // parse inputs/outputs separately for later distinction
     if (succeeded(parser.parseOptionalKeyword("inputs"))) {
-        if (parseChannelArgumentList<OutputType>(parser, arguments))
+        if (parseChannelArgumentList<OutputType>(parser, arguments, inVals))
             return failure();
     }
+
+    std::cout << "got inputs" << std::endl;
 
     if (succeeded(parser.parseOptionalKeyword("outputs"))) {
-        if (parseChannelArgumentList<InputType>(parser, outputArgs))
+        if (parseChannelArgumentList<InputType>(parser, arguments, outVals))
             return failure();
     }
 
-    int32_t numInputs = arguments.size();
-    int32_t numOutputs = outputArgs.size();
+    // int32_t numInputs = inVals.size();
+    // int32_t numOutputs = outVals.size();
 
-    SmallVector<Value> argTypes;
-    argTypes.reserve(numInputs);
-    SmallVector<Value> resultTypes;
-    resultTypes.reserve(numOutputs);
+    // SmallVector<Value> argTypes;
+    // argTypes.reserve(numInputs);
+    // SmallVector<Value> resultTypes;
+    // resultTypes.reserve(numOutputs);
 
     // set sizes of the inputs and outputs
-    auto operandSegmentSizes =
-        builder.getDenseI32ArrayAttr({numInputs, numOutputs});
-    result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
+    // auto operandSegmentSizes =
+    //     builder.getDenseI32ArrayAttr({numInputs, numOutputs});
+    // result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
-    for (auto &arg : arguments) argTypes.push_back(arg);
-    for (auto &arg : outputArgs) resultTypes.push_back(arg);
+    // for (auto &arg : inArgs) argTypes.push_back(arg);
+    // for (auto &arg : outputArgs) resultTypes.push_back(arg);
     // if (parser.addTypesToList(argTypes, result.types)
     //     || parser.addTypesToList(resultTypes, result.types))
     //     return failure();
 
     // merge both argument lists for the block arguments
-    arguments.append(outputArgs);
+    // inArgs.append(outputArgs);
 
     // if (parser.parseOptionalAttrDict(result.attributes)) return failure();
+    ValueRange inputs(inVals);
+    ValueRange outputs(outVals);
 
-    auto* body = result.addRegion();
-    SMLoc loc = parser.getCurrentLocation();
-    OptionalParseResult parseResult = parser.parseOptionalRegion(
-        *body,
-        arguments,
-        /*enableNameShadowing=*/false);
+    std::cout << "Creating builder & building op" << std::endl;
+    OpBuilder builder(parser.getContext());
+    build(builder, result, nameAttr, inputs, outputs);
+    std::cout << "Finished creating op" << std::endl;
 
-    if (parseResult.has_value()) {
-        if (failed(*parseResult)) return failure();
-        if (body->empty())
-            return parser.emitError(loc, "expected non-empty operator body");
-    }
+    std::cout << "Number of regions: " << result.regions.size() << std::endl;
+
+    for (auto &arg : arguments)
+        result.regions[0]->addArgument(
+            arg.type,
+            parser.getEncodedSourceLoc(arg.ssaName.location));
+    // auto* body = result.addRegion();
+    // SMLoc loc = parser.getCurrentLocation();
+    // OptionalParseResult parseResult = parser.parseOptionalRegion(
+    //     *body,
+    //     arguments,
+    //     /*enableNameShadowing=*/false);
+
+    // if (parseResult.has_value()) {
+    //     if (failed(*parseResult)) return failure();
+    //     if (body->empty())
+    //         return parser.emitError(loc, "expected non-empty operator body");
+    // }
+
     return success();
 }
 
