@@ -34,29 +34,29 @@ constexpr char kOperandSegmentSizesAttr[] = "operand_segment_sizes";
 // OperatorOp
 //===----------------------------------------------------------------------===//
 
-void OperatorOp::build(
-    OpBuilder &builder,
-    OperationState &state,
-    StringRef name,
-    ValueRange inputs,
-    ValueRange outputs)
-{
-    state.addAttribute(
-        SymbolTable::getSymbolAttrName(),
-        builder.getStringAttr(name));
-    state.addOperands(inputs);
-    state.addOperands(outputs);
+// void OperatorOp::build(
+//     OpBuilder &builder,
+//     OperationState &state,
+//     StringRef name,
+//     ValueRange inputs,
+//     ValueRange outputs)
+// {
+//     state.addAttribute(
+//         SymbolTable::getSymbolAttrName(),
+//         builder.getStringAttr(name));
+//     state.addOperands(inputs);
+//     state.addOperands(outputs);
 
-    int32_t numInputs = inputs.size();
-    int32_t numOutputs = outputs.size();
+//     int32_t numInputs = inputs.size();
+//     int32_t numOutputs = outputs.size();
 
-    // set sizes of the inputs and outputs
-    auto operandSegmentSizes =
-        builder.getDenseI32ArrayAttr({numInputs, numOutputs});
-    state.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
+//     // set sizes of the inputs and outputs
+//     auto operandSegmentSizes =
+//         builder.getDenseI32ArrayAttr({numInputs, numOutputs});
+//     state.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
-    state.addRegion();
-}
+//     state.addRegion();
+// }
 
 /// @brief  Returns whether the operator is externally defined, i.e., has no
 /// body.
@@ -81,6 +81,20 @@ static ParseResult parseChannelArgumentList(
     return parser.parseCommaSeparatedList(
         OpAsmParser::Delimiter::Paren,
         [&]() -> ParseResult {
+            // TODO(feliix42): I think this whole thing needs a redesign. What I
+            // need at the end are `ValueRange`s for both inputs and outputs.
+            // These are then going to be fed into the builer in the parser
+            // (rewrite this as well, remove manual construction in favor of
+            // calling the Builder with all necessary information!).
+            // So what I could see myself (painfully) doing for each argument
+            // is:
+            // 1. Parse the operand (just the name)
+            // 2. parse the colon
+            // 3. Parse the type
+            //    ----------------- Push both into a list
+            // 4. resolve all operands at the end with the list and some bs.
+            // location info
+
             // Parse argument name if present.
             OpAsmParser::Argument argument;
             auto argPresent = parser.parseOptionalArgument(
@@ -151,9 +165,9 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
     int32_t numInputs = arguments.size();
     int32_t numOutputs = outputArgs.size();
 
-    SmallVector<Type> argTypes;
+    SmallVector<Value> argTypes;
     argTypes.reserve(numInputs);
-    SmallVector<Type> resultTypes;
+    SmallVector<Value> resultTypes;
     resultTypes.reserve(numOutputs);
 
     // set sizes of the inputs and outputs
@@ -161,11 +175,11 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
         builder.getDenseI32ArrayAttr({numInputs, numOutputs});
     result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
-    for (auto &arg : arguments) argTypes.push_back(arg.type);
-    for (auto &arg : outputArgs) resultTypes.push_back(arg.type);
-    if (parser.addTypesToList(argTypes, result.types)
-        || parser.addTypesToList(resultTypes, result.types))
-        return failure();
+    for (auto &arg : arguments) argTypes.push_back(arg);
+    for (auto &arg : outputArgs) resultTypes.push_back(arg);
+    // if (parser.addTypesToList(argTypes, result.types)
+    //     || parser.addTypesToList(resultTypes, result.types))
+    //     return failure();
 
     // merge both argument lists for the block arguments
     arguments.append(outputArgs);
