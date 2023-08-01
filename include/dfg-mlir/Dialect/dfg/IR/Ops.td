@@ -223,10 +223,11 @@ def Dfg_PushOp : Dfg_Op<
 
     let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
 
-    // TODO: custom assembly parser
-    let assemblyFormat = [{
-        `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
-    }];
+    // let assemblyFormat = [{
+    //     `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
+    // }];
+
+    let hasCustomAssemblyFormat = 1;
 }
 
 def Dfg_PullOp : Dfg_Op<
