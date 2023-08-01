@@ -35,6 +35,21 @@ dfg.operator @get_op
     dfg.push(%b) %op_b : (ui32) -> (!dfg.input<ui32>)
 }
 
+func.func @do_computations(%some_input: memref<32xi32>) -> memref<32xi32>
+{
+    return %some_input
+}
+
+dfg.operator @op_with_attributes
+    inputs(%something: memref<32xi32>)
+    outputs(%some_result: memref<32xi32>)
+    attributes { dfg.path = "src/somefile.cpp" }
+{
+    %some_input = dfg.pull %something
+    %res = func.call @do_computations(%some_input): (memref<32xi32>) -> memref<32xi32>
+    dfg.push(%res) %some_result : (memref<32xi32>) -> !dfg.input<memref<32xi32>>
+}
+
 // Aren't the inputs and outputs arrays?
 func.func @run_dfg(%op_a: ui32) -> ui32 {
     %op_a_in, %op_a_out = dfg.channel<ui32,2>

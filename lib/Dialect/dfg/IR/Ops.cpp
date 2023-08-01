@@ -15,9 +15,6 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 
-// TODO: REMOVE
-#include <iostream>
-
 #define DEBUG_TYPE "dfg-ops"
 
 using namespace mlir;
@@ -183,8 +180,6 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
             return failure();
     }
 
-    std::cout << "got inputs" << std::endl;
-
     if (succeeded(parser.parseOptionalKeyword("outputs"))) {
         if (parseChannelArgumentList<InputType>(parser, arguments, outVals))
             return failure();
@@ -216,12 +211,12 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
     ValueRange inputs(inVals);
     ValueRange outputs(outVals);
 
-    std::cout << "Creating builder & building op" << std::endl;
     OpBuilder builder(parser.getContext());
     build(builder, result, nameAttr, inputs, outputs);
-    std::cout << "Finished creating op" << std::endl;
 
-    std::cout << "Number of regions: " << result.regions.size() << std::endl;
+    OptionalParseResult attrResult =
+        parser.parseOptionalAttrDictWithKeyword(result.attributes);
+    if (attrResult.has_value() && failed(*attrResult)) return failure();
 
     OptionalParseResult parseResult =
         parser.parseOptionalRegion(result.regions[0]);
@@ -275,33 +270,34 @@ void OperatorOp::print(OpAsmPrinter &p)
     // fu.getArgAttrsAttr();
 
     if (!inputTypes.empty()) {
-        p << " inputs (";
-        for (unsigned i = 0; i < inputTypes.size(); i++) {
-            if (i > 0) p << ", ";
+        p << " inputs (" << inputTypes << ")";
+        // for (unsigned i = 0; i < inputTypes.size(); i++) {
+        //     if (i > 0) p << ", ";
 
-            BlockArgument arg = body.getArgument(i);
-            p.printOperand(arg);
-            p << ": ";
-            p.printType(arg.getType().cast<OutputType>().getElementType());
-        }
-        p << ')';
+        //     BlockArgument arg = body.getArgument(i);
+        //     p.printOperand(arg);
+        //     p << ": ";
+        //     p.printType(arg.getType().cast<OutputType>().getElementType());
+        // }
+        // p << ')';
     }
 
     if (!outputTypes.empty()) {
-        p << " outputs (";
-        unsigned inpSize = inputTypes.size();
-        for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
-            if (i > inpSize) p << ", ";
+        p << " outputs (" << outputTypes << ")";
+        // unsigned inpSize = inputTypes.size();
+        // for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
+        //     if (i > inpSize) p << ", ";
 
-            BlockArgument arg = body.getArgument(i);
-            p.printOperand(arg);
-            p << ": ";
-            p.printType(arg.getType().cast<InputType>().getElementType());
-        }
-        p << ')';
+        //     BlockArgument arg = body.getArgument(i);
+        //     p.printOperand(arg);
+        //     p << ": ";
+        //     p.printType(arg.getType().cast<InputType>().getElementType());
+        // }
+        // p << ')';
     }
 
-    if (!op->getAttrs().empty()) p.printOptionalAttrDict(op->getAttrs());
+    if (!op->getAttrs().empty())
+        p.printOptionalAttrDictWithKeyword(op->getAttrs());
 
     // Print the region
     if (!body.empty()) {
