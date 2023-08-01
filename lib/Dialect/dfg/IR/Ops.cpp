@@ -223,10 +223,19 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 
     std::cout << "Number of regions: " << result.regions.size() << std::endl;
 
-    for (auto &arg : arguments)
-        result.regions[0]->addArgument(
-            arg.type,
-            parser.getEncodedSourceLoc(arg.ssaName.location));
+    OptionalParseResult parseResult =
+        parser.parseOptionalRegion(result.regions[0]);
+    SMLoc loc = parser.getCurrentLocation();
+    if (parseResult.has_value()) {
+        if (failed(*parseResult)) return failure();
+        if (result.regions[0]->empty())
+            return parser.emitError(loc, "expected non-empty operator body");
+    }
+
+    // for (auto &arg : arguments)
+    //     result.regions[0]->addArgument(
+    //         arg.type,
+    //         parser.getEncodedSourceLoc(arg.ssaName.location));
     // auto* body = result.addRegion();
     // SMLoc loc = parser.getCurrentLocation();
     // OptionalParseResult parseResult = parser.parseOptionalRegion(
