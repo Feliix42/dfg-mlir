@@ -14,7 +14,6 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/IR/FunctionInterfaces.td"
-// include "mlir/IR/BuiltinOps.td"
 
 
 def Dfg_OperatorOp : Dfg_Op<
@@ -158,7 +157,6 @@ def Dfg_ChannelOp : Dfg_Op<
 def Dfg_InstantiateOp : Dfg_Op<
     "instantiate",
     [
-        // Pure
         AttrSizedOperandSegments
     ]> {
     let summary = "Instantiates an operator with the given inputs, forming (part of) a data flow graph.";
@@ -184,7 +182,8 @@ def Dfg_InstantiateOp : Dfg_Op<
 
     let arguments = (ins SymbolRefAttr:$callee,
                          Variadic<Dfg_OutputType>:$inputs,
-                         Variadic<Dfg_InputType>:$outputs);
+                         Variadic<Dfg_InputType>:$outputs,
+                         DefaultValuedAttr<BoolAttr, "false">:$offloaded);
 
     // let assemblyFormat = [{
     //     $callee `inputs` `(` $inputs `)` `outputs` `(` $outputs `)` attr-dict `:` functional-type($inputs, $outputs)

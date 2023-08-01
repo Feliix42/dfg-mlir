@@ -43,7 +43,7 @@ func.func @do_computations(%some_input: memref<32xi32>) -> memref<32xi32>
 dfg.operator @op_with_attributes
     inputs(%something: memref<32xi32>)
     outputs(%some_result: memref<32xi32>)
-    attributes { dfg.path = "src/somefile.cpp" }
+    attributes { dfg.location = "src/somefile.cpp" }
 {
     %some_input = dfg.pull %something : memref<32xi32>
     %res = func.call @do_computations(%some_input): (memref<32xi32>) -> memref<32xi32>
@@ -60,8 +60,8 @@ func.func @run_dfg(%op_a: ui32) -> ui32 {
     dfg.push(%op_a) %op_a_in : ui32
 
     // connect
-    dfg.instantiate @sum inputs(%op_a_out, %op_b_out) outputs(%res_in) : (!dfg.output<ui32>, !dfg.output<ui32>) -> (!dfg.input<ui32>)
-    dfg.instantiate @get_op inputs() outputs(%op_b_in) : () -> (!dfg.input<ui32>)
+    dfg.instantiate @sum inputs(%op_a_out, %op_b_out) outputs(%res_in) : (ui32, ui32) -> (ui32)
+    dfg.instantiate @get_op inputs() outputs(%op_b_in) : () -> (ui32)
 
     %res = dfg.pull %res_out : ui32
 

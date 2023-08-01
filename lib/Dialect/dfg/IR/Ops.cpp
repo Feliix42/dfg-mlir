@@ -9,6 +9,7 @@
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/FunctionImplementation.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
@@ -435,6 +436,12 @@ void ChannelOp::print(OpAsmPrinter &p)
 
 ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 {
+    // optionally mark as `offloaded`
+    if (succeeded(parser.parseOptionalKeyword("offloaded")))
+        result.addAttribute(
+            getOffloadedAttrName(result.name),
+            BoolAttr::get(parser.getContext(), true));
+
     // parse operator name
     StringAttr calleeAttr;
     if (parser.parseSymbolName(
@@ -462,26 +469,34 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
     if (parser.parseColon()) return failure();
 
     // parse the signature & resolve the input/output types
+    SMLoc location = parser.getCurrentLocation();
     FunctionType signature;
     if (parser.parseType(signature)) return failure();
 
     ArrayRef<Type> inpTypes = signature.getInputs();
     ArrayRef<Type> outTypes = signature.getResults();
-    SMLoc location = parser.getCurrentLocation();
-
     int32_t numInputs = inpTypes.size();
     int32_t numOutputs = outTypes.size();
 
-    if (inpTypes.size() != inputs.size() || outTypes.size() != outputs.size()) {
+    SmallVector<Type> inChanTypes(numInputs);
+    SmallVector<Type> outChanTypes(numOutputs);
+    for (auto &inp : inpTypes)
+        inChanTypes.push_back(OutputType::get(inp.getContext(), inp));
+    for (auto &out : outTypes)
+        outChanTypes.push_back(InputType::get(out.getContext(), out));
+
+    if (inChanTypes.size() != inputs.size()
+        || outChanTypes.size() != outputs.size()) {
         parser.emitError(
             location,
             "Call signature does not match operand count");
     }
 
-    if (parser.resolveOperands(inputs, inpTypes, location, result.operands))
+    if (parser.resolveOperands(inputs, inChanTypes, location, result.operands))
         return failure();
 
-    if (parser.resolveOperands(outputs, outTypes, location, result.operands))
+    if (parser
+            .resolveOperands(outputs, outChanTypes, location, result.operands))
         return failure();
 
     // Add derived `operand_segment_sizes` attribute based on parsed
@@ -495,6 +510,9 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 
 void InstantiateOp::print(OpAsmPrinter &p)
 {
+    // offloaded?
+    if (getOffloaded()) p << " offloaded";
+
     // callee
     p << ' ';
     p.printAttributeWithoutType(getCalleeAttr());
@@ -506,8 +524,16 @@ void InstantiateOp::print(OpAsmPrinter &p)
     if (!getOutputs().empty()) p << " outputs (" << getOutputs() << ")";
 
     // signature
+    SmallVector<Type> inpChans(getInputs().size());
+    SmallVector<Type> outChans(getOutputs().size());
+
+    for (auto in : getInputs().getTypes())
+        inpChans.push_back(in.cast<OutputType>().getElementType());
+    for (auto out : getOutputs().getTypes())
+        outChans.push_back(out.cast<InputType>().getElementType());
+
     p << " : ";
-    p.printFunctionalType(getInputs().getTypes(), getOutputs().getTypes());
+    p.printFunctionalType(inpChans, outChans);
 }
 
 //===----------------------------------------------------------------------===//
