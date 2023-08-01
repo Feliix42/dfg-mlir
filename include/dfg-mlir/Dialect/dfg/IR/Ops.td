@@ -261,11 +261,11 @@ def Dfg_PullOp : Dfg_Op<
     let arguments = (ins Dfg_OutputType: $chan);
     let results = (outs AnyType: $outp);
 
-    let assemblyFormat = [{
-        $chan attr-dict `:` functional-type($chan, $outp)
-    }];
+    // let assemblyFormat = [{
+    //     $chan attr-dict `:` functional-type($chan, $outp)
+    // }];
 
-    // let hasCustomAssemblyFormat = 1;
+    let hasCustomAssemblyFormat = 1;
 }
 
 #endif

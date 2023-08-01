@@ -511,6 +511,33 @@ void InstantiateOp::print(OpAsmPrinter &p)
 }
 
 //===----------------------------------------------------------------------===//
+// PullOp
+//===----------------------------------------------------------------------===//
+
+ParseResult PullOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand inputChan;
+    Type dataTy;
+
+    if (parser.parseOperand(inputChan) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    result.addTypes(dataTy);
+
+    Type channelTy = OutputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(inputChan, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void PullOp::print(OpAsmPrinter &p)
+{
+    p << " " << getChan() << " : " << getType();
+}
+
+//===----------------------------------------------------------------------===//
 // DfgDialect
 //===----------------------------------------------------------------------===//
 
