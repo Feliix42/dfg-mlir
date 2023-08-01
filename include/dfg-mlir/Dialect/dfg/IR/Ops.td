@@ -20,7 +20,7 @@ def Dfg_OperatorOp : Dfg_Op<
         "operator",
         [
             AutomaticAllocationScope,
-            AttrSizedOperandSegments,
+            // AttrSizedOperandSegments,
             IsolatedFromAbove,
             HasParent<"ModuleOp">,
             NoTerminator
@@ -45,18 +45,12 @@ def Dfg_OperatorOp : Dfg_Op<
     }];
 
     let arguments = (ins SymbolNameAttr: $sym_name,
-                         Variadic<Dfg_OutputType>:$inputs,
-                         Variadic<Dfg_InputType>:$outputs);
+                         TypeAttrOf<FunctionType>: $function_type);
+                        //  TypeArrayAttr:$inputs,
+                        //  TypeArrayAttr:$outputs);
 
     // The FunctionOpInterface requires zero or one region attached to the operator
     let regions = (region AnyRegion: $body);
-
-    // // how can an option like this be *so* under-documented?!
-    // let skipDefaultBuilders = 1;
-
-    // // TODO(feliix42): add builder with attached region   
-    // let builders = [OpBuilder<(ins
-    //     "StringRef": $sym_name, "ValueRange": $inputs, "ValueRange": $outputs)>];
 
     let extraClassDeclaration = [{
         /// Returns whether the operator is externally defined
@@ -74,7 +68,9 @@ def Dfg_OperatorOp : Dfg_Op<
     let hasVerifier = 1;
 }
 
-def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
+// TODO:
+// , RegionBranchOpInterface]>
+def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]> 
 {
     let summary = "Defines a list of input/output ports maybe closed";
 
@@ -110,9 +106,7 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
         [
-            Pure,
-            // TODO: actually implement!
-            // OpAsmOpInterface // for return names
+            Pure
         ]> {
     let summary = "Defines a channel with one input and one output port";
     let description = [{
@@ -137,9 +131,6 @@ def Dfg_ChannelOp : Dfg_Op<
         ```
     }];
 
-    // TODO(feliix42): Verify that the encapsulated types in both results match the `encapsulatedType`
-    // Thoughts(jibi): don't think we need one, we only take one type and then the elementType of
-    //                 Intput/Output type would automatically be the same as encapulatedType
     let arguments = (ins
         TypeAttr:$encapsulatedType,
         OptionalAttr<I32Attr>:$bufferSize
@@ -149,7 +140,6 @@ def Dfg_ChannelOp : Dfg_Op<
         Dfg_OutputType:$out_chan
     );
 
-    // TODO: replace angled brackets with braces
     let hasCustomAssemblyFormat = 1;
 }
 
@@ -235,8 +225,6 @@ def Dfg_PullOp : Dfg_Op<
         TypesMatchWith<"Channel type matches pulled type",
                        "chan", "outp",
                        "$_self.dyn_cast<OutputType>().getElementType()">
-        // TODO:
-        // InferTypeOpInterface // (for generating builders, verification, etc)
     ]
 > {
     let summary = "Pulls a value from a channel.";

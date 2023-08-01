@@ -77,8 +77,7 @@ bool OperatorOp::isExternal()
 template<typename T>
 static ParseResult parseChannelArgumentList(
     OpAsmParser &parser,
-    SmallVectorImpl<OpAsmParser::Argument> &arguments,
-    SmallVectorImpl<Value> &values)
+    SmallVectorImpl<OpAsmParser::Argument> &arguments)
 {
     return parser.parseCommaSeparatedList(
         OpAsmParser::Delimiter::Paren,
@@ -116,10 +115,10 @@ static ParseResult parseChannelArgumentList(
             arguments.push_back(argument);
 
             // additionally store the result as Value
-            return parser.resolveOperand(
-                argument.ssaName,
-                argument.type,
-                values);
+            // return parser.resolveOperand(
+            //     argument.ssaName,
+            //     argument.type,
+            //     values);
 
             // auto argPresent = parser.parseOptionalArgument(
             //     argument,
@@ -159,48 +158,60 @@ static ParseResult parseChannelArgumentList(
             // argument.type);
 
             // arguments.push_back(argument);
-            // return success();
+            return success();
         });
 }
 
 ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 {
-    // auto &builder = parser.getBuilder();
+    auto &builder = parser.getBuilder();
 
     // parse the operator name
     StringAttr nameAttr;
     if (parser.parseSymbolName(nameAttr)) return failure();
 
     // parse the signature of the operator
-    SmallVector<OpAsmParser::Argument> arguments;
-    SmallVector<Value> inVals, outVals;
+    SmallVector<OpAsmParser::Argument> inVals, outVals;
+
+    SMLoc signatureLocation = parser.getCurrentLocation();
 
     // parse inputs/outputs separately for later distinction
     if (succeeded(parser.parseOptionalKeyword("inputs"))) {
-        if (parseChannelArgumentList<OutputType>(parser, arguments, inVals))
+        if (parseChannelArgumentList<OutputType>(parser, inVals))
             return failure();
     }
 
     if (succeeded(parser.parseOptionalKeyword("outputs"))) {
-        if (parseChannelArgumentList<InputType>(parser, arguments, outVals))
+        if (parseChannelArgumentList<InputType>(parser, outVals))
             return failure();
     }
 
     // int32_t numInputs = inVals.size();
     // int32_t numOutputs = outVals.size();
 
-    // SmallVector<Value> argTypes;
-    // argTypes.reserve(numInputs);
-    // SmallVector<Value> resultTypes;
-    // resultTypes.reserve(numOutputs);
+    SmallVector<Type> argTypes;
+    argTypes.reserve(inVals.size());
+    SmallVector<Type> resultTypes;
+    resultTypes.reserve(outVals.size());
 
     // set sizes of the inputs and outputs
     // auto operandSegmentSizes =
     //     builder.getDenseI32ArrayAttr({numInputs, numOutputs});
     // result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
-    // for (auto &arg : inArgs) argTypes.push_back(arg);
-    // for (auto &arg : outputArgs) resultTypes.push_back(arg);
+    for (auto &arg : inVals) argTypes.push_back(arg.type);
+    for (auto &arg : outVals) resultTypes.push_back(arg.type);
+    Type type = builder.getFunctionType(argTypes, resultTypes);
+
+    if (!type) {
+        return parser.emitError(signatureLocation)
+               << "Failed to construct operator type";
+    }
+
+    // result.addAttribute(
+    //     getFunctionTypeAttrName(result.name),
+    //     TypeAttr::get(type));
+
     // if (parser.addTypesToList(argTypes, result.types)
     //     || parser.addTypesToList(resultTypes, result.types))
     //     return failure();
@@ -209,11 +220,9 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
     // inArgs.append(outputArgs);
 
     // if (parser.parseOptionalAttrDict(result.attributes)) return failure();
-    ValueRange inputs(inVals);
-    ValueRange outputs(outVals);
 
-    OpBuilder builder(parser.getContext());
-    build(builder, result, nameAttr, inputs, outputs);
+    OpBuilder opbuilder(parser.getContext());
+    build(opbuilder, result, nameAttr, TypeAttr::get(type));
 
     OptionalParseResult attrResult =
         parser.parseOptionalAttrDictWithKeyword(result.attributes);
@@ -262,40 +271,67 @@ void OperatorOp::print(OpAsmPrinter &p)
     p.printSymbolName(funcName);
     p << ' ';
 
-    ValueRange inputTypes = getInputs();
-    ValueRange outputTypes = getOutputs();
-
-    // // NOTE(feliix42): Is this even necessary? There's no attributes
-    // supported afaik FunctionOpInterface fu =
-    // llvm::cast<FunctionOpInterface>(op); ArrayAttr argAttrs =
-    // fu.getArgAttrsAttr();
+    ArrayRef<Type> inputTypes = getFunctionType().getInputs();
+    ArrayRef<Type> outputTypes = getFunctionType().getResults();
 
     if (!inputTypes.empty()) {
-        p << " inputs (" << inputTypes << ")";
-        // for (unsigned i = 0; i < inputTypes.size(); i++) {
-        //     if (i > 0) p << ", ";
+        p << " inputs (";
+        for (unsigned i = 0; i < inputTypes.size(); i++) {
+            if (i > 0) p << ", ";
 
-        //     BlockArgument arg = body.getArgument(i);
-        //     p.printOperand(arg);
-        //     p << ": ";
-        //     p.printType(arg.getType().cast<OutputType>().getElementType());
-        // }
-        // p << ')';
+            ArrayRef<NamedAttribute> attrs;
+            p.printRegionArgument(body.getArgument(i), attrs);
+        }
+        p << ')';
     }
 
     if (!outputTypes.empty()) {
-        p << " outputs (" << outputTypes << ")";
-        // unsigned inpSize = inputTypes.size();
-        // for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
-        //     if (i > inpSize) p << ", ";
+        p << " outputs (";
+        unsigned inpSize = inputTypes.size();
+        for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
+            if (i > inpSize) p << ", ";
 
-        //     BlockArgument arg = body.getArgument(i);
-        //     p.printOperand(arg);
-        //     p << ": ";
-        //     p.printType(arg.getType().cast<InputType>().getElementType());
-        // }
-        // p << ')';
+            ArrayRef<NamedAttribute> attrs;
+            p.printRegionArgument(body.getArgument(i), attrs);
+        }
+        p << ')';
     }
+
+    // ValueRange inputTypes = getInputs();
+    // ValueRange outputTypes = getOutputs();
+
+    // // // NOTE(feliix42): Is this even necessary? There's no attributes
+    // // supported afaik FunctionOpInterface fu =
+    // // llvm::cast<FunctionOpInterface>(op); ArrayAttr argAttrs =
+    // // fu.getArgAttrsAttr();
+
+    // if (!inputTypes.empty()) {
+    //     p << " inputs (" << inputTypes << ")";
+    //     // for (unsigned i = 0; i < inputTypes.size(); i++) {
+    //     //     if (i > 0) p << ", ";
+
+    //     //     BlockArgument arg = body.getArgument(i);
+    //     //     p.printOperand(arg);
+    //     //     p << ": ";
+    //     // p.printType(arg.getType().cast<OutputType>().getElementType());
+    //     // }
+    //     // p << ')';
+    // }
+
+    // if (!outputTypes.empty()) {
+    //     p << " outputs (" << outputTypes << ")";
+    //     // unsigned inpSize = inputTypes.size();
+    //     // for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++)
+    //     {
+    //     //     if (i > inpSize) p << ", ";
+
+    //     //     BlockArgument arg = body.getArgument(i);
+    //     //     p.printOperand(arg);
+    //     //     p << ": ";
+    //     //     p.printType(arg.getType().cast<InputType>().getElementType());
+    //     // }
+    //     // p << ')';
+    // }
 
     if (!op->getAttrs().empty())
         p.printOptionalAttrDictWithKeyword(op->getAttrs());
@@ -391,7 +427,7 @@ void LoopOp::print(OpAsmPrinter &p)
 
 ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 {
-    if (failed(parser.parseLess())) return failure();
+    if (failed(parser.parseLParen())) return failure();
 
     Type ty;
     if (parser.parseType(ty)) return failure();
@@ -406,8 +442,6 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
     OutputType out = OutputType::get(ty.getContext(), ty);
     results.push_back(out);
 
-    // TODO(feliix42): Verify correctness: Is `getInChan` and `getOutChan`
-    // yielding the expected results??
     result.addTypes(results);
 
     if (succeeded(parser.parseOptionalComma())) {
@@ -419,7 +453,7 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
             parser.getBuilder().getI32IntegerAttr(size));
     }
 
-    return parser.parseGreater();
+    return parser.parseRParen();
 }
 
 void ChannelOp::print(OpAsmPrinter &p)
