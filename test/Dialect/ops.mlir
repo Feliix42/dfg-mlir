@@ -23,6 +23,10 @@ func.func @return_a_value() -> ui32
     return %1 : ui32
 }
 
+dfg.operator @some_foreign_kernel
+    inputs(%foo: i32, %bar: i32)
+    outputs(%baz: i64)
+
 dfg.operator @get_op
     inputs()
     outputs(%op_b: ui32)

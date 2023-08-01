@@ -194,40 +194,6 @@ def Dfg_InstantiateOp : Dfg_Op<
 }
 
 
-def Dfg_KernelOp : Dfg_Op<
-    "kernel",
-    [
-        AttrSizedOperandSegments
-    ]> {
-    let summary = "Instantiates a kernel with the given inputs, forming (part of) a data flow graph.";
-    let description = [{
-        The `kernel` operation instantiates a data flow graph operator with
-        a concrete set of inputs and outputs. This instanciation creates a node
-        in the data flow graph. The data flow is derived from the arguments to
-        the instanciation as well as the results and their uses/origin.
-
-        Syntax:
-
-        ```
-        TODO
-        ```
-
-        Examples:
-
-        ```
-        TODO
-        ```
-
-    }];
-
-    let arguments = (ins FlatSymbolRefAttr:$callee,
-                         Variadic<Dfg_OutputType>:$inputs,
-                         Variadic<Dfg_InputType>:$outputs);
-
-    let hasCustomAssemblyFormat = 1;
-}
-
-
 def Dfg_PushOp : Dfg_Op<
     "push",
     [
