@@ -35,30 +35,6 @@ constexpr char kOperandSegmentSizesAttr[] = "operand_segment_sizes";
 // OperatorOp
 //===----------------------------------------------------------------------===//
 
-// void OperatorOp::build(
-//     OpBuilder &builder,
-//     OperationState &state,
-//     StringRef name,
-//     ValueRange inputs,
-//     ValueRange outputs)
-// {
-//     state.addAttribute(
-//         SymbolTable::getSymbolAttrName(),
-//         builder.getStringAttr(name));
-//     state.addOperands(inputs);
-//     state.addOperands(outputs);
-
-//     int32_t numInputs = inputs.size();
-//     int32_t numOutputs = outputs.size();
-
-//     // set sizes of the inputs and outputs
-//     auto operandSegmentSizes =
-//         builder.getDenseI32ArrayAttr({numInputs, numOutputs});
-//     state.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
-
-//     state.addRegion();
-// }
-
 /// @brief  Returns whether the operator is externally defined, i.e., has no
 /// body.
 /// @return `true` if there is no body attached, `false` the operator has a
@@ -82,28 +58,6 @@ static ParseResult parseChannelArgumentList(
     return parser.parseCommaSeparatedList(
         OpAsmParser::Delimiter::Paren,
         [&]() -> ParseResult {
-            // TODO(feliix42): I think this whole thing needs a redesign. What I
-            // need at the end are `ValueRange`s for both inputs and outputs.
-            // These are then going to be fed into the builer in the parser
-            // (rewrite this as well, remove manual construction in favor of
-            // calling the Builder with all necessary information!).
-            // So what I could see myself (painfully) doing for each argument
-            // is:
-            // 1. Parse the operand (just the name)
-            // 2. parse the colon
-            // 3. Parse the type
-            //    ----------------- Push both into a list
-            // 4. resolve all operands at the end with the list and some bs.
-            // location info
-
-            // OpAsmParser::UnresolvedOperand opname;
-            // mlir::Type ty;
-            // if (parser.parseOperand(opname) || parser.parseColon()
-            //     || parser.parseType(ty))
-            //     return failure();
-
-            // ty = T::get(ty.getContext(), ty);
-
             OpAsmParser::Argument argument;
             if (parser.parseArgument(
                     argument,
@@ -114,50 +68,6 @@ static ParseResult parseChannelArgumentList(
             argument.type = T::get(argument.type.getContext(), argument.type);
             arguments.push_back(argument);
 
-            // additionally store the result as Value
-            // return parser.resolveOperand(
-            //     argument.ssaName,
-            //     argument.type,
-            //     values);
-
-            // auto argPresent = parser.parseOptionalArgument(
-            //     argument,
-            //     /*allowType=*/true,
-            //     /*allowAttrs=*/false);
-            // if (argPresent.has_value()) {
-            //     if (failed(argPresent.value()))
-            //         return failure(); // Present but malformed.
-
-            //     // Reject this if the preceding argument was missing a name.
-            //     if (!arguments.empty() &&
-            //     arguments.back().ssaName.name.empty())
-            //         return parser.emitError(
-            //             argument.ssaName.location,
-            //             "expected type instead of SSA identifier");
-            // } else {
-            //     argument.ssaName.location = parser.getCurrentLocation();
-            //     // Otherwise we just have a type list without SSA names.
-            //     Reject
-            //     // this if the preceding argument had a name.
-            //     if (!arguments.empty()
-            //         && !arguments.back().ssaName.name.empty())
-            //         return parser.emitError(
-            //             argument.ssaName.location,
-            //             "expected SSA identifier");
-
-            //     NamedAttrList attrs;
-            //     if (parser.parseType(argument.type)
-            //         || parser.parseOptionalAttrDict(attrs)
-            //         || parser.parseOptionalLocationSpecifier(
-            //             argument.sourceLoc))
-            //         return failure();
-            //     argument.attrs = attrs.getDictionary(parser.getContext());
-            // }
-
-            // argument.type = T::get(argument.type.getContext(),
-            // argument.type);
-
-            // arguments.push_back(argument);
             return success();
         });
 }
@@ -176,7 +86,6 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 
     // parse the signature of the operator
     SmallVector<OpAsmParser::Argument> inVals, outVals;
-
     SMLoc signatureLocation = parser.getCurrentLocation();
 
     // parse inputs/outputs separately for later distinction
@@ -190,18 +99,9 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
             return failure();
     }
 
-    // int32_t numInputs = inVals.size();
-    // int32_t numOutputs = outVals.size();
-
-    SmallVector<Type> argTypes;
+    SmallVector<Type> argTypes, resultTypes;
     argTypes.reserve(inVals.size());
-    SmallVector<Type> resultTypes;
     resultTypes.reserve(outVals.size());
-
-    // set sizes of the inputs and outputs
-    // auto operandSegmentSizes =
-    //     builder.getDenseI32ArrayAttr({numInputs, numOutputs});
-    // result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
     for (auto &arg : inVals) argTypes.push_back(arg.type);
     for (auto &arg : outVals) resultTypes.push_back(arg.type);
@@ -216,35 +116,14 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
         getFunctionTypeAttrName(result.name),
         TypeAttr::get(type));
 
-    // if (parser.addTypesToList(argTypes, result.types)
-    //     || parser.addTypesToList(resultTypes, result.types))
-    //     return failure();
-
     // merge both argument lists for the block arguments
     inVals.append(outVals);
-
-    // if (parser.parseOptionalAttrDict(result.attributes)) return failure();
-
-    // OpBuilder opbuilder(parser.getContext());
-    // build(opbuilder, result, nameAttr, TypeAttr::get(type));
 
     OptionalParseResult attrResult =
         parser.parseOptionalAttrDictWithKeyword(result.attributes);
     if (attrResult.has_value() && failed(*attrResult)) return failure();
 
-    // OptionalParseResult parseResult =
-    //     parser.parseOptionalRegion(result.regions[0]);
-    // SMLoc loc = parser.getCurrentLocation();
-    // if (parseResult.has_value()) {
-    //     if (failed(*parseResult)) return failure();
-    //     if (result.regions[0]->empty())
-    //         return parser.emitError(loc, "expected non-empty operator body");
-    // }
-
-    // for (auto &arg : arguments)
-    //     result.regions[0]->addArgument(
-    //         arg.type,
-    //         parser.getEncodedSourceLoc(arg.ssaName.location));
+    // parse the attached region, if any
     auto* body = result.addRegion();
     SMLoc loc = parser.getCurrentLocation();
     OptionalParseResult parseResult = parser.parseOptionalRegion(
@@ -301,42 +180,8 @@ void OperatorOp::print(OpAsmPrinter &p)
         p << ')';
     }
 
-    // ValueRange inputTypes = getInputs();
-    // ValueRange outputTypes = getOutputs();
-
-    // // // NOTE(feliix42): Is this even necessary? There's no attributes
-    // // supported afaik FunctionOpInterface fu =
-    // // llvm::cast<FunctionOpInterface>(op); ArrayAttr argAttrs =
-    // // fu.getArgAttrsAttr();
-
-    // if (!inputTypes.empty()) {
-    //     p << " inputs (" << inputTypes << ")";
-    //     // for (unsigned i = 0; i < inputTypes.size(); i++) {
-    //     //     if (i > 0) p << ", ";
-
-    //     //     BlockArgument arg = body.getArgument(i);
-    //     //     p.printOperand(arg);
-    //     //     p << ": ";
-    //     // p.printType(arg.getType().cast<OutputType>().getElementType());
-    //     // }
-    //     // p << ')';
-    // }
-
-    // if (!outputTypes.empty()) {
-    //     p << " outputs (" << outputTypes << ")";
-    //     // unsigned inpSize = inputTypes.size();
-    //     // for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++)
-    //     {
-    //     //     if (i > inpSize) p << ", ";
-
-    //     //     BlockArgument arg = body.getArgument(i);
-    //     //     p.printOperand(arg);
-    //     //     p << ": ";
-    //     //     p.printType(arg.getType().cast<InputType>().getElementType());
-    //     // }
-    //     // p << ')';
-    // }
-
+    // print any attributes in the attribute list into the dict
+    // NOTE(feliix42): Ensure this does not print duplicate attrs
     if (!op->getAttrs().empty())
         p.printOptionalAttrDictWithKeyword(op->getAttrs());
 
@@ -352,21 +197,6 @@ void OperatorOp::print(OpAsmPrinter &p)
 
 LogicalResult OperatorOp::verify()
 {
-    // NOTE(feliix42): This check failed to compile but it should be enforced by
-    // type bounds now.
-
-    // // Check if all the input are OutputType
-    // // and all output are InputType
-    // auto inputsType = getInputs();
-    // for (const auto inTy : inputsType)
-    //     if (!inTy.isa<OutputType>())
-    //         return emitOpError("requires OutputType for input ports");
-
-    // auto outputsType = getOutputs();
-    // for (const auto outTy : outputsType)
-    //     if (!outTy.isa<InputType>())
-    //         return emitOpError("requires InputType for output ports");
-
     // If there is a LoopOp, it must be the first op in the body
     if (!getBody().empty()) {
         auto ops = getBody().getOps();
@@ -484,11 +314,7 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 
     // parse operator name
     StringAttr calleeAttr;
-    if (parser.parseSymbolName(calleeAttr))
-        // calleeAttr,
-        // getCalleeAttrName(result.name),
-        // result.attributes))
-        return failure();
+    if (parser.parseSymbolName(calleeAttr)) return failure();
 
     result.addAttribute(
         getCalleeAttrName(result.name),
