@@ -484,11 +484,15 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 
     // parse operator name
     StringAttr calleeAttr;
-    if (parser.parseSymbolName(
-            calleeAttr,
-            getCalleeAttrName(result.name),
-            result.attributes))
+    if (parser.parseSymbolName(calleeAttr))
+        // calleeAttr,
+        // getCalleeAttrName(result.name),
+        // result.attributes))
         return failure();
+
+    result.addAttribute(
+        getCalleeAttrName(result.name),
+        SymbolRefAttr::get(calleeAttr));
 
     // parse the operator inputs and outpus
     SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs;
