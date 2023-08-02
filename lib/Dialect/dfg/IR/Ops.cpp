@@ -168,7 +168,11 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 
     // parse the operator name
     StringAttr nameAttr;
-    if (parser.parseSymbolName(nameAttr)) return failure();
+    if (parser.parseSymbolName(
+            nameAttr,
+            getSymNameAttrName(result.name),
+            result.attributes))
+        return failure();
 
     // parse the signature of the operator
     SmallVector<OpAsmParser::Argument> inVals, outVals;
@@ -208,51 +212,51 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
                << "Failed to construct operator type";
     }
 
-    // result.addAttribute(
-    //     getFunctionTypeAttrName(result.name),
-    //     TypeAttr::get(type));
+    result.addAttribute(
+        getFunctionTypeAttrName(result.name),
+        TypeAttr::get(type));
 
     // if (parser.addTypesToList(argTypes, result.types)
     //     || parser.addTypesToList(resultTypes, result.types))
     //     return failure();
 
     // merge both argument lists for the block arguments
-    // inArgs.append(outputArgs);
+    inVals.append(outVals);
 
     // if (parser.parseOptionalAttrDict(result.attributes)) return failure();
 
-    OpBuilder opbuilder(parser.getContext());
-    build(opbuilder, result, nameAttr, TypeAttr::get(type));
+    // OpBuilder opbuilder(parser.getContext());
+    // build(opbuilder, result, nameAttr, TypeAttr::get(type));
 
     OptionalParseResult attrResult =
         parser.parseOptionalAttrDictWithKeyword(result.attributes);
     if (attrResult.has_value() && failed(*attrResult)) return failure();
 
-    OptionalParseResult parseResult =
-        parser.parseOptionalRegion(result.regions[0]);
-    SMLoc loc = parser.getCurrentLocation();
-    if (parseResult.has_value()) {
-        if (failed(*parseResult)) return failure();
-        if (result.regions[0]->empty())
-            return parser.emitError(loc, "expected non-empty operator body");
-    }
+    // OptionalParseResult parseResult =
+    //     parser.parseOptionalRegion(result.regions[0]);
+    // SMLoc loc = parser.getCurrentLocation();
+    // if (parseResult.has_value()) {
+    //     if (failed(*parseResult)) return failure();
+    //     if (result.regions[0]->empty())
+    //         return parser.emitError(loc, "expected non-empty operator body");
+    // }
 
     // for (auto &arg : arguments)
     //     result.regions[0]->addArgument(
     //         arg.type,
     //         parser.getEncodedSourceLoc(arg.ssaName.location));
-    // auto* body = result.addRegion();
-    // SMLoc loc = parser.getCurrentLocation();
-    // OptionalParseResult parseResult = parser.parseOptionalRegion(
-    //     *body,
-    //     arguments,
-    //     /*enableNameShadowing=*/false);
+    auto* body = result.addRegion();
+    SMLoc loc = parser.getCurrentLocation();
+    OptionalParseResult parseResult = parser.parseOptionalRegion(
+        *body,
+        inVals,
+        /*enableNameShadowing=*/false);
 
-    // if (parseResult.has_value()) {
-    //     if (failed(*parseResult)) return failure();
-    //     if (body->empty())
-    //         return parser.emitError(loc, "expected non-empty operator body");
-    // }
+    if (parseResult.has_value()) {
+        if (failed(*parseResult)) return failure();
+        if (body->empty())
+            return parser.emitError(loc, "expected non-empty operator body");
+    }
 
     return success();
 }
@@ -364,14 +368,16 @@ LogicalResult OperatorOp::verify()
     //         return emitOpError("requires InputType for output ports");
 
     // If there is a LoopOp, it must be the first op in the body
-    auto ops = getBody().getOps();
-    bool isFirstLoop, hasLoop = false;
-    for (const auto &op : ops)
-        if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
-    if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
-        isFirstLoop = true;
-    if (hasLoop && !isFirstLoop)
-        return emitError("The LoopOp must be the first op of Operator");
+    if (!getBody().empty()) {
+        auto ops = getBody().getOps();
+        bool isFirstLoop, hasLoop = false;
+        for (const auto &op : ops)
+            if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
+        if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
+            isFirstLoop = true;
+        if (hasLoop && !isFirstLoop)
+            return emitError("The LoopOp must be the first op of Operator");
+    }
 
     return success();
 }
@@ -512,8 +518,8 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
     int32_t numInputs = inpTypes.size();
     int32_t numOutputs = outTypes.size();
 
-    SmallVector<Type> inChanTypes(numInputs);
-    SmallVector<Type> outChanTypes(numOutputs);
+    SmallVector<Type> inChanTypes;
+    SmallVector<Type> outChanTypes;
     for (auto &inp : inpTypes)
         inChanTypes.push_back(OutputType::get(inp.getContext(), inp));
     for (auto &out : outTypes)
