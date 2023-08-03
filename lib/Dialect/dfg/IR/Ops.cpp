@@ -218,20 +218,50 @@ LogicalResult OperatorOp::verify()
 
 ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
 {
-    if (parser.parseLParen()) return failure();
+    // parse inputs/outputs
+    SmallVector<OpAsmParser::Argument> inVals, outVals;
 
-    SmallVector<OpAsmParser::UnresolvedOperand> operands;
-    SmallVector<Type> types;
-    if (parser.parseOperandList(operands)) return failure();
-    if (parser.parseColonTypeList(types)) return failure();
-
-    assert(operands.size() == types.size());
-
-    for (size_t i = 0; i < operands.size(); i++)
-        if (parser.resolveOperand(operands[i], types[i], result.operands))
+    // parse inputs/outputs separately for later distinction
+    SMLoc inputLocation = parser.getCurrentLocation();
+    if (succeeded(parser.parseOptionalKeyword("inputs"))) {
+        if (parseChannelArgumentList<OutputType>(parser, inVals))
             return failure();
+    }
 
-    if (parser.parseRParen()) return failure();
+    SMLoc outputLocation = parser.getCurrentLocation();
+    if (succeeded(parser.parseOptionalKeyword("outputs"))) {
+        if (parseChannelArgumentList<InputType>(parser, outVals))
+            return failure();
+    }
+
+    SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs, outputs;
+    SmallVector<Type> argTypes, resultTypes;
+    int32_t numInputs = inVals.size();
+    int32_t numOutputs = outVals.size();
+    argTypes.reserve(numInputs);
+    inputs.reserve(numInputs);
+    resultTypes.reserve(numOutputs);
+    outputs.reserve(numOutputs);
+
+    for (auto &arg : inVals) {
+        argTypes.push_back(arg.type);
+        inputs.push_back(arg.ssaName);
+    }
+    for (auto &arg : outVals) {
+        resultTypes.push_back(arg.type);
+        outputs.push_back(arg.ssaName);
+    }
+
+    if (parser
+            .resolveOperands(inputs, argTypes, inputLocation, result.operands))
+        return failure();
+
+    if (parser.resolveOperands(
+            outputs,
+            resultTypes,
+            outputLocation,
+            result.operands))
+        return failure();
 
     Region* body = result.addRegion();
     if (parser.parseRegion(*body, {}, {})) return failure();
