@@ -152,13 +152,12 @@ void OperatorOp::print(OpAsmPrinter &p)
 
     p << ' ';
     p.printSymbolName(funcName);
-    p << ' ';
 
     ArrayRef<Type> inputTypes = getFunctionType().getInputs();
     ArrayRef<Type> outputTypes = getFunctionType().getResults();
 
     if (!inputTypes.empty()) {
-        p << " inputs (";
+        p << " inputs(";
         for (unsigned i = 0; i < inputTypes.size(); i++) {
             if (i > 0) p << ", ";
 
@@ -169,7 +168,7 @@ void OperatorOp::print(OpAsmPrinter &p)
     }
 
     if (!outputTypes.empty()) {
-        p << " outputs (";
+        p << " outputs(";
         unsigned inpSize = inputTypes.size();
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
@@ -324,10 +323,10 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 
 void ChannelOp::print(OpAsmPrinter &p)
 {
-    p << '<';
+    p << '(';
     p.printType(getEncapsulatedType());
     if (const auto size = getBufferSize()) p << ", " << size;
-    p << '>';
+    p << ')';
 }
 
 //===----------------------------------------------------------------------===//
@@ -418,14 +417,14 @@ void InstantiateOp::print(OpAsmPrinter &p)
     p.printAttributeWithoutType(getCalleeAttr());
 
     // print `inputs (...)` if existent
-    if (!getInputs().empty()) p << " inputs (" << getInputs() << ")";
+    if (!getInputs().empty()) p << " inputs(" << getInputs() << ")";
 
     // print `outputs (...)` if existent
-    if (!getOutputs().empty()) p << " outputs (" << getOutputs() << ")";
+    if (!getOutputs().empty()) p << " outputs(" << getOutputs() << ")";
 
     // signature
-    SmallVector<Type> inpChans(getInputs().size());
-    SmallVector<Type> outChans(getOutputs().size());
+    SmallVector<Type> inpChans; //(getInputs().size());
+    SmallVector<Type> outChans; //(getOutputs().size());
 
     for (auto in : getInputs().getTypes())
         inpChans.push_back(in.cast<OutputType>().getElementType());
