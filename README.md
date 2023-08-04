@@ -49,4 +49,4 @@ The following CMake variables can be configured:
 | `MLIR_DIR`  | `STRING` | Path to the CMake directory of an **MLIR** installation. <br/> *e.g. `~/tools/llvm-17/lib/cmake/mlir`* |
 | `CIRCT_DIR` | `STRING` | Path to the CMake directory of an **CIRCT** installation. <br/> *e.g. `~/tools/circt/lib/cmake/circt`* |
 
-
+Notice that the llvm version should be the same as the `CIRCT` is using.
