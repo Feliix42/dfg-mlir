@@ -12,18 +12,17 @@ include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/IR/FunctionInterfaces.td"
 
 
 def Dfg_OperatorOp : Dfg_Op<
         "operator",
         [
-            AffineScope,
             AutomaticAllocationScope,
-            // CallableOpInterface,
-            // FunctionOpInterface,
+            // AttrSizedOperandSegments,
             IsolatedFromAbove,
-            OpAsmOpInterface,
+            HasParent<"ModuleOp">,
             NoTerminator
         ]> {
     let summary = "Defines a node in the Dataflow Graph";
@@ -45,52 +44,17 @@ def Dfg_OperatorOp : Dfg_Op<
         ```
     }];
 
-    // TODO(feliix42): Ensure that all arguments are of type `channel`!
-
     let arguments = (ins SymbolNameAttr: $sym_name,
-                        TypeAttrOf<FunctionType>: $function_type);
+                         TypeAttrOf<FunctionType>: $function_type);
+                        //  TypeArrayAttr:$inputs,
+                        //  TypeArrayAttr:$outputs);
 
-    // The FunctionOpInterface requires exactly one region attached to the operator
+    // The FunctionOpInterface requires zero or one region attached to the operator
     let regions = (region AnyRegion: $body);
 
-    // how can an option like this be *so* under-documented?!
-    let skipDefaultBuilders = 1;
-
-    let builders = [OpBuilder<(ins
-        "StringRef": $sym_name, "FunctionType": $type)>];
-
     let extraClassDeclaration = [{
+        /// Returns whether the operator is externally defined
         bool isExternal();
-
-        //===------------------------------------------------------------------===//
-        // CallableOpInterface
-        //===------------------------------------------------------------------===//
-
-        /// Returns the region on the current operation that is callable. This may
-        /// return null in the case of an external callable object, e.g. an external
-        /// function.
-        // ::mlir::Region *getCallableRegion() { return isExternal() ? nullptr : &getBody(); }
-
-        /// Returns the results types that the callable region produces when
-        /// executed.
-        // ArrayRef<Type> getCallableResults() { return ArrayRef<Type>(); }
-
-        //===------------------------------------------------------------------===//
-        // FunctionOpInterface Methods
-        //===------------------------------------------------------------------===//
-
-        /// Returns the argument types of this function.
-        ArrayRef<Type> getInputTypes() { return getFunctionType().getInputs(); }
-
-        /// Returns the result types of this function.
-        ArrayRef<Type> getOutputTypes() { return getFunctionType().getResults(); }
-
-        //===------------------------------------------------------------------===//
-        // OpAsmOpInterface Methods
-        //===------------------------------------------------------------------===//
-
-        /// Allow the dialect prefix to be omitted.
-        static StringRef getDefaultDialect() { return "dfg"; }
 
         //===------------------------------------------------------------------===//
         // SymbolOpInterface Methods
@@ -104,7 +68,9 @@ def Dfg_OperatorOp : Dfg_Op<
     let hasVerifier = 1;
 }
 
-def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
+// TODO:
+// , RegionBranchOpInterface]>
+def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]> 
 {
     let summary = "Defines a list of input/output ports maybe closed";
 
@@ -118,16 +84,17 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
         ```
         dfg.operator @add inputs(%a:!dfg.output<type>) outputs(%b:!dfg.input<type>)
         {
-            dfg.loop (%a, %b) {
+            dfg.loop (%a: !dfg.output<type>, %b: !dfg.input<type>) {
                 ops ...
             }
         }
         ```
     }];
 
+    // TODO: Constraint to any channel types
     let arguments = (ins Variadic<AnyType>:$channels);
 
-    let regions = (region SizedRegion<1>: $body);
+    let regions = (region MinSizedRegion<1>: $body);
 
     let skipDefaultBuilders = 1;
     let builders = [OpBuilder<(ins "ValueRange":$channels)>];
@@ -139,10 +106,7 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
         [
-            // THIS ENFORCES OneResult ON THE OP!
-            // ConstantLike,
-            Pure,
-            // OpAsmOpInterface
+            Pure
         ]> {
     let summary = "Defines a channel with one input and one output port";
     let description = [{
@@ -167,9 +131,6 @@ def Dfg_ChannelOp : Dfg_Op<
         ```
     }];
 
-    // TODO(feliix42): Verify that the encapsulated types in both results match the `encapsulatedType`
-    // Thoughts(jibi): don't think we need one, we only take one type and then the elementType of
-    //                 Intput/Output type would automatically be the same as encapulatedType
     let arguments = (ins
         TypeAttr:$encapsulatedType,
         OptionalAttr<I32Attr>:$bufferSize
@@ -186,7 +147,6 @@ def Dfg_ChannelOp : Dfg_Op<
 def Dfg_InstantiateOp : Dfg_Op<
     "instantiate",
     [
-        // Pure
         AttrSizedOperandSegments
     ]> {
     let summary = "Instantiates an operator with the given inputs, forming (part of) a data flow graph.";
@@ -210,43 +170,13 @@ def Dfg_InstantiateOp : Dfg_Op<
 
     }];
 
-    let arguments = (ins SymbolNameAttr:$callee,
+    let arguments = (ins SymbolRefAttr:$callee,
                          Variadic<Dfg_OutputType>:$inputs,
                          Variadic<Dfg_InputType>:$outputs);
 
-    let hasCustomAssemblyFormat = 1;
-}
-
-
-def Dfg_KernelOp : Dfg_Op<
-    "kernel",
-    [
-        AttrSizedOperandSegments
-    ]> {
-    let summary = "Instantiates a kernel with the given inputs, forming (part of) a data flow graph.";
-    let description = [{
-        The `kernel` operation instantiates a data flow graph operator with
-        a concrete set of inputs and outputs. This instanciation creates a node
-        in the data flow graph. The data flow is derived from the arguments to
-        the instanciation as well as the results and their uses/origin.
-
-        Syntax:
-
-        ```
-        TODO
-        ```
-
-        Examples:
-
-        ```
-        TODO
-        ```
-
-    }];
-
-    let arguments = (ins FlatSymbolRefAttr:$callee,
-                         Variadic<Dfg_OutputType>:$inputs,
-                         Variadic<Dfg_InputType>:$outputs);
+    // let assemblyFormat = [{
+    //     $callee `inputs` `(` $inputs `)` `outputs` `(` $outputs `)` attr-dict `:` functional-type($inputs, $outputs)
+    // }];
 
     let hasCustomAssemblyFormat = 1;
 }
@@ -284,9 +214,8 @@ def Dfg_PushOp : Dfg_Op<
     // let assemblyFormat = [{
     //     `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
     // }];
-    let assemblyFormat = [{
-        `(` $inp `)` $chan attr-dict `:` type($inp) `to` type($chan)
-    }];
+
+    let hasCustomAssemblyFormat = 1;
 }
 
 def Dfg_PullOp : Dfg_Op<
@@ -322,9 +251,8 @@ def Dfg_PullOp : Dfg_Op<
     // let assemblyFormat = [{
     //     $chan attr-dict `:` functional-type($chan, $outp)
     // }];
-    let assemblyFormat = [{
-        $chan attr-dict `:` type($outp) `from` type($chan)
-    }];
+
+    let hasCustomAssemblyFormat = 1;
 }
 
 #endif

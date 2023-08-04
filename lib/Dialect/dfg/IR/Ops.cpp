@@ -3,11 +3,13 @@
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
-#include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
+
+#include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/FunctionImplementation.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
@@ -26,84 +28,46 @@ using namespace mlir::dfg;
 
 //===----------------------------------------------------------------------===//
 
+// -> for multiple variadic attributes
+constexpr char kOperandSegmentSizesAttr[] = "operand_segment_sizes";
+
 //===----------------------------------------------------------------------===//
 // OperatorOp
 //===----------------------------------------------------------------------===//
 
-void OperatorOp::build(
-    OpBuilder &builder,
-    OperationState &state,
-    StringRef name,
-    FunctionType type)
-{
-
-    state.addAttribute(
-        SymbolTable::getSymbolAttrName(),
-        builder.getStringAttr(name));
-    state.addAttribute(
-        getFunctionTypeAttrName(state.name),
-        TypeAttr::get(type));
-    state.addRegion();
-
-    // FIXME(feliix42): addArgAndResultAttrs to register the function arguments
-    // as block arguments (?) -> maybe also not needed, we'll see
-}
-
-// temporary workaround
+/// @brief  Returns whether the operator is externally defined, i.e., has no
+/// body.
+/// @return `true` if there is no body attached, `false` the operator has a
+/// body.
 bool OperatorOp::isExternal()
 {
     Region &body = getRegion();
     return body.empty();
 }
 
-static ParseResult parseFunctionArgumentList(
+/// @brief Parses a function argument list for inputs or outputs
+/// @tparam T The class of the argument. Must be either InputType or OutputType
+/// @param parser The currently used parser
+/// @param arguments A list of arguments to parse
+/// @return A parse result indicating success or failure to parse.
+template<typename T>
+static ParseResult parseChannelArgumentList(
     OpAsmParser &parser,
     SmallVectorImpl<OpAsmParser::Argument> &arguments)
 {
     return parser.parseCommaSeparatedList(
         OpAsmParser::Delimiter::Paren,
         [&]() -> ParseResult {
-            // // Handle ellipsis as a special case.
-            // if (succeeded(parser.parseOptionalEllipsis())) {
-            //   // This is a variadic designator.
-            //   return failure(); // Stop parsing arguments.
-            // }
-
-            // Parse argument name if present.
             OpAsmParser::Argument argument;
-            auto argPresent = parser.parseOptionalArgument(
-                argument,
-                /*allowType=*/true,
-                /*allowAttrs=*/false);
-            if (argPresent.has_value()) {
-                if (failed(argPresent.value()))
-                    return failure(); // Present but malformed.
+            if (parser.parseArgument(
+                    argument,
+                    /*allowType=*/true,
+                    /*allowAttrs=*/false))
+                return failure();
 
-                // Reject this if the preceding argument was missing a name.
-                if (!arguments.empty() && arguments.back().ssaName.name.empty())
-                    return parser.emitError(
-                        argument.ssaName.location,
-                        "expected type instead of SSA identifier");
-
-            } else {
-                argument.ssaName.location = parser.getCurrentLocation();
-                // Otherwise we just have a type list without SSA names.  Reject
-                // this if the preceding argument had a name.
-                if (!arguments.empty()
-                    && !arguments.back().ssaName.name.empty())
-                    return parser.emitError(
-                        argument.ssaName.location,
-                        "expected SSA identifier");
-
-                NamedAttrList attrs;
-                if (parser.parseType(argument.type)
-                    || parser.parseOptionalAttrDict(attrs)
-                    || parser.parseOptionalLocationSpecifier(
-                        argument.sourceLoc))
-                    return failure();
-                argument.attrs = attrs.getDictionary(parser.getContext());
-            }
+            argument.type = T::get(argument.type.getContext(), argument.type);
             arguments.push_back(argument);
+
             return success();
         });
 }
@@ -116,30 +80,31 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
     StringAttr nameAttr;
     if (parser.parseSymbolName(
             nameAttr,
-            SymbolTable::getSymbolAttrName(),
+            getSymNameAttrName(result.name),
             result.attributes))
         return failure();
 
     // parse the signature of the operator
-    SmallVector<OpAsmParser::Argument> arguments, outputArgs;
+    SmallVector<OpAsmParser::Argument> inVals, outVals;
     SMLoc signatureLocation = parser.getCurrentLocation();
 
     // parse inputs/outputs separately for later distinction
     if (succeeded(parser.parseOptionalKeyword("inputs"))) {
-        if (parseFunctionArgumentList(parser, arguments)) return failure();
+        if (parseChannelArgumentList<OutputType>(parser, inVals))
+            return failure();
     }
 
     if (succeeded(parser.parseOptionalKeyword("outputs"))) {
-        if (parseFunctionArgumentList(parser, outputArgs)) return failure();
+        if (parseChannelArgumentList<InputType>(parser, outVals))
+            return failure();
     }
 
-    SmallVector<Type> argTypes;
-    argTypes.reserve(arguments.size());
-    SmallVector<Type> resultTypes;
-    resultTypes.reserve(outputArgs.size());
+    SmallVector<Type> argTypes, resultTypes;
+    argTypes.reserve(inVals.size());
+    resultTypes.reserve(outVals.size());
 
-    for (auto &arg : arguments) argTypes.push_back(arg.type);
-    for (auto &arg : outputArgs) resultTypes.push_back(arg.type);
+    for (auto &arg : inVals) argTypes.push_back(arg.type);
+    for (auto &arg : outVals) resultTypes.push_back(arg.type);
     Type type = builder.getFunctionType(argTypes, resultTypes);
 
     if (!type) {
@@ -152,15 +117,18 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
         TypeAttr::get(type));
 
     // merge both argument lists for the block arguments
-    arguments.append(outputArgs);
+    inVals.append(outVals);
 
-    // if (parser.parseOptionalAttrDict(result.attributes)) return failure();
+    OptionalParseResult attrResult =
+        parser.parseOptionalAttrDictWithKeyword(result.attributes);
+    if (attrResult.has_value() && failed(*attrResult)) return failure();
 
+    // parse the attached region, if any
     auto* body = result.addRegion();
     SMLoc loc = parser.getCurrentLocation();
     OptionalParseResult parseResult = parser.parseOptionalRegion(
         *body,
-        arguments,
+        inVals,
         /*enableNameShadowing=*/false);
 
     if (parseResult.has_value()) {
@@ -168,6 +136,7 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
         if (body->empty())
             return parser.emitError(loc, "expected non-empty operator body");
     }
+
     return success();
 }
 
@@ -188,20 +157,12 @@ void OperatorOp::print(OpAsmPrinter &p)
     ArrayRef<Type> inputTypes = getFunctionType().getInputs();
     ArrayRef<Type> outputTypes = getFunctionType().getResults();
 
-    // // NOTE(feliix42): Is this even necessary? There's no attributes
-    // supported afaik FunctionOpInterface fu =
-    // llvm::cast<FunctionOpInterface>(op); ArrayAttr argAttrs =
-    // fu.getArgAttrsAttr();
-
     if (!inputTypes.empty()) {
         p << " inputs (";
         for (unsigned i = 0; i < inputTypes.size(); i++) {
             if (i > 0) p << ", ";
 
             ArrayRef<NamedAttribute> attrs;
-            // if(argAttrs)
-            //     attrs = argAttrs[i].cast<DictionaryAttr>().getValue();
-
             p.printRegionArgument(body.getArgument(i), attrs);
         }
         p << ')';
@@ -214,18 +175,15 @@ void OperatorOp::print(OpAsmPrinter &p)
             if (i > inpSize) p << ", ";
 
             ArrayRef<NamedAttribute> attrs;
-            // if(argAttrs)
-            //     attrs = argAttrs[i].cast<DictionaryAttr>().getValue();
-
             p.printRegionArgument(body.getArgument(i), attrs);
         }
         p << ')';
     }
 
-    // if (!op->getAttrs().empty()) {
-    //     // NOTE(feliix42): Might needs a list of elided attrs -> inputs/...
-    //     p.printOptionalAttrDict(op->getAttrs());
-    // }
+    // print any attributes in the attribute list into the dict
+    // NOTE(feliix42): Ensure this does not print duplicate attrs
+    if (!op->getAttrs().empty())
+        p.printOptionalAttrDictWithKeyword(op->getAttrs());
 
     // Print the region
     if (!body.empty()) {
@@ -239,27 +197,17 @@ void OperatorOp::print(OpAsmPrinter &p)
 
 LogicalResult OperatorOp::verify()
 {
-    // Check if all the input are OutputType
-    // and all output are InputType
-    auto inputsType = getInputTypes();
-    for (const auto inTy : inputsType)
-        if (!inTy.isa<OutputType>())
-            return emitOpError("requires OutputType for input ports");
-
-    auto outputsType = getOutputTypes();
-    for (const auto outTy : outputsType)
-        if (!outTy.isa<InputType>())
-            return emitOpError("requires InputType for output ports");
-
     // If there is a LoopOp, it must be the first op in the body
-    auto ops = getBody().getOps();
-    bool isFirstLoop, hasLoop = false;
-    for (const auto &op : ops)
-        if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
-    if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
-        isFirstLoop = true;
-    if (hasLoop && !isFirstLoop)
-        return emitError("The LoopOp must be the first op of Operator");
+    if (!getBody().empty()) {
+        auto ops = getBody().getOps();
+        bool isFirstLoop, hasLoop = false;
+        for (const auto &op : ops)
+            if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
+        if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
+            isFirstLoop = true;
+        if (hasLoop && !isFirstLoop)
+            return emitError("The LoopOp must be the first op of Operator");
+    }
 
     return success();
 }
@@ -270,20 +218,50 @@ LogicalResult OperatorOp::verify()
 
 ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
 {
-    if (parser.parseLParen()) return failure();
+    // parse inputs/outputs
+    SmallVector<OpAsmParser::Argument> inVals, outVals;
 
-    SmallVector<OpAsmParser::UnresolvedOperand> operands;
-    SmallVector<Type> types;
-    if (parser.parseOperandList(operands)) return failure();
-    if (parser.parseColonTypeList(types)) return failure();
-
-    assert(operands.size() == types.size());
-
-    for (size_t i = 0; i < operands.size(); i++)
-        if (parser.resolveOperand(operands[i], types[i], result.operands))
+    // parse inputs/outputs separately for later distinction
+    SMLoc inputLocation = parser.getCurrentLocation();
+    if (succeeded(parser.parseOptionalKeyword("inputs"))) {
+        if (parseChannelArgumentList<OutputType>(parser, inVals))
             return failure();
+    }
 
-    if (parser.parseRParen()) return failure();
+    SMLoc outputLocation = parser.getCurrentLocation();
+    if (succeeded(parser.parseOptionalKeyword("outputs"))) {
+        if (parseChannelArgumentList<InputType>(parser, outVals))
+            return failure();
+    }
+
+    SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs, outputs;
+    SmallVector<Type> argTypes, resultTypes;
+    int32_t numInputs = inVals.size();
+    int32_t numOutputs = outVals.size();
+    argTypes.reserve(numInputs);
+    inputs.reserve(numInputs);
+    resultTypes.reserve(numOutputs);
+    outputs.reserve(numOutputs);
+
+    for (auto &arg : inVals) {
+        argTypes.push_back(arg.type);
+        inputs.push_back(arg.ssaName);
+    }
+    for (auto &arg : outVals) {
+        resultTypes.push_back(arg.type);
+        outputs.push_back(arg.ssaName);
+    }
+
+    if (parser
+            .resolveOperands(inputs, argTypes, inputLocation, result.operands))
+        return failure();
+
+    if (parser.resolveOperands(
+            outputs,
+            resultTypes,
+            outputLocation,
+            result.operands))
+        return failure();
 
     Region* body = result.addRegion();
     if (parser.parseRegion(*body, {}, {})) return failure();
@@ -315,7 +293,7 @@ void LoopOp::print(OpAsmPrinter &p)
 
 ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 {
-    if (failed(parser.parseLess())) return failure();
+    if (failed(parser.parseLParen())) return failure();
 
     Type ty;
     if (parser.parseType(ty)) return failure();
@@ -330,8 +308,6 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
     OutputType out = OutputType::get(ty.getContext(), ty);
     results.push_back(out);
 
-    // TODO(feliix42): Verify correctness: Is `getInChan` and `getOutChan`
-    // yielding the expected results??
     result.addTypes(results);
 
     if (succeeded(parser.parseOptionalComma())) {
@@ -343,7 +319,7 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
             parser.getBuilder().getI32IntegerAttr(size));
     }
 
-    return parser.parseGreater();
+    return parser.parseRParen();
 }
 
 void ChannelOp::print(OpAsmPrinter &p)
@@ -358,17 +334,21 @@ void ChannelOp::print(OpAsmPrinter &p)
 // InstantiateOp
 //===----------------------------------------------------------------------===//
 
-constexpr char kOperandSegmentSizesAttr[] = "operand_segment_sizes";
-
 ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 {
+    // optionally mark as `offloaded`
+    if (succeeded(parser.parseOptionalKeyword("offloaded")))
+        result.addAttribute(
+            getOffloadedAttrName(result.name),
+            BoolAttr::get(parser.getContext(), true));
+
     // parse operator name
     StringAttr calleeAttr;
-    if (parser.parseSymbolName(
-            calleeAttr,
-            getCalleeAttrName(result.name),
-            result.attributes))
-        return failure();
+    if (parser.parseSymbolName(calleeAttr)) return failure();
+
+    result.addAttribute(
+        getCalleeAttrName(result.name),
+        SymbolRefAttr::get(calleeAttr));
 
     // parse the operator inputs and outpus
     SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs;
@@ -389,26 +369,34 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
     if (parser.parseColon()) return failure();
 
     // parse the signature & resolve the input/output types
+    SMLoc location = parser.getCurrentLocation();
     FunctionType signature;
     if (parser.parseType(signature)) return failure();
 
     ArrayRef<Type> inpTypes = signature.getInputs();
     ArrayRef<Type> outTypes = signature.getResults();
-    SMLoc location = parser.getCurrentLocation();
-
     int32_t numInputs = inpTypes.size();
     int32_t numOutputs = outTypes.size();
 
-    if (inpTypes.size() != inputs.size() || outTypes.size() != outputs.size()) {
+    SmallVector<Type> inChanTypes;
+    SmallVector<Type> outChanTypes;
+    for (auto &inp : inpTypes)
+        inChanTypes.push_back(OutputType::get(inp.getContext(), inp));
+    for (auto &out : outTypes)
+        outChanTypes.push_back(InputType::get(out.getContext(), out));
+
+    if (inChanTypes.size() != inputs.size()
+        || outChanTypes.size() != outputs.size()) {
         parser.emitError(
             location,
             "Call signature does not match operand count");
     }
 
-    if (parser.resolveOperands(inputs, inpTypes, location, result.operands))
+    if (parser.resolveOperands(inputs, inChanTypes, location, result.operands))
         return failure();
 
-    if (parser.resolveOperands(outputs, outTypes, location, result.operands))
+    if (parser
+            .resolveOperands(outputs, outChanTypes, location, result.operands))
         return failure();
 
     // Add derived `operand_segment_sizes` attribute based on parsed
@@ -422,6 +410,9 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 
 void InstantiateOp::print(OpAsmPrinter &p)
 {
+    // offloaded?
+    if (getOffloaded()) p << " offloaded";
+
     // callee
     p << ' ';
     p.printAttributeWithoutType(getCalleeAttr());
@@ -433,89 +424,71 @@ void InstantiateOp::print(OpAsmPrinter &p)
     if (!getOutputs().empty()) p << " outputs (" << getOutputs() << ")";
 
     // signature
+    SmallVector<Type> inpChans(getInputs().size());
+    SmallVector<Type> outChans(getOutputs().size());
+
+    for (auto in : getInputs().getTypes())
+        inpChans.push_back(in.cast<OutputType>().getElementType());
+    for (auto out : getOutputs().getTypes())
+        outChans.push_back(out.cast<InputType>().getElementType());
+
     p << " : ";
-    p.printFunctionalType(getInputs().getTypes(), getOutputs().getTypes());
+    p.printFunctionalType(inpChans, outChans);
 }
 
 //===----------------------------------------------------------------------===//
-// KernelOp
+// PullOp
 //===----------------------------------------------------------------------===//
 
-ParseResult KernelOp::parse(OpAsmParser &parser, OperationState &result)
+ParseResult PullOp::parse(OpAsmParser &parser, OperationState &result)
 {
-    // parse operator name
-    StringAttr calleeAttr;
-    if (parser.parseSymbolName(
-            calleeAttr,
-            getCalleeAttrName(result.name),
-            result.attributes))
+    OpAsmParser::UnresolvedOperand inputChan;
+    Type dataTy;
+
+    if (parser.parseOperand(inputChan) || parser.parseColon()
+        || parser.parseType(dataTy))
         return failure();
 
-    // parse the operator inputs and outpus
-    SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs;
-    if (succeeded(parser.parseOptionalKeyword("inputs"))) {
-        if (parser.parseLParen() || parser.parseOperandList(inputs) ||
-            // parser.resolveOperands(inputs, opTy, result.operands)) {
-            parser.parseRParen())
-            return failure();
-    }
+    result.addTypes(dataTy);
 
-    SmallVector<OpAsmParser::UnresolvedOperand, 4> outputs;
-    if (succeeded(parser.parseOptionalKeyword("outputs"))) {
-        if (parser.parseLParen() || parser.parseOperandList(outputs)
-            || parser.parseRParen())
-            return failure();
-    }
-
-    if (parser.parseColon()) return failure();
-
-    // parse the signature & resolve the input/output types
-    FunctionType signature;
-    if (parser.parseType(signature)) return failure();
-
-    ArrayRef<Type> inpTypes = signature.getInputs();
-    ArrayRef<Type> outTypes = signature.getResults();
-    SMLoc location = parser.getCurrentLocation();
-
-    int32_t numInputs = inpTypes.size();
-    int32_t numOutputs = outTypes.size();
-
-    if (inpTypes.size() != inputs.size() || outTypes.size() != outputs.size()) {
-        parser.emitError(
-            location,
-            "Call signature does not match operand count");
-    }
-
-    if (parser.resolveOperands(inputs, inpTypes, location, result.operands))
+    Type channelTy = OutputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(inputChan, channelTy, result.operands))
         return failure();
-
-    if (parser.resolveOperands(outputs, outTypes, location, result.operands))
-        return failure();
-
-    // Add derived `operand_segment_sizes` attribute based on parsed
-    // operands.
-    auto operandSegmentSizes =
-        parser.getBuilder().getDenseI32ArrayAttr({numInputs, numOutputs});
-    result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
     return success();
 }
 
-void KernelOp::print(OpAsmPrinter &p)
+void PullOp::print(OpAsmPrinter &p)
 {
-    // callee
-    p << ' ';
-    p.printAttributeWithoutType(getCalleeAttr());
+    p << " " << getChan() << " : " << getType();
+}
 
-    // print `inputs (...)` if existent
-    if (!getInputs().empty()) p << " inputs(" << getInputs() << ")";
+//===----------------------------------------------------------------------===//
+// PushOp
+//===----------------------------------------------------------------------===//
 
-    // print `outputs (...)` if existent
-    if (!getOutputs().empty()) p << " outputs(" << getOutputs() << ")";
+ParseResult PushOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand inp;
+    OpAsmParser::UnresolvedOperand outputChan;
+    Type dataTy;
 
-    // signature
-    p << " : ";
-    p.printFunctionalType(getInputs().getTypes(), getOutputs().getTypes());
+    if (parser.parseLParen() || parser.parseOperand(inp) || parser.parseRParen()
+        || parser.parseOperand(outputChan) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    Type channelTy = InputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(inp, dataTy, result.operands)
+        || parser.resolveOperand(outputChan, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void PushOp::print(OpAsmPrinter &p)
+{
+    p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType();
 }
 
 //===----------------------------------------------------------------------===//
