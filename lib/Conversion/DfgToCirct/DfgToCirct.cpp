@@ -29,6 +29,7 @@ namespace {
 // old arguments.
 SmallVector<std::pair<int, Value>> oldArgNums;
 SmallVector<Value> newArgs;
+SmallVector<std::pair<SmallVector<Value>, Value>> newArguments;
 SmallVector<std::pair<Value, Value>> newOperands;
 template<typename T1, typename T2>
 std::optional<T1>
@@ -182,6 +183,8 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
 //         return success();
 //     }
 // };
+
+// TODO: Logic is incorrect, check what to do!!!
 
 struct ConvertPull : OpConversionPattern<PullOp> {
     using OpConversionPattern<PullOp>::OpConversionPattern;
