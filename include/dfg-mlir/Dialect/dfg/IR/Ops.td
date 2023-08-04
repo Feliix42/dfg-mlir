@@ -172,7 +172,8 @@ def Dfg_InstantiateOp : Dfg_Op<
 
     let arguments = (ins SymbolRefAttr:$callee,
                          Variadic<Dfg_OutputType>:$inputs,
-                         Variadic<Dfg_InputType>:$outputs);
+                         Variadic<Dfg_InputType>:$outputs,
+                         DefaultValuedAttr<BoolAttr, "false">:$offloaded);
 
     // let assemblyFormat = [{
     //     $callee `inputs` `(` $inputs `)` `outputs` `(` $outputs `)` attr-dict `:` functional-type($inputs, $outputs)
