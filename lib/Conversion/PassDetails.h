@@ -10,9 +10,21 @@
 
 namespace circt {
 
-namespace firrtl {
-class FIRRTLDialect;
-} // namespace firrtl
+namespace comb {
+class CombDialect;
+} // namespace comb
+
+namespace fsm {
+class FSMDialect;
+} // namespace fsm
+
+namespace hw {
+class HWDialect;
+} // namespace hw
+
+namespace sv {
+class SVDialect;
+} // namespace sv
 
 } // namespace circt
 
