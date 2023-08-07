@@ -284,15 +284,19 @@ dfg.operator @make_ctr outputs(%counter_0_0_1_tx: i32) {
 
 dfg.operator @kernel_interpolate inputs(%rsvbb_0_0_0_rx: !RoadSpeedVector, %mapcell_0_0_0_0_1_rx: !MapCell)
                                  outputs(%rsv_0_0_0_tx: !RoadSpeedVector)
+                                 attributes { dfg.path = "mma/component_interpolate.cpp" }
 
 dfg.operator @kernel_viterbi inputs(%t_0_0_0_rx: !Trellis, %cv_0_0_0_0_1_rx: !CandiVector)
                              outputs(%rsvbb_0_0_0_tx: !RoadSpeedVector)
+                             attributes { dfg.path = "mma/viterbi.cpp" }
 
 dfg.operator @kernel_build_trellis inputs(%gv_0_0_0_0_rx: !GpsVector, %cv_0_0_0_0_2_rx: !CandiVector, %mapcell_0_0_0_0_2_rx: !MapCell, %dijkstra_0_0_0_rx: !Dijkstra)
                                    outputs(%t_0_0_0_tx: !Trellis)
+                                   attributes { dfg.path = "mma/component_trellis.cpp" }
 
 dfg.operator @kernel_projection inputs(%gv0_0_0_0_rx: !GpsVector, %mapcell0_0_0_0_rx: !MapCell)
                                 outputs(%cv_0_0_1_tx: !CandiVector)
+                                attributes { dfg.path = "mma/component_projection.cpp" }
 
 
 
