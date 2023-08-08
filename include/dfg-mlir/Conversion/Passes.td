@@ -44,6 +44,10 @@ def ConvertStdToCirct : Pass<"convert-std-to-circt"> {
         "arith::ArithDialect",
         "func::FuncDialect",
 
+        "circt::comb::CombDialect",
+        "circt::hw::HWDialect",
+        "circt::sv::SVDialect",
+
         "dfg::DfgDialect"
     ];
 }
