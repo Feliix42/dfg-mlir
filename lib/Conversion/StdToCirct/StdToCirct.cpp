@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
+#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
+
 #include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
@@ -12,7 +14,7 @@
 #include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
-#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
+#include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -30,6 +32,7 @@ using namespace circt;
 
 namespace {
 
+// arith -> comb
 template<typename From, typename To>
 struct OneToOneConversion : public OpConversionPattern<From> {
     using OpConversionPattern<From>::OpConversionPattern;
@@ -160,12 +163,107 @@ struct CompConversion : public OpConversionPattern<arith::CmpIOp> {
     }
 };
 
+// func.func -> hw.module
+SmallVector<std::pair<Value, Value>> LowerHelper::newConnections;
+struct FuncConversion : public OpConversionPattern<func::FuncOp> {
+    using OpConversionPattern<func::FuncOp>::OpConversionPattern;
+
+    FuncConversion(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<func::FuncOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        func::FuncOp op,
+        func::FuncOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto loc = op.getLoc();
+        auto context = rewriter.getContext();
+        auto funcTy = op.getFunctionType();
+        auto numInputs = funcTy.getNumInputs();
+        auto numOutputs = funcTy.getNumResults();
+
+        SmallVector<hw::PortInfo> ports;
+        int in_num = 1;
+        int out_num = 1;
+
+        for (size_t i = 0; i < numInputs; i++) {
+            auto inTy = funcTy.getInput(i);
+            // Add input port
+            hw::PortInfo inPort;
+            std::string name =
+                ((numInputs == 1) ? "in" : "in" + std::to_string(in_num));
+            inPort.name = rewriter.getStringAttr(name);
+            inPort.dir = hw::ModulePort::Direction::Input;
+            inPort.type = InputType::get(context, inTy);
+            inPort.argNum = in_num++ - 1;
+            ports.push_back(inPort);
+        }
+        for (size_t i = 0; i < numOutputs; i++) {
+            auto outTy = funcTy.getResult(i);
+            // Add output port
+            hw::PortInfo outPort;
+            std::string name =
+                ((numOutputs == 1) ? "out" : "out" + std::to_string(out_num));
+            outPort.name = rewriter.getStringAttr(name);
+            outPort.dir = hw::ModulePort::Direction::Output;
+            outPort.type = OutputType::get(context, outTy);
+            outPort.argNum = out_num++ - 1;
+            ports.push_back(outPort);
+        }
+
+        auto hwModule = rewriter.create<hw::HWModuleOp>(
+            loc,
+            op.getSymNameAttr(),
+            hw::ModulePortInfo(ports),
+            ArrayAttr{},
+            ArrayRef<NamedAttribute>{},
+            StringAttr{},
+            false);
+        for (size_t i = 0; i < numInputs; i++)
+            LowerHelper::newConnections.push_back(
+                std::make_pair(hwModule.getArgument(i), op.getArgument(i)));
+
+        rewriter.setInsertionPointToStart(&hwModule.getBody().front());
+        SmallVector<std::pair<Value, Value>> pullOutWhich;
+        for (auto &opInside :
+             llvm::make_early_inc_range(op.getBody().getOps())) {
+            if (auto pushOp = dyn_cast<PushOp>(opInside))
+                continue;
+            else if (auto pullOp = dyn_cast<PullOp>(opInside)) {
+                pullOutWhich.push_back(
+                    std::make_pair(pullOp.getChan(), pullOp.getOutp()));
+            } else if (auto returnOp = dyn_cast<func::ReturnOp>(opInside)) {
+                SmallVector<Value> newOutputs;
+                for (auto returnValue : returnOp.getOperands()) {
+                    auto newOutput =
+                        LowerHelper::getNewIndexOrArg<Value, Value>(
+                            returnValue,
+                            pullOutWhich);
+                    newOutputs.push_back(newOutput.value());
+                }
+                rewriter.create<hw::OutputOp>(
+                    rewriter.getUnknownLoc(),
+                    newOutputs);
+            } else {
+                opInside.moveBefore(
+                    hwModule.getBodyBlock(),
+                    hwModule.getBodyBlock()->end());
+            }
+        }
+
+        rewriter.eraseOp(op);
+
+        return success();
+    }
+};
+
 } // namespace
 
 void mlir::populateStdToCirctConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns)
 {
+    // arith -> comb
     patterns.add<OneToOneConversion<arith::ConstantOp, hw::ConstantOp>>(
         typeConverter,
         patterns.getContext());
@@ -215,6 +313,9 @@ void mlir::populateStdToCirctConversionPatterns(
     patterns.add<ExtZConversion>(typeConverter, patterns.getContext());
     patterns.add<TruncConversion>(typeConverter, patterns.getContext());
     patterns.add<CompConversion>(typeConverter, patterns.getContext());
+
+    // func.func -> hw.module
+    patterns.add<FuncConversion>(typeConverter, patterns.getContext());
 }
 
 namespace {
