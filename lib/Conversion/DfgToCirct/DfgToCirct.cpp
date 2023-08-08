@@ -3,15 +3,20 @@
 /// @file
 /// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
-#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
-
 #include "../PassDetails.h"
-#include "circt/Dialect/FIRRTL/FIRRTLDialect.h"
-#include "circt/Dialect/FIRRTL/FIRRTLOpInterfaces.h"
-#include "circt/Dialect/FIRRTL/FIRRTLOps.h"
+#include "circt/Dialect/Comb/CombDialect.h"
+#include "circt/Dialect/Comb/CombOps.h"
+#include "circt/Dialect/FSM/FSMDialect.h"
+#include "circt/Dialect/FSM/FSMOps.h"
+#include "circt/Dialect/HW/HWDialect.h"
+#include "circt/Dialect/HW/HWOpInterfaces.h"
+#include "circt/Dialect/HW/HWOps.h"
+#include "circt/Dialect/HW/HWTypes.h"
+#include "circt/Dialect/SV/SVDialect.h"
+#include "circt/Dialect/SV/SVOps.h"
+#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
@@ -19,11 +24,392 @@
 
 #include "llvm/ADT/APInt.h"
 
+#include <set>
+
 using namespace mlir;
 using namespace mlir::dfg;
 using namespace circt;
 
 namespace {
+
+// Helper to determine which new argument to use
+SmallVector<std::pair<int, Value>> oldArgsIndex;
+SmallVector<std::pair<Value, Value>> newArguments;
+
+template<typename T1, typename T2>
+std::optional<T1> getNewIndexOrArg(T2 find, SmallVector<std::pair<T1, T2>> args)
+{
+    for (const auto &kv : args)
+        if (kv.second == find) return kv.first;
+    return std::nullopt;
+}
+
+fsm::MachineOp insertController(
+    ModuleOp module,
+    std::string name,
+    FunctionType funcTy,
+    SmallVector<Operation*> ops)
+{
+    auto context = module.getContext();
+    OpBuilder builder(context);
+    builder.setInsertionPointToStart(module.getBody());
+    auto loc = builder.getUnknownLoc();
+
+    // Create a new fsm.machine
+    auto machine = builder.create<fsm::MachineOp>(loc, name, "INIT", funcTy);
+    builder.setInsertionPointToStart(&machine.getBody().front());
+
+    // Create constants and variables
+    auto c_true = builder.create<hw::ConstantOp>(loc, builder.getI1Type(), 1);
+    auto c_false = builder.create<hw::ConstantOp>(loc, builder.getI1Type(), 0);
+    int numPull = 0;
+    int numPush = 0;
+    SmallVector<Value> pullVars;
+    SmallVector<Value> calVars;
+    SmallVector<std::pair<Value, int>> zeroWidth;
+    int numCalculation = 0;
+    // Now assume that every computation takes only one cycle
+    // and the computation only returns one value
+    for (auto op : ops) {
+        if (auto pullOp = dyn_cast<PullOp>(op)) {
+            auto valueTy = pullOp.getChan().getType().getElementType();
+            auto varOp = builder.create<fsm::VariableOp>(
+                loc,
+                valueTy,
+                builder.getIntegerAttr(valueTy, 0),
+                builder.getStringAttr("data" + std::to_string(numPull++)));
+            pullVars.push_back(varOp.getResult());
+            newArguments.push_back(
+                std::make_pair(varOp.getResult(), pullOp.getOutp()));
+        } else if (auto pushOp = dyn_cast<PushOp>(op)) {
+            numPush++;
+        } else {
+            auto type = op->getResult(0).getType();
+            auto varOp = builder.create<fsm::VariableOp>(
+                loc,
+                type,
+                builder.getIntegerAttr(type, 0),
+                builder.getStringAttr(
+                    "result" + std::to_string(numCalculation++)));
+            calVars.push_back(varOp.getResult());
+            newArguments.push_back(
+                std::make_pair(varOp.getResult(), op->getResult(0)));
+        }
+    }
+
+    // Create states and transitions
+    std::vector<Value> outputAllZero;
+    for (const auto out : machine.getFunctionType().getResults()) {
+        auto outWidth = dyn_cast<IntegerType>(out).getWidth();
+        if (outWidth == 1)
+            outputAllZero.push_back(c_false.getResult());
+        else if (
+            const auto zeroExist =
+                getNewIndexOrArg<Value, int>(outWidth, zeroWidth)) {
+            outputAllZero.push_back(zeroExist.value());
+        } else {
+            auto zero = builder.create<hw::ConstantOp>(
+                loc,
+                builder.getIntegerType(outWidth),
+                0);
+            zeroWidth.push_back(std::make_pair(zero.getResult(), outWidth));
+            outputAllZero.push_back(zero.getResult());
+        }
+    }
+
+    // INIT
+    auto stateInit = builder.create<fsm::StateOp>(loc, "INIT");
+    builder.setInsertionPointToEnd(&stateInit.getOutput().back());
+    stateInit.getOutput().front().front().erase();
+    builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputAllZero));
+    builder.setInsertionPointToEnd(&stateInit.getTransitions().back());
+    builder.create<fsm::TransitionOp>(loc, "READ0");
+    builder.setInsertionPointToEnd(&machine.getBody().back());
+
+    // For every PullOp there are two states: READ and WAIT
+    for (size_t i = 0; i < pullVars.size(); i++) {
+        auto pullOp = dyn_cast<PullOp>(ops[i]);
+        auto argIndex =
+            getNewIndexOrArg<int, Value>(pullOp.getChan(), oldArgsIndex)
+                .value();
+
+        auto stateRead =
+            builder.create<fsm::StateOp>(loc, "READ" + std::to_string(i));
+        builder.setInsertionPointToEnd(&stateRead.getOutput().back());
+        stateRead.getOutput().front().front().erase();
+        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputAllZero));
+        builder.setInsertionPointToEnd(&stateRead.getTransitions().back());
+        auto transRead = builder.create<fsm::TransitionOp>(
+            loc,
+            "WAIT_IN" + std::to_string(i));
+        builder.setInsertionPointToEnd(transRead.ensureGuard(builder));
+        transRead.getGuard().front().front().erase();
+        builder.create<fsm::ReturnOp>(loc, machine.getArgument(2 * argIndex));
+        builder.setInsertionPointToEnd(transRead.ensureAction(builder));
+        builder.create<fsm::UpdateOp>(
+            loc,
+            pullVars[i],
+            machine.getArgument(2 * argIndex + 1));
+        builder.setInsertionPointToEnd(&machine.getBody().back());
+
+        auto stateWait =
+            builder.create<fsm::StateOp>(loc, "WAIT_IN" + std::to_string(i));
+        builder.setInsertionPointToEnd(&stateWait.getOutput().back());
+        stateWait.getOutput().front().front().erase();
+        auto cmpOp = builder.create<comb::ICmpOp>(
+            loc,
+            comb::ICmpPredicate::eq,
+            machine.getArgument(2 * argIndex),
+            c_true.getResult());
+        std::vector<Value> newOutputs = outputAllZero;
+        newOutputs[argIndex] = cmpOp.getResult();
+        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
+        builder.setInsertionPointToEnd(&stateWait.getTransitions().back());
+        auto transWait = builder.create<fsm::TransitionOp>(
+            loc,
+            (i == pullVars.size() - 1) ? "CAL0"
+                                       : "READ" + std::to_string(i + 1));
+        builder.setInsertionPointToEnd(transWait.ensureGuard(builder));
+        transWait.getGuard().front().front().erase();
+        builder.create<fsm::ReturnOp>(loc, machine.getArgument(2 * argIndex));
+        builder.setInsertionPointToEnd(&machine.getBody().back());
+    }
+
+    // For every computation create one STATE: CAL
+    // The last will merged into WAIT_OUT0
+    // TODO: Dependency Graph, merge states
+    // TODO: multiple cycles computation
+    for (int i = 0; i < numCalculation; i++) {
+        auto stateCal =
+            builder.create<fsm::StateOp>(loc, "CAL" + std::to_string(i));
+        builder.setInsertionPointToEnd(&stateCal.getOutput().back());
+        stateCal.getOutput().front().front().erase();
+        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputAllZero));
+        builder.setInsertionPointToEnd(&stateCal.getTransitions().back());
+        auto transCal = builder.create<fsm::TransitionOp>(
+            loc,
+            (i == numCalculation - 1) ? "WRITE0"
+                                      : "CAL" + std::to_string(i + 1));
+        builder.setInsertionPointToEnd(transCal.ensureAction(builder));
+        // Now assume that all pulls are done before computation
+        auto op = ops[numPull + i];
+        auto newCalOp = op->clone();
+        for (size_t j = 0; j < newCalOp->getNumOperands(); j++) {
+            auto newOperand = getNewIndexOrArg<Value, Value>(
+                                  newCalOp->getOperand(j),
+                                  newArguments)
+                                  .value();
+            newCalOp->setOperand(j, newOperand);
+        }
+        builder.insert(newCalOp);
+        builder.create<fsm::UpdateOp>(loc, calVars[i], newCalOp->getResult(0));
+        builder.setInsertionPointToEnd(&machine.getBody().back());
+    }
+
+    // For every PushOp create one state: WRITE
+    for (int i = 0; i < numPush; i++) {
+        auto pushOp = dyn_cast<PushOp>(ops[i + numPull + numCalculation]);
+        auto argIndex =
+            getNewIndexOrArg<int, Value>(pushOp.getChan(), oldArgsIndex)
+                .value();
+
+        auto stateWrite =
+            builder.create<fsm::StateOp>(loc, "WRITE" + std::to_string(i));
+        builder.setInsertionPointToEnd(&stateWrite.getOutput().back());
+        stateWrite.getOutput().front().front().erase();
+        auto cmpOp = builder.create<comb::ICmpOp>(
+            loc,
+            comb::ICmpPredicate::eq,
+            machine.getArgument(argIndex + 2),
+            c_true.getResult());
+        std::vector<Value> newOutputs = outputAllZero;
+        newOutputs[2 * argIndex - 2] = cmpOp.getResult();
+        newOutputs[2 * argIndex - 1] =
+            getNewIndexOrArg<Value, Value>(pushOp.getInp(), newArguments)
+                .value();
+        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
+        builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
+        auto transWrite = builder.create<fsm::TransitionOp>(
+            loc,
+            (i == numPush - 1) ? "INIT" : "WRITE" + std::to_string(i + 1));
+        builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
+        transWrite.getGuard().front().front().erase();
+        builder.create<fsm::ReturnOp>(loc, machine.getArgument(argIndex + 2));
+        builder.setInsertionPointToEnd(&machine.getBody().back());
+    }
+
+    return machine;
+}
+
+struct ConvertOperator : OpConversionPattern<OperatorOp> {
+    using OpConversionPattern<OperatorOp>::OpConversionPattern;
+
+    ConvertOperator(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<OperatorOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        OperatorOp op,
+        OperatorOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto funcTy = op.getFunctionType();
+        auto numInputs = funcTy.getNumInputs();
+        auto numOutputs = funcTy.getNumResults();
+
+        auto args = op.getBody().getArguments();
+        auto types = op.getBody().getArgumentTypes();
+        size_t size = types.size();
+
+        SmallVector<hw::PortInfo> ports;
+        int in_num = 1;
+        int out_num = 1;
+
+        // Add clock port.
+        hw::PortInfo clock;
+        clock.name = rewriter.getStringAttr("clock");
+        clock.dir = hw::ModulePort::Direction::Input;
+        clock.type = rewriter.getI1Type();
+        clock.argNum = 0;
+        ports.push_back(clock);
+
+        // Add reset port.
+        hw::PortInfo reset;
+        reset.name = rewriter.getStringAttr("reset");
+        reset.dir = hw::ModulePort::Direction::Input;
+        reset.type = rewriter.getI1Type();
+        reset.argNum = 1;
+        ports.push_back(reset);
+
+        for (size_t i = 0; i < size; i++) {
+            const auto type = types[i];
+            std::string name;
+
+            if (const auto inTy = dyn_cast<OutputType>(type)) {
+                auto elemTy = dyn_cast<IntegerType>(inTy.getElementType());
+                assert(elemTy && "only integers are supported on hardware");
+                // Add ready for input port
+                hw::PortInfo in_ready;
+                name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
+                       + "_ready";
+                in_ready.name = rewriter.getStringAttr(name);
+                in_ready.dir = hw::ModulePort::Direction::Output;
+                in_ready.type = rewriter.getI1Type();
+                in_ready.argNum = in_num + 1;
+                ports.push_back(in_ready);
+                // Add valid for input port
+                hw::PortInfo in_valid;
+                name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
+                       + "_valid";
+                in_valid.name = rewriter.getStringAttr(name);
+                in_valid.dir = hw::ModulePort::Direction::Input;
+                in_valid.type = rewriter.getI1Type();
+                in_valid.argNum = in_num + 1;
+                ports.push_back(in_valid);
+                // Add bits for input port
+                hw::PortInfo in_bits;
+                name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
+                       + "_bits";
+                in_bits.name = rewriter.getStringAttr(name);
+                in_bits.dir = hw::ModulePort::Direction::Input;
+                in_bits.type = rewriter.getIntegerType(elemTy.getWidth());
+                in_bits.argNum = in_num + 1;
+                ports.push_back(in_bits);
+                // Index increment
+                in_num++;
+            } else if (const auto outTy = dyn_cast<InputType>(type)) {
+                auto elemTy = dyn_cast<IntegerType>(outTy.getElementType());
+                assert(elemTy && "only integers are supported on hardware");
+                // Add ready for output port
+                hw::PortInfo out_ready;
+                name = ((numOutputs == 1) ? "out"
+                                          : "out" + std::to_string(out_num))
+                       + "_ready";
+                out_ready.name = rewriter.getStringAttr(name);
+                out_ready.dir = hw::ModulePort::Direction::Input;
+                out_ready.type = rewriter.getI1Type();
+                out_ready.argNum = out_num;
+                ports.push_back(out_ready);
+                // Add valid for output port
+                hw::PortInfo out_valid;
+                name = ((numOutputs == 1) ? "out"
+                                          : "out" + std::to_string(out_num))
+                       + "_valid";
+                out_valid.name = rewriter.getStringAttr(name);
+                out_valid.dir = hw::ModulePort::Direction::Output;
+                out_valid.type = rewriter.getI1Type();
+                out_valid.argNum = out_num;
+                ports.push_back(out_valid);
+                // Add bits for output port
+                hw::PortInfo out_bits;
+                name = ((numOutputs == 1) ? "out"
+                                          : "out" + std::to_string(out_num))
+                       + "_bits";
+                out_bits.name = rewriter.getStringAttr(name);
+                out_bits.dir = hw::ModulePort::Direction::Output;
+                out_bits.type = rewriter.getIntegerType(elemTy.getWidth());
+                out_bits.argNum = out_num;
+                ports.push_back(out_bits);
+                // Index increment
+                out_num++;
+            }
+        }
+
+        // Create new HWModule
+        auto hwModule = rewriter.create<hw::HWModuleOp>(
+            op.getLoc(),
+            op.getSymNameAttr(),
+            hw::ModulePortInfo(ports),
+            ArrayAttr{},
+            ArrayRef<NamedAttribute>{},
+            StringAttr{},
+            false);
+
+        // Store the pair of old and new argument(s) in vector
+        oldArgsIndex.clear();
+        for (size_t i = 0; i < size; i++) {
+            const auto arg = args[i];
+            oldArgsIndex.push_back(std::make_pair(i, arg));
+        }
+
+        // Insert controller machine at top of module
+        auto module = op->getParentOfType<ModuleOp>();
+        SmallVector<Operation*> ops;
+        for (auto &opi : op.getBody().getOps()) ops.push_back(&opi);
+        auto hwFuncTy = hwModule.getFunctionType();
+        auto hwInTypes = hwFuncTy.getInputs();
+        auto hwOutTypes = hwFuncTy.getResults();
+        // The machine inputs don't contain clock and reset
+        ArrayRef<Type> fsmInTypes(hwInTypes.data() + 2, hwInTypes.size() - 2);
+
+        auto newMachine = insertController(
+            module,
+            op.getSymName().str() + "_controller",
+            FunctionType::get(hwFuncTy.getContext(), fsmInTypes, hwOutTypes),
+            ops);
+
+        // Create a fsm.hw_instance op and take the results to output
+        rewriter.setInsertionPointToStart(&hwModule.getBody().front());
+        SmallVector<Value> fsmInputs;
+        for (size_t i = 2; i < hwInTypes.size(); i++)
+            fsmInputs.push_back(hwModule.getArgument(i));
+        auto outputs = rewriter.create<fsm::HWInstanceOp>(
+            rewriter.getUnknownLoc(),
+            newMachine.getFunctionType().getResults(),
+            rewriter.getStringAttr("controller"),
+            newMachine.getSymNameAttr(),
+            fsmInputs,
+            hwModule.getArgument(0),
+            hwModule.getArgument(1));
+
+        rewriter.create<hw::OutputOp>(
+            rewriter.getUnknownLoc(),
+            outputs.getResults());
+
+        rewriter.eraseOp(op);
+
+        return success();
+    }
+};
 
 // // Helper to determine which arguments should to be used in
 // // the new FModule when an op inside is trying to use the
@@ -867,7 +1253,7 @@ void mlir::populateDfgToCirctConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns)
 {
-    // patterns.add<ConvertOperator>(typeConverter, patterns.getContext());
+    patterns.add<ConvertOperator>(typeConverter, patterns.getContext());
     // patterns.add<ConvertPull>(typeConverter, patterns.getContext());
     // patterns.add<ConvertPush>(typeConverter, patterns.getContext());
     // patterns.add<ConvertLoop>(typeConverter, patterns.getContext());
@@ -887,24 +1273,25 @@ void ConvertDfgToCirctPass::runOnOperation()
     TypeConverter converter;
 
     converter.addConversion([&](Type type) { return type; });
-    // TODO: need new conversion here, to convert Input/Output type
-    // into FIRRTL type.
-    // ??? how could we convert a signless(MLIR) into signed(FIRRTL)?
-    // treat everything as UInt?
-    // converter.addConversion([&](InputType type) -> Type {
-    //     return converter.convertType(type.getElementType());
-    // });
-    // converter.addConversion([&](OutputType type) -> Type {
-    //     return converter.convertType(type.getElementType());
-    // });
+    converter.addConversion([&](InputType type) -> Type {
+        return converter.convertType(type.getElementType());
+    });
+    converter.addConversion([&](OutputType type) -> Type {
+        return converter.convertType(type.getElementType());
+    });
 
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
     populateDfgToCirctConversionPatterns(converter, patterns);
 
-    target.addLegalDialect<firrtl::FIRRTLDialect>();
+    target.addLegalDialect<
+        comb::CombDialect,
+        fsm::FSMDialect,
+        hw::HWDialect,
+        sv::SVDialect>();
     target.addIllegalDialect<dfg::DfgDialect>();
+    // target.addIllegalOp<arith::AddIOp>();
 
     // Insert Queue at the top if there is one channel
     // also check if a specific queue already exists
