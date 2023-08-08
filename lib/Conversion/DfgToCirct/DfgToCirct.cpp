@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
+#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
+
 #include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
@@ -14,7 +16,7 @@
 #include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
-#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
+#include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/IR/BuiltinDialect.h"
@@ -23,8 +25,6 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/APInt.h"
-
-#include <set>
 
 using namespace mlir;
 using namespace mlir::dfg;
@@ -35,14 +35,6 @@ namespace {
 // Helper to determine which new argument to use
 SmallVector<std::pair<int, Value>> oldArgsIndex;
 SmallVector<std::pair<Value, Value>> newArguments;
-
-template<typename T1, typename T2>
-std::optional<T1> getNewIndexOrArg(T2 find, SmallVector<std::pair<T1, T2>> args)
-{
-    for (const auto &kv : args)
-        if (kv.second == find) return kv.first;
-    return std::nullopt;
-}
 
 fsm::MachineOp insertController(
     ModuleOp module,
@@ -104,8 +96,9 @@ fsm::MachineOp insertController(
         if (outWidth == 1)
             outputAllZero.push_back(c_false.getResult());
         else if (
-            const auto zeroExist =
-                getNewIndexOrArg<Value, int>(outWidth, zeroWidth)) {
+            const auto zeroExist = LowerHelper::getNewIndexOrArg<Value, int>(
+                outWidth,
+                zeroWidth)) {
             outputAllZero.push_back(zeroExist.value());
         } else {
             auto zero = builder.create<hw::ConstantOp>(
@@ -129,9 +122,10 @@ fsm::MachineOp insertController(
     // For every PullOp there are two states: READ and WAIT
     for (size_t i = 0; i < pullVars.size(); i++) {
         auto pullOp = dyn_cast<PullOp>(ops[i]);
-        auto argIndex =
-            getNewIndexOrArg<int, Value>(pullOp.getChan(), oldArgsIndex)
-                .value();
+        auto argIndex = LowerHelper::getNewIndexOrArg<int, Value>(
+                            pullOp.getChan(),
+                            oldArgsIndex)
+                            .value();
 
         auto stateRead =
             builder.create<fsm::StateOp>(loc, "READ" + std::to_string(i));
@@ -195,7 +189,7 @@ fsm::MachineOp insertController(
         auto op = ops[numPull + i];
         auto newCalOp = op->clone();
         for (size_t j = 0; j < newCalOp->getNumOperands(); j++) {
-            auto newOperand = getNewIndexOrArg<Value, Value>(
+            auto newOperand = LowerHelper::getNewIndexOrArg<Value, Value>(
                                   newCalOp->getOperand(j),
                                   newArguments)
                                   .value();
@@ -209,9 +203,10 @@ fsm::MachineOp insertController(
     // For every PushOp create one state: WRITE
     for (int i = 0; i < numPush; i++) {
         auto pushOp = dyn_cast<PushOp>(ops[i + numPull + numCalculation]);
-        auto argIndex =
-            getNewIndexOrArg<int, Value>(pushOp.getChan(), oldArgsIndex)
-                .value();
+        auto argIndex = LowerHelper::getNewIndexOrArg<int, Value>(
+                            pushOp.getChan(),
+                            oldArgsIndex)
+                            .value();
 
         auto stateWrite =
             builder.create<fsm::StateOp>(loc, "WRITE" + std::to_string(i));
@@ -225,7 +220,9 @@ fsm::MachineOp insertController(
         std::vector<Value> newOutputs = outputAllZero;
         newOutputs[2 * argIndex - 2] = cmpOp.getResult();
         newOutputs[2 * argIndex - 1] =
-            getNewIndexOrArg<Value, Value>(pushOp.getInp(), newArguments)
+            LowerHelper::getNewIndexOrArg<Value, Value>(
+                pushOp.getInp(),
+                newArguments)
                 .value();
         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
         builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
@@ -242,6 +239,7 @@ fsm::MachineOp insertController(
 }
 
 struct ConvertOperator : OpConversionPattern<OperatorOp> {
+public:
     using OpConversionPattern<OperatorOp>::OpConversionPattern;
 
     ConvertOperator(TypeConverter &typeConverter, MLIRContext* context)
@@ -405,6 +403,55 @@ struct ConvertOperator : OpConversionPattern<OperatorOp> {
             rewriter.getUnknownLoc(),
             outputs.getResults());
 
+        rewriter.eraseOp(op);
+
+        return success();
+    }
+};
+
+hw::HWModuleOp insertQueue();
+
+struct ConvertChannel : OpConversionPattern<ChannelOp> {
+    using OpConversionPattern<ChannelOp>::OpConversionPattern;
+
+    ConvertChannel(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        ChannelOp op,
+        ChannelOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        return success();
+    }
+};
+
+struct ConvertInstantiate : OpConversionPattern<InstantiateOp> {
+    using OpConversionPattern<InstantiateOp>::OpConversionPattern;
+
+    ConvertInstantiate(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<InstantiateOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        InstantiateOp op,
+        InstantiateOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        return success();
+    }
+};
+
+struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
+    using OpConversionPattern<hw::HWModuleOp>::OpConversionPattern;
+
+    LegalizeHWModule(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<hw::HWModuleOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        hw::HWModuleOp op,
+        hw::HWModuleOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
         rewriter.eraseOp(op);
 
         return success();
@@ -1254,6 +1301,7 @@ void mlir::populateDfgToCirctConversionPatterns(
     RewritePatternSet &patterns)
 {
     patterns.add<ConvertOperator>(typeConverter, patterns.getContext());
+    patterns.add<LegalizeHWModule>(typeConverter, patterns.getContext());
     // patterns.add<ConvertPull>(typeConverter, patterns.getContext());
     // patterns.add<ConvertPush>(typeConverter, patterns.getContext());
     // patterns.add<ConvertLoop>(typeConverter, patterns.getContext());
@@ -1291,7 +1339,14 @@ void ConvertDfgToCirctPass::runOnOperation()
         hw::HWDialect,
         sv::SVDialect>();
     target.addIllegalDialect<dfg::DfgDialect>();
-    // target.addIllegalOp<arith::AddIOp>();
+    target.addDynamicallyLegalOp<hw::HWModuleOp>([&](hw::HWModuleOp op) {
+        auto funcTy = op.getFunctionType();
+        for (const auto inTy : funcTy.getInputs())
+            return converter.isLegal(inTy);
+        for (const auto outTy : funcTy.getResults())
+            return converter.isLegal(outTy);
+        return true;
+    });
 
     // Insert Queue at the top if there is one channel
     // also check if a specific queue already exists
