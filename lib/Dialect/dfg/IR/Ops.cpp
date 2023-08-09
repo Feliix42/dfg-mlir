@@ -491,6 +491,39 @@ void PushOp::print(OpAsmPrinter &p)
 }
 
 //===----------------------------------------------------------------------===//
+// Intermediate HW operations
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// HWConnectOp
+//===----------------------------------------------------------------------===//
+
+ParseResult HWConnectOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand portArgument;
+    OpAsmParser::UnresolvedOperand portQueue;
+    Type dataTy;
+
+    if (parser.parseOperand(portArgument) || parser.parseComma()
+        || parser.parseOperand(portQueue) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    Type channelTy = InputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(portArgument, channelTy, result.operands)
+        || parser.resolveOperand(portQueue, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void HWConnectOp::print(OpAsmPrinter &p)
+{
+    p << getPortArgument() << ", " << getPortQueue() << " : "
+      << getPortArgument().getType().getElementType();
+}
+
+//===----------------------------------------------------------------------===//
 // DfgDialect
 //===----------------------------------------------------------------------===//
 

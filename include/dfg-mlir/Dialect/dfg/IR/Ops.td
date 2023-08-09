@@ -256,4 +256,32 @@ def Dfg_PullOp : Dfg_Op<
     let hasCustomAssemblyFormat = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Intermediate HW operations
+//===----------------------------------------------------------------------===//
+
+// Template for hw ops.
+class Dfg_HWOpBase<string mnemonic, list<Trait> traits = []>
+        : Dfg_Op< "hw." # mnemonic, traits> {}
+
+def Dfg_HWConnectOp
+        : Dfg_HWOpBase<"connect", []>
+{
+    let summary = "intermediate connect between ports";
+
+    let description = [{
+        This op will replace the dfg.push during conversion
+        of StdToCirct. It represents the actual connection
+        between top module ports and head/tail fifo buffer
+        ports.
+    }];
+
+    let arguments = (ins
+        Dfg_InputType: $portArgument,
+        Dfg_InputType: $portQueue
+    );
+
+    let hasCustomAssemblyFormat = 1;
+}
+
 #endif

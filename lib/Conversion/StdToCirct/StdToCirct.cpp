@@ -164,7 +164,6 @@ struct CompConversion : public OpConversionPattern<arith::CmpIOp> {
 };
 
 // func.func -> hw.module
-SmallVector<std::pair<Value, Value>> LowerHelper::newConnections;
 struct FuncConversion : public OpConversionPattern<func::FuncOp> {
     using OpConversionPattern<func::FuncOp>::OpConversionPattern;
 
@@ -219,26 +218,31 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
             ArrayRef<NamedAttribute>{},
             StringAttr{},
             false);
+        SmallVector<std::pair<Value, Value>> newArguments;
         for (size_t i = 0; i < numInputs; i++)
-            LowerHelper::newConnections.push_back(
+            newArguments.push_back(
                 std::make_pair(hwModule.getArgument(i), op.getArgument(i)));
 
         rewriter.setInsertionPointToStart(&hwModule.getBody().front());
         SmallVector<std::pair<Value, Value>> pullOutWhich;
         for (auto &opInside :
              llvm::make_early_inc_range(op.getBody().getOps())) {
-            if (auto pushOp = dyn_cast<PushOp>(opInside))
-                continue;
-            else if (auto pullOp = dyn_cast<PullOp>(opInside)) {
+            if (auto pushOp = dyn_cast<PushOp>(opInside)) {
+                auto newArg = getNewIndexOrArg(pushOp.getInp(), newArguments);
+                auto portQueue = pushOp.getChan();
+                rewriter.create<HWConnectOp>(
+                    rewriter.getUnknownLoc(),
+                    newArg.value(),
+                    newArg.value());
+            } else if (auto pullOp = dyn_cast<PullOp>(opInside)) {
                 pullOutWhich.push_back(
                     std::make_pair(pullOp.getChan(), pullOp.getOutp()));
             } else if (auto returnOp = dyn_cast<func::ReturnOp>(opInside)) {
                 SmallVector<Value> newOutputs;
                 for (auto returnValue : returnOp.getOperands()) {
-                    auto newOutput =
-                        LowerHelper::getNewIndexOrArg<Value, Value>(
-                            returnValue,
-                            pullOutWhich);
+                    auto newOutput = getNewIndexOrArg<Value, Value>(
+                        returnValue,
+                        pullOutWhich);
                     newOutputs.push_back(newOutput.value());
                 }
                 rewriter.create<hw::OutputOp>(
@@ -339,7 +343,11 @@ void ConvertStdToCirctPass::runOnOperation()
 
     populateStdToCirctConversionPatterns(converter, patterns);
 
-    target.addLegalDialect<comb::CombDialect, hw::HWDialect, sv::SVDialect>();
+    target.addLegalDialect<
+        comb::CombDialect,
+        hw::HWDialect,
+        sv::SVDialect,
+        dfg::DfgDialect>();
     target.addIllegalDialect<arith::ArithDialect, func::FuncDialect>();
 
     if (failed(applyPartialConversion(
