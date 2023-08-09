@@ -519,7 +519,7 @@ ParseResult HWConnectOp::parse(OpAsmParser &parser, OperationState &result)
 
 void HWConnectOp::print(OpAsmPrinter &p)
 {
-    p << getPortArgument() << ", " << getPortQueue() << " : "
+    p << " " << getPortArgument() << ", " << getPortQueue() << " : "
       << getPortArgument().getType().getElementType();
 }
 

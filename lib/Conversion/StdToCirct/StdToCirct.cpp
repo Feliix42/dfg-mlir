@@ -233,7 +233,7 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
                 rewriter.create<HWConnectOp>(
                     rewriter.getUnknownLoc(),
                     newArg.value(),
-                    newArg.value());
+                    portQueue);
             } else if (auto pullOp = dyn_cast<PullOp>(opInside)) {
                 pullOutWhich.push_back(
                     std::make_pair(pullOp.getChan(), pullOp.getOutp()));
