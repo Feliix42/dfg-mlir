@@ -35,6 +35,7 @@ namespace {
 // Helper to determine which new argument to use
 SmallVector<std::pair<int, Value>> oldArgsIndex;
 SmallVector<std::pair<Value, Value>> newArguments;
+SmallVector<std::pair<Operation*, StringAttr>> newOperators;
 
 fsm::MachineOp insertController(
     ModuleOp module,
@@ -52,8 +53,9 @@ fsm::MachineOp insertController(
     builder.setInsertionPointToStart(&machine.getBody().front());
 
     // Create constants and variables
-    auto c_true = builder.create<hw::ConstantOp>(loc, builder.getI1Type(), 1);
-    auto c_false = builder.create<hw::ConstantOp>(loc, builder.getI1Type(), 0);
+    auto i1Ty = builder.getI1Type();
+    auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1);
+    auto c_false = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
     int numPull = 0;
     int numPush = 0;
     SmallVector<Value> pullVars;
@@ -96,9 +98,8 @@ fsm::MachineOp insertController(
         if (outWidth == 1)
             outputAllZero.push_back(c_false.getResult());
         else if (
-            const auto zeroExist = LowerHelper::getNewIndexOrArg<Value, int>(
-                outWidth,
-                zeroWidth)) {
+            const auto zeroExist =
+                getNewIndexOrArg<Value, int>(outWidth, zeroWidth)) {
             outputAllZero.push_back(zeroExist.value());
         } else {
             auto zero = builder.create<hw::ConstantOp>(
@@ -122,10 +123,9 @@ fsm::MachineOp insertController(
     // For every PullOp there are two states: READ and WAIT
     for (size_t i = 0; i < pullVars.size(); i++) {
         auto pullOp = dyn_cast<PullOp>(ops[i]);
-        auto argIndex = LowerHelper::getNewIndexOrArg<int, Value>(
-                            pullOp.getChan(),
-                            oldArgsIndex)
-                            .value();
+        auto argIndex =
+            getNewIndexOrArg<int, Value>(pullOp.getChan(), oldArgsIndex)
+                .value();
 
         auto stateRead =
             builder.create<fsm::StateOp>(loc, "READ" + std::to_string(i));
@@ -189,7 +189,7 @@ fsm::MachineOp insertController(
         auto op = ops[numPull + i];
         auto newCalOp = op->clone();
         for (size_t j = 0; j < newCalOp->getNumOperands(); j++) {
-            auto newOperand = LowerHelper::getNewIndexOrArg<Value, Value>(
+            auto newOperand = getNewIndexOrArg<Value, Value>(
                                   newCalOp->getOperand(j),
                                   newArguments)
                                   .value();
@@ -203,10 +203,9 @@ fsm::MachineOp insertController(
     // For every PushOp create one state: WRITE
     for (int i = 0; i < numPush; i++) {
         auto pushOp = dyn_cast<PushOp>(ops[i + numPull + numCalculation]);
-        auto argIndex = LowerHelper::getNewIndexOrArg<int, Value>(
-                            pushOp.getChan(),
-                            oldArgsIndex)
-                            .value();
+        auto argIndex =
+            getNewIndexOrArg<int, Value>(pushOp.getChan(), oldArgsIndex)
+                .value();
 
         auto stateWrite =
             builder.create<fsm::StateOp>(loc, "WRITE" + std::to_string(i));
@@ -220,9 +219,7 @@ fsm::MachineOp insertController(
         std::vector<Value> newOutputs = outputAllZero;
         newOutputs[2 * argIndex - 2] = cmpOp.getResult();
         newOutputs[2 * argIndex - 1] =
-            LowerHelper::getNewIndexOrArg<Value, Value>(
-                pushOp.getInp(),
-                newArguments)
+            getNewIndexOrArg<Value, Value>(pushOp.getInp(), newArguments)
                 .value();
         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
         builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
@@ -361,6 +358,8 @@ public:
             ArrayRef<NamedAttribute>{},
             StringAttr{},
             false);
+        newOperators.push_back(
+            std::make_pair(hwModule.getOperation(), op.getSymNameAttr()));
 
         // Store the pair of old and new argument(s) in vector
         oldArgsIndex.clear();
@@ -409,37 +408,305 @@ public:
     }
 };
 
-hw::HWModuleOp insertQueue();
+std::map<std::string, hw::HWModuleOp> queueList;
+hw::HWModuleOp
+insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
+{
+    auto suffix = std::to_string(size) + "x" + "i" + std::to_string(portBit);
+    auto name = "queue_" + suffix;
+    auto isExist = queueList.find(name);
+    if (isExist != queueList.end()) return isExist->second;
+    auto i1Ty = builder.getI1Type();
 
-struct ConvertChannel : OpConversionPattern<ChannelOp> {
-    using OpConversionPattern<ChannelOp>::OpConversionPattern;
+    SmallVector<hw::PortInfo> ports;
+    // Add clock port.
+    hw::PortInfo clock;
+    clock.name = builder.getStringAttr("clock");
+    clock.dir = hw::ModulePort::Direction::Input;
+    clock.type = i1Ty;
+    // clock.argNum = 0;
+    ports.push_back(clock);
+    // Add reset port.
+    hw::PortInfo reset;
+    reset.name = builder.getStringAttr("reset");
+    reset.dir = hw::ModulePort::Direction::Input;
+    reset.type = i1Ty;
+    // reset.argNum = 1;
+    ports.push_back(reset);
+    // Add io_enq_valid
+    hw::PortInfo io_enq_valid;
+    io_enq_valid.name = builder.getStringAttr("io_enq_valid");
+    io_enq_valid.dir = hw::ModulePort::Direction::Input;
+    io_enq_valid.type = i1Ty;
+    // io_enq_valid.argNum = 2;
+    ports.push_back(io_enq_valid);
+    // Add io_enq_bits
+    hw::PortInfo io_enq_bits;
+    io_enq_bits.name = builder.getStringAttr("io_enq_bits");
+    io_enq_bits.dir = hw::ModulePort::Direction::Input;
+    io_enq_bits.type = builder.getIntegerType(portBit);
+    // io_enq_bits.argNum = 3;
+    ports.push_back(io_enq_bits);
+    // Add io_deq_ready
+    hw::PortInfo io_deq_ready;
+    io_deq_ready.name = builder.getStringAttr("io_deq_ready");
+    io_deq_ready.dir = hw::ModulePort::Direction::Input;
+    io_deq_ready.type = i1Ty;
+    // io_deq_ready.argNum = 4;
+    ports.push_back(io_deq_ready);
+    // Add io_enq_ready
+    hw::PortInfo io_enq_ready;
+    io_enq_ready.name = builder.getStringAttr("io_enq_ready");
+    io_enq_ready.dir = hw::ModulePort::Direction::Output;
+    io_enq_ready.type = i1Ty;
+    // io_enq_ready.argNum = 5;
+    ports.push_back(io_enq_ready);
+    // Add io_deq_valid
+    hw::PortInfo io_deq_valid;
+    io_deq_valid.name = builder.getStringAttr("io_deq_valid");
+    io_deq_valid.dir = hw::ModulePort::Direction::Output;
+    io_deq_valid.type = i1Ty;
+    // io_deq_valid.argNum = 5;
+    ports.push_back(io_deq_valid);
+    // Add io_deq_bits
+    hw::PortInfo io_deq_bits;
+    io_deq_bits.name = builder.getStringAttr("io_deq_bits");
+    io_deq_bits.dir = hw::ModulePort::Direction::Output;
+    io_deq_bits.type = builder.getIntegerType(portBit);
+    // io_deq_bits.argNum = 3;
+    ports.push_back(io_deq_bits);
+    // Create new HWModule
+    auto hwModule = builder.create<hw::HWModuleOp>(
+        loc,
+        builder.getStringAttr(name),
+        hw::ModulePortInfo(ports),
+        ArrayAttr{},
+        ArrayRef<NamedAttribute>{},
+        StringAttr{},
+        false);
+    auto clk = hwModule.getArgument(0);
+    auto rst = hwModule.getArgument(1);
+    auto in_valid = hwModule.getArgument(2);
+    auto in_bits = hwModule.getArgument(3);
+    auto out_ready = hwModule.getArgument(4);
+    builder.setInsertionPointToStart(&hwModule.getBodyRegion().front());
 
-    ConvertChannel(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+    // Constants
+    auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1);
+    auto c_false = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
+    unsigned bitDepth = std::ceil(std::log2(size));
+    auto ptrTy = builder.getIntegerType(bitDepth);
+    auto isTwoPower = size > 0 && (size & (size - 1)) == 0;
+    auto c_widthZero = builder.create<hw::ConstantOp>(loc, ptrTy, 0);
+    auto c_widthOne = builder.create<hw::ConstantOp>(loc, ptrTy, 1);
+    hw::ConstantOp c_sizeMax;
+    if (!isTwoPower)
+        c_sizeMax = builder.create<hw::ConstantOp>(loc, ptrTy, size - 1);
 
-    LogicalResult matchAndRewrite(
-        ChannelOp op,
-        ChannelOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        return success();
+    // RAM
+    auto ram = builder.create<sv::RegOp>(
+        loc,
+        hw::UnpackedArrayType::get(builder.getIntegerType(portBit), size));
+    auto placeholderReadIndex = builder.create<hw::ConstantOp>(loc, ptrTy, 0);
+    auto ram_read = builder.create<sv::ArrayIndexInOutOp>(
+        loc,
+        ram.getResult(),
+        placeholderReadIndex.getResult());
+    auto ram_read_data =
+        builder.create<sv::ReadInOutOp>(loc, ram_read.getResult());
+
+    // Pointers
+    auto ptr_write = builder.create<sv::RegOp>(loc, ptrTy);
+    auto ptr_write_value =
+        builder.create<sv::ReadInOutOp>(loc, ptr_write.getResult());
+    auto ptr_read = builder.create<sv::RegOp>(loc, ptrTy);
+    auto ptr_read_value =
+        builder.create<sv::ReadInOutOp>(loc, ptr_read.getResult());
+    placeholderReadIndex.replaceAllUsesWith(ptr_read_value.getResult());
+    auto maybe_full = builder.create<sv::RegOp>(loc, i1Ty);
+    auto maybe_full_value =
+        builder.create<sv::ReadInOutOp>(loc, maybe_full.getResult());
+
+    // Signals
+    auto ptr_match = builder.create<comb::ICmpOp>(
+        loc,
+        comb::ICmpPredicate::eq,
+        ptr_write_value.getResult(),
+        ptr_read_value.getResult());
+    auto _empty_T = builder.create<comb::XorOp>(
+        loc,
+        maybe_full_value.getResult(),
+        c_true.getResult());
+    auto empty = builder.create<comb::AndOp>(
+        loc,
+        ptr_match.getResult(),
+        _empty_T.getResult());
+    auto full = builder.create<comb::AndOp>(
+        loc,
+        ptr_match.getResult(),
+        maybe_full_value.getResult());
+    auto placeholderNotFull = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
+    auto do_enq = builder.create<comb::AndOp>(
+        loc,
+        placeholderNotFull.getResult(),
+        in_valid);
+    auto placeholderNotEmpty = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
+    auto do_deq = builder.create<comb::AndOp>(
+        loc,
+        out_ready,
+        placeholderNotEmpty.getResult());
+    auto next_write = builder.create<comb::AddOp>(
+        loc,
+        ptr_write_value.getResult(),
+        c_widthOne.getResult());
+    auto next_read = builder.create<comb::AddOp>(
+        loc,
+        ptr_read_value.getResult(),
+        c_widthOne.getResult());
+    auto notSameEnqDeq = builder.create<comb::ICmpOp>(
+        loc,
+        comb::ICmpPredicate::ne,
+        do_enq.getResult(),
+        do_deq.getResult());
+    auto not_empty =
+        builder.create<comb::XorOp>(loc, empty.getResult(), c_true.getResult());
+    placeholderNotEmpty.replaceAllUsesWith(not_empty.getResult());
+    auto not_full =
+        builder.create<comb::XorOp>(loc, full.getResult(), c_true.getResult());
+    placeholderNotFull.replaceAllUsesWith(not_full.getResult());
+
+    // Clocked logic
+    builder.create<sv::AlwaysOp>(loc, sv::EventControl::AtPosEdge, clk, [&] {
+        builder.create<sv::IfOp>(
+            loc,
+            rst,
+            [&] {
+                builder.create<sv::PAssignOp>(
+                    loc,
+                    ptr_write.getResult(),
+                    c_widthZero.getResult());
+                builder.create<sv::PAssignOp>(
+                    loc,
+                    ptr_read.getResult(),
+                    c_widthZero.getResult());
+                builder.create<sv::PAssignOp>(
+                    loc,
+                    maybe_full.getResult(),
+                    c_false.getResult());
+            },
+            [&] {
+                builder.create<sv::IfOp>(loc, do_enq.getResult(), [&] {
+                    auto ram_write = builder.create<sv::ArrayIndexInOutOp>(
+                        loc,
+                        ram.getResult(),
+                        ptr_write_value.getResult());
+                    builder.create<sv::PAssignOp>(
+                        loc,
+                        ram_write.getResult(),
+                        in_bits);
+                    if (isTwoPower) {
+                        builder.create<sv::PAssignOp>(
+                            loc,
+                            ptr_write.getResult(),
+                            next_write.getResult());
+                    } else {
+                        auto isSizeMax = builder.create<comb::ICmpOp>(
+                            loc,
+                            comb::ICmpPredicate::eq,
+                            ptr_write_value.getResult(),
+                            c_sizeMax.getResult());
+                        builder.create<sv::IfOp>(
+                            loc,
+                            isSizeMax.getResult(),
+                            [&] {
+                                builder.create<sv::PAssignOp>(
+                                    loc,
+                                    ptr_write.getResult(),
+                                    c_widthZero.getResult());
+                            },
+                            [&] {
+                                builder.create<sv::PAssignOp>(
+                                    loc,
+                                    ptr_write.getResult(),
+                                    next_write.getResult());
+                            });
+                    }
+                });
+                builder.create<sv::IfOp>(loc, do_deq.getResult(), [&] {
+                    if (isTwoPower) {
+                        builder.create<sv::PAssignOp>(
+                            loc,
+                            ptr_read.getResult(),
+                            next_read.getResult());
+                    } else {
+                        auto isSizeMax = builder.create<comb::ICmpOp>(
+                            loc,
+                            comb::ICmpPredicate::eq,
+                            ptr_read_value.getResult(),
+                            c_sizeMax.getResult());
+                        builder.create<sv::IfOp>(
+                            loc,
+                            isSizeMax.getResult(),
+                            [&] {
+                                builder.create<sv::PAssignOp>(
+                                    loc,
+                                    ptr_read.getResult(),
+                                    c_widthZero.getResult());
+                            },
+                            [&] {
+                                builder.create<sv::PAssignOp>(
+                                    loc,
+                                    ptr_read.getResult(),
+                                    next_read.getResult());
+                            });
+                    }
+                });
+                builder.create<sv::IfOp>(loc, notSameEnqDeq.getResult(), [&] {
+                    builder.create<sv::PAssignOp>(
+                        loc,
+                        maybe_full.getResult(),
+                        do_enq.getResult());
+                });
+            });
+    });
+
+    // Clean up placeholders
+    placeholderReadIndex.erase();
+    placeholderNotEmpty.erase();
+    placeholderNotFull.erase();
+
+    // Output
+    SmallVector<Value> outputs;
+    outputs.push_back(not_full.getResult());
+    outputs.push_back(not_empty.getResult());
+    outputs.push_back(ram_read_data.getResult());
+    builder.create<hw::OutputOp>(loc, outputs);
+    queueList.emplace(name, hwModule);
+    return hwModule;
+}
+
+SmallVector<std::pair<Value, Value>> newConnections;
+SmallVector<std::pair<int, Value>> oldOutputs;
+SmallVector<Value> newOutputs;
+SmallVector<std::pair<SmallVector<Value>, Value>> newOutputBundles;
+SmallVector<Value> willBeConnected;
+SmallVector<std::pair<Value, Value>> placeholderInputs;
+SmallVector<std::pair<SmallVector<Value>, Value>> placeholderOutputs;
+SmallVector<std::pair<SmallVector<Value>, Value>> instanceInputs;
+SmallVector<std::pair<Value, Value>> instanceOutputs;
+std::map<std::string, int> instantiatedOperators;
+int getNameOfInstance(std::string to_find)
+{
+    auto it = instantiatedOperators.find(to_find);
+    if (it != instantiatedOperators.end()) {
+        auto num = it->second;
+        it->second++;
+        return num;
+    } else {
+        instantiatedOperators.emplace(to_find, 1);
+        return 0;
     }
-};
-
-struct ConvertInstantiate : OpConversionPattern<InstantiateOp> {
-    using OpConversionPattern<InstantiateOp>::OpConversionPattern;
-
-    ConvertInstantiate(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<InstantiateOp>(typeConverter, context){};
-
-    LogicalResult matchAndRewrite(
-        InstantiateOp op,
-        InstantiateOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        return success();
-    }
-};
+}
 
 struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
     using OpConversionPattern<hw::HWModuleOp>::OpConversionPattern;
@@ -452,847 +719,313 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
         hw::HWModuleOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        auto loc = op.getLoc();
+        auto context = rewriter.getContext();
+        // Get connection info
+        op.walk([&](HWConnectOp connect) {
+            newConnections.push_back(std::make_pair(
+                connect.getPortArgument(),
+                connect.getPortQueue()));
+        });
+        // Get output port index
+        op.walk([&](hw::OutputOp outputs) {
+            int i = 0;
+            for (auto operand : outputs.getOperands())
+                oldOutputs.push_back(std::make_pair(i, operand));
+        });
+        unsigned numChannels = 0;
+        op.walk([&](ChannelOp channel) { numChannels++; });
+
+        auto funcTy = op.getFunctionType();
+        auto numInputs = funcTy.getNumInputs();
+        auto numOutputs = funcTy.getNumResults();
+        assert(
+            (numChannels >= numInputs + numOutputs)
+            && "potentially not enough channels for input/output ports");
+
+        SmallVector<hw::PortInfo> ports;
+        int in_num = 1;
+        int out_num = 1;
+
+        // Add clock port.
+        hw::PortInfo clock;
+        clock.name = rewriter.getStringAttr("clock");
+        clock.dir = hw::ModulePort::Direction::Input;
+        clock.type = rewriter.getI1Type();
+        clock.argNum = 0;
+        ports.push_back(clock);
+
+        // Add reset port.
+        hw::PortInfo reset;
+        reset.name = rewriter.getStringAttr("reset");
+        reset.dir = hw::ModulePort::Direction::Input;
+        reset.type = rewriter.getI1Type();
+        reset.argNum = 1;
+        ports.push_back(reset);
+
+        for (size_t i = 0; i < numInputs; i++) {
+            auto type = funcTy.getInput(i);
+            std::string name;
+            auto inTy = dyn_cast<InputType>(type);
+            auto elemTy = dyn_cast<IntegerType>(inTy.getElementType());
+            assert(elemTy && "only integers are supported on hardware");
+            // Add ready for input port
+            hw::PortInfo in_ready;
+            name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
+                   + "_ready";
+            in_ready.name = rewriter.getStringAttr(name);
+            in_ready.dir = hw::ModulePort::Direction::Output;
+            in_ready.type = rewriter.getI1Type();
+            in_ready.argNum = in_num + 1;
+            ports.push_back(in_ready);
+            // Add valid for input port
+            hw::PortInfo in_valid;
+            name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
+                   + "_valid";
+            in_valid.name = rewriter.getStringAttr(name);
+            in_valid.dir = hw::ModulePort::Direction::Input;
+            in_valid.type = rewriter.getI1Type();
+            in_valid.argNum = in_num + 1;
+            ports.push_back(in_valid);
+            // Add bits for input port
+            hw::PortInfo in_bits;
+            name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
+                   + "_bits";
+            in_bits.name = rewriter.getStringAttr(name);
+            in_bits.dir = hw::ModulePort::Direction::Input;
+            in_bits.type = rewriter.getIntegerType(elemTy.getWidth());
+            in_bits.argNum = in_num + 1;
+            ports.push_back(in_bits);
+            // Index increment
+            in_num++;
+        }
+        for (size_t i = 0; i < numOutputs; i++) {
+            auto type = funcTy.getResult(i);
+            std::string name;
+            auto outTy = dyn_cast<OutputType>(type);
+            auto elemTy = dyn_cast<IntegerType>(outTy.getElementType());
+            assert(elemTy && "only integers are supported on hardware");
+            // Add ready for output port
+            hw::PortInfo out_ready;
+            name = ((numOutputs == 1) ? "out" : "out" + std::to_string(out_num))
+                   + "_ready";
+            out_ready.name = rewriter.getStringAttr(name);
+            out_ready.dir = hw::ModulePort::Direction::Input;
+            out_ready.type = rewriter.getI1Type();
+            out_ready.argNum = out_num;
+            ports.push_back(out_ready);
+            // Add valid for output port
+            hw::PortInfo out_valid;
+            name = ((numOutputs == 1) ? "out" : "out" + std::to_string(out_num))
+                   + "_valid";
+            out_valid.name = rewriter.getStringAttr(name);
+            out_valid.dir = hw::ModulePort::Direction::Output;
+            out_valid.type = rewriter.getI1Type();
+            out_valid.argNum = out_num;
+            ports.push_back(out_valid);
+            // Add bits for output port
+            hw::PortInfo out_bits;
+            name = ((numOutputs == 1) ? "out" : "out" + std::to_string(out_num))
+                   + "_bits";
+            out_bits.name = rewriter.getStringAttr(name);
+            out_bits.dir = hw::ModulePort::Direction::Output;
+            out_bits.type = rewriter.getIntegerType(elemTy.getWidth());
+            out_bits.argNum = out_num;
+            ports.push_back(out_bits);
+            // Index increment
+            out_num++;
+        }
+
+        // Create new HWModule
+        auto hwModule = rewriter.create<hw::HWModuleOp>(
+            loc,
+            op.getNameAttr(),
+            hw::ModulePortInfo(ports),
+            ArrayAttr{},
+            ArrayRef<NamedAttribute>{},
+            StringAttr{},
+            false);
+        auto moduleOp = hwModule.getParentOp<ModuleOp>();
+        rewriter.setInsertionPointToStart(&hwModule.getBody().front());
+        // Create placeholders for the port that may connected later
+        op.walk([&](InstantiateOp instances) {
+            for (auto inport : instances.getInputs()) {
+                auto placeholder = rewriter.create<hw::ConstantOp>(
+                    loc,
+                    rewriter.getI1Type(),
+                    0);
+                placeholderInputs.push_back(
+                    std::make_pair(placeholder, inport));
+            }
+            for (auto outport : instances.getOutputs()) {
+                if (find(willBeConnected, outport) == willBeConnected.end())
+                    willBeConnected.push_back(outport);
+                auto placeholderValid = rewriter.create<hw::ConstantOp>(
+                    loc,
+                    rewriter.getI1Type(),
+                    0);
+                auto placeholderBits = rewriter.create<hw::ConstantOp>(
+                    loc,
+                    rewriter.getIntegerType(
+                        dyn_cast<InputType>(outport.getType())
+                            .getElementType()
+                            .getIntOrFloatBitWidth()),
+                    0);
+                SmallVector<Value> placeholders;
+                placeholders.push_back(placeholderValid.getResult());
+                placeholders.push_back(placeholderBits.getResult());
+                placeholderOutputs.push_back(
+                    std::make_pair(placeholders, outport));
+            }
+        });
+
+        // Store the pair of old and new argument(s) in vector
+        oldArgsIndex.clear();
+        for (size_t i = 0; i < numInputs; i++)
+            oldArgsIndex.push_back(std::make_pair(i, op.getArgument(i)));
+
+        // Convert ops in the old HWModule into new one
+        int queueSuffixNum = 0;
+        for (auto &opInside :
+             llvm::make_early_inc_range(op.getBody().getOps())) {
+            if (auto channelOp = dyn_cast<ChannelOp>(opInside)) {
+                auto portBit =
+                    channelOp.getEncapsulatedType().getIntOrFloatBitWidth();
+                auto size = channelOp.getBufferSize().value();
+
+                OpBuilder builder(context);
+                builder.setInsertionPointToStart(
+                    &moduleOp.getBodyRegion().front());
+                auto queueModule = insertQueue(
+                    builder,
+                    builder.getUnknownLoc(),
+                    portBit,
+                    size);
+                auto newModuleArg = getNewIndexOrArg<Value, Value>(
+                    channelOp.getInChan(),
+                    newConnections);
+                auto isConnectedLater =
+                    find(willBeConnected, channelOp.getInChan())
+                    != willBeConnected.end();
+                assert(
+                    (newModuleArg || isConnectedLater)
+                    && "all ports must be connected");
+                SmallVector<Value> inputs;
+                inputs.push_back(hwModule.getArgument(0));
+                inputs.push_back(hwModule.getArgument(1));
+                if (!isConnectedLater) { // If connected to arguments
+                    auto newArgIndex = getNewIndexOrArg<int, Value>(
+                        newModuleArg.value(),
+                        oldArgsIndex);
+                    auto idx_input = newArgIndex.value();
+                    inputs.push_back(hwModule.getArgument(2 * idx_input + 2));
+                    inputs.push_back(hwModule.getArgument(2 * idx_input + 3));
+                } else { // If connected later
+                    auto placeholders =
+                        getNewIndexOrArg<SmallVector<Value>, Value>(
+                            channelOp.getInChan(),
+                            placeholderOutputs);
+                    inputs.push_back(placeholders.value()[0]);
+                    inputs.push_back(placeholders.value()[1]);
+                }
+                auto oldOutputArg = getNewIndexOrArg<int, Value>(
+                    channelOp.getOutChan(),
+                    oldOutputs);
+                if (oldOutputArg) // If connected to output
+                    inputs.push_back(hwModule.getArgument(
+                        2 * numInputs + 2 + oldOutputArg.value()));
+                else { // If connected later
+                    auto placeholder = getNewIndexOrArg<Value, Value>(
+                        channelOp.getOutChan(),
+                        placeholderInputs);
+                    inputs.push_back(placeholder.value());
+                }
+                auto queueInstance = rewriter.create<hw::InstanceOp>(
+                    loc,
+                    queueModule,
+                    "queue" + std::to_string(queueSuffixNum++),
+                    inputs);
+                auto in_ready = queueInstance.getResult(0);
+                auto in_valid = queueInstance.getResult(1);
+                auto in_bits = queueInstance.getResult(2);
+                if (newModuleArg) newOutputs.push_back(in_ready);
+                SmallVector<Value, 2> instancePorts;
+                instancePorts.push_back(in_valid);
+                instancePorts.push_back(in_bits);
+                instanceInputs.push_back(
+                    std::make_pair(instancePorts, channelOp.getOutChan()));
+                // }
+                if (oldOutputArg) {
+                    SmallVector<Value, 2> newBundle;
+                    newBundle.push_back(in_valid);
+                    newBundle.push_back(in_bits);
+                    newOutputBundles.push_back(
+                        std::make_pair(newBundle, channelOp.getOutChan()));
+                }
+                instanceOutputs.push_back(
+                    std::make_pair(in_ready, channelOp.getInChan()));
+            } else if (auto instantiateOp = dyn_cast<InstantiateOp>(opInside)) {
+                // TODO: lower here
+                SmallVector<Value> inputs;
+                inputs.push_back(hwModule.getArgument(0));
+                inputs.push_back(hwModule.getArgument(1));
+                for (auto input : instantiateOp.getInputs()) {
+                    auto queuePorts = getNewIndexOrArg(input, instanceInputs);
+                    inputs.append(queuePorts.value());
+                }
+                for (auto output : instantiateOp.getOutputs()) {
+                    auto queuePort = getNewIndexOrArg(output, instanceOutputs);
+                    inputs.push_back(queuePort.value());
+                }
+                auto calleeName =
+                    instantiateOp.getCalleeAttr().getRootReference();
+                auto operatorToCall = getNewIndexOrArg<Operation*, StringAttr>(
+                    calleeName,
+                    newOperators);
+                auto calleeStr = calleeName.str();
+                auto nameSuffix = getNameOfInstance(calleeStr);
+                auto instanceName =
+                    nameSuffix == 0 ? calleeStr
+                                    : calleeStr + std::to_string(nameSuffix);
+                auto instanceOp = rewriter.create<hw::InstanceOp>(
+                    loc,
+                    operatorToCall.value(),
+                    instanceName,
+                    inputs);
+                int i = 0;
+                for (auto input : instantiateOp.getInputs()) {
+                    auto placeholder =
+                        getNewIndexOrArg(input, placeholderInputs);
+                    placeholder.value().replaceAllUsesWith(
+                        instanceOp.getResult(i++));
+                }
+                int j = 0;
+                for (auto output : instantiateOp.getOutputs()) {
+                    auto placeholders =
+                        getNewIndexOrArg(output, placeholderOutputs);
+                    placeholders.value()[0].replaceAllUsesWith(
+                        instanceOp.getResult(i + j++));
+                    placeholders.value()[1].replaceAllUsesWith(
+                        instanceOp.getResult(i + j++));
+                }
+            } else if (auto connectOp = dyn_cast<HWConnectOp>(opInside)) {
+                continue;
+            } else if (auto outputOp = dyn_cast<hw::OutputOp>(opInside)) {
+                for (auto operand : outputOp.getOperands())
+                    if (auto bundle =
+                            getNewIndexOrArg(operand, newOutputBundles))
+                        newOutputs.append(bundle.value());
+                rewriter.create<hw::OutputOp>(loc, newOutputs);
+            } else {
+                op.emitError() << "unsupported ops in top module";
+            }
+        }
+
         rewriter.eraseOp(op);
 
         return success();
     }
 };
-
-// // Helper to determine which arguments should to be used in
-// // the new FModule when an op inside is trying to use the
-// // old arguments.
-// SmallVector<std::pair<int, Value>> oldArgNums;
-// SmallVector<Value> newArgs;
-// SmallVector<std::pair<SmallVector<Value>, Value>> newArguments;
-// SmallVector<std::pair<Value, Value>> newOperands;
-// template<typename T1, typename T2>
-// std::optional<T1>
-// getNewArgOrOperand(T2 find, SmallVector<std::pair<T1, T2>> args)
-// {
-//     for (const auto &kv : args)
-//         if (kv.second == find) return kv.first;
-//     return std::nullopt;
-// }
-
-// // Helper to determine which module and operators to use
-// // when instantiating an operator.
-// std::map<std::string, firrtl::FModuleOp> operatorList;
-// SmallVector<std::pair<SmallVector<Value>, Value>> newChannels;
-
-// struct ConvertOperator : OpConversionPattern<OperatorOp> {
-//     using OpConversionPattern<OperatorOp>::OpConversionPattern;
-
-//     ConvertOperator(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<OperatorOp>(typeConverter, context){};
-
-//     LogicalResult matchAndRewrite(
-//         OperatorOp op,
-//         OperatorOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         // Needed arguments for creation of FModuleOp
-//         auto context = rewriter.getContext();
-//         auto name = op.getSymNameAttr();
-//         auto convention =
-//             firrtl::ConventionAttr::get(context, Convention::Internal);
-//         SmallVector<firrtl::PortInfo> ports;
-//         auto args = op.getBody().getArguments();
-//         auto types = op.getBody().getArgumentTypes();
-//         size_t size = types.size();
-
-//         // Create new ports for the FModule
-//         int in_num = 1;
-//         int out_num = 1;
-//         int port_num = 0;
-//         oldArgNums.clear();
-//         newArgs.clear();
-//         for (size_t i = 0; i < size; i++) {
-//             const auto arg = args[i];
-//             const auto type = types[i];
-//             if (const auto inTy = dyn_cast<OutputType>(type)) {
-//                 auto elemTy = inTy.getElementType().dyn_cast<IntegerType>();
-//                 assert(elemTy && "only integers are supported on hardware");
-//                 assert(
-//                     !elemTy.isSignless()
-//                     && "signless integers are not supported in firrtl");
-//                 auto width = elemTy.getWidth();
-//                 ports.push_back(firrtl::PortInfo(
-//                     rewriter.getStringAttr(
-//                         "io_in" + std::to_string(in_num) + "_ready"),
-//                     firrtl::UIntType::get(context, 1),
-//                     firrtl::Direction::Out));
-//                 ports.push_back(firrtl::PortInfo(
-//                     rewriter.getStringAttr(
-//                         "io_in" + std::to_string(in_num) + "_valid"),
-//                     firrtl::UIntType::get(context, 1),
-//                     firrtl::Direction::In));
-//                 if (elemTy.isSigned()) {
-//                     ports.push_back(firrtl::PortInfo(
-//                         rewriter.getStringAttr(
-//                             "io_in" + std::to_string(in_num) + "_bits"),
-//                         firrtl::SIntType::get(context, width),
-//                         firrtl::Direction::In));
-//                 } else if (elemTy.isUnsigned()) {
-//                     ports.push_back(firrtl::PortInfo(
-//                         rewriter.getStringAttr(
-//                             "io_in" + std::to_string(in_num) + "_bits"),
-//                         firrtl::UIntType::get(context, width),
-//                         firrtl::Direction::In));
-//                 }
-//                 oldArgNums.push_back(std::make_pair(port_num, arg));
-//                 in_num++;
-//                 port_num++;
-//             } else if (const auto outTy = dyn_cast<InputType>(type)) {
-//                 auto elemTy = outTy.getElementType().dyn_cast<IntegerType>();
-//                 assert(elemTy && "only integers are supported on hardware");
-//                 assert(
-//                     !elemTy.isSignless()
-//                     && "signless integers are not supported in firrtl");
-//                 auto width = elemTy.getWidth();
-//                 ports.push_back(firrtl::PortInfo(
-//                     rewriter.getStringAttr(
-//                         "io_out" + std::to_string(out_num) + "_ready"),
-//                     firrtl::UIntType::get(context, 1),
-//                     firrtl::Direction::In));
-//                 ports.push_back(firrtl::PortInfo(
-//                     rewriter.getStringAttr(
-//                         "io_out" + std::to_string(out_num) + "_valid"),
-//                     firrtl::UIntType::get(context, 1),
-//                     firrtl::Direction::Out));
-//                 if (elemTy.isSigned()) {
-//                     ports.push_back(firrtl::PortInfo(
-//                         rewriter.getStringAttr(
-//                             "io_out" + std::to_string(out_num) + "_bits"),
-//                         firrtl::SIntType::get(context, width),
-//                         firrtl::Direction::Out));
-//                 } else if (elemTy.isUnsigned()) {
-//                     ports.push_back(firrtl::PortInfo(
-//                         rewriter.getStringAttr(
-//                             "io_out" + std::to_string(out_num) + "_bits"),
-//                         firrtl::UIntType::get(context, width),
-//                         firrtl::Direction::Out));
-//                 }
-//                 oldArgNums.push_back(std::make_pair(port_num, arg));
-//                 out_num++;
-//                 port_num++;
-//             }
-//         }
-//         assert(size_t(port_num) == types.size());
-
-//         // Create new FIRRTL Module
-//         auto module = rewriter.create<firrtl::FModuleOp>(
-//             op.getLoc(),
-//             name,
-//             convention,
-//             ports);
-//         operatorList.emplace(op.getSymName(), module);
-
-//         // Store the new args for later use for pull/push
-//         for (const auto &arg : module.getArguments()) newArgs.push_back(arg);
-
-//         // Move the Ops in Operator into new FIRRTL Module
-//         rewriter.setInsertionPointToStart(&module.getBody().front());
-//         for (auto &ops : llvm::make_early_inc_range(op.getBody().getOps()))
-//             ops.moveBefore(module.getBodyBlock(),
-//             module.getBodyBlock()->end());
-
-//         rewriter.eraseOp(op);
-
-//         return success();
-//     }
-// };
-
-// // struct ConvertLoop : OpConversionPattern<LoopOp> {
-// //     using OpConversionPattern<LoopOp>::OpConversionPattern;
-
-// //     ConvertLoop(TypeConverter &typeConverter, MLIRContext* context)
-// //             : OpConversionPattern<LoopOp>(typeConverter, context){};
-
-// //     LogicalResult matchAndRewrite(
-// //         LoopOp op,
-// //         LoopOpAdaptor adaptor,
-// //         ConversionPatternRewriter &rewriter) const override
-// //     {
-// //         rewriter.eraseOp(op);
-
-// //         return success();
-// //     }
-// // };
-
-// // TODO: Logic is incorrect, check what to do!!!
-
-// struct ConvertPull : OpConversionPattern<PullOp> {
-//     using OpConversionPattern<PullOp>::OpConversionPattern;
-
-//     ConvertPull(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<PullOp>(typeConverter, context){};
-
-//     LogicalResult matchAndRewrite(
-//         PullOp op,
-//         PullOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         auto context = this->getContext();
-//         auto loc = op.getLoc();
-
-//         // Get the position of the original argument
-//         auto port = getNewArgOrOperand<int, Value>(op.getChan(), oldArgNums);
-//         assert(port && "cannot use undefined argument");
-
-//         // Output ready signal
-//         auto deq_ready = newArgs[3 * port.value()];
-//         // Input valid signal and data
-//         auto deq_valid = newArgs[3 * port.value() + 1];
-//         auto deq_bits = newArgs[3 * port.value() + 2];
-
-//         auto const0 = rewriter.create<firrtl::ConstantOp>(
-//             loc,
-//             firrtl::UIntType::get(context, 1),
-//             llvm::APInt(/*numBits=*/1, /*value=*/0));
-//         rewriter.create<firrtl::StrictConnectOp>(
-//             loc,
-//             /*dest=*/deq_ready,
-//             /*src=*/deq_valid);
-//         auto wire = rewriter.create<firrtl::WireOp>(loc, deq_bits.getType());
-//         rewriter.create<firrtl::StrictConnectOp>(
-//             loc,
-//             wire.getResult(),
-//             deq_bits);
-//         rewriter.create<firrtl::StrictConnectOp>(
-//             loc,
-//             deq_ready,
-//             const0.getResult());
-//         newOperands.push_back(std::make_pair(wire.getResult(),
-//         op.getResult()));
-
-//         rewriter.eraseOp(op);
-
-//         return success();
-//     }
-// };
-
-// struct ConvertPush : OpConversionPattern<PushOp> {
-//     using OpConversionPattern<PushOp>::OpConversionPattern;
-
-//     ConvertPush(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<PushOp>(typeConverter, context){};
-
-//     LogicalResult matchAndRewrite(
-//         PushOp op,
-//         PushOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         auto context = this->getContext();
-//         auto loc = op.getLoc();
-
-//         // Get the position of the original argument
-//         auto port = getNewArgOrOperand<int, Value>(op.getChan(), oldArgNums);
-//         assert(port && "cannot use undefined argument");
-
-//         // Output ready signal
-//         auto enq_ready = newArgs[3 * port.value()];
-//         // Input valid signal and data
-//         auto enq_valid = newArgs[3 * port.value() + 1];
-//         auto enq_bits = newArgs[3 * port.value() + 2];
-
-//         auto const0 = rewriter.create<firrtl::ConstantOp>(
-//             loc,
-//             firrtl::UIntType::get(context, 1),
-//             llvm::APInt(/*numBits=*/1, /*value=*/0));
-//         rewriter.create<firrtl::StrictConnectOp>(
-//             loc,
-//             /*dest=*/enq_valid,
-//             /*src=*/enq_ready);
-
-//         auto toPush =
-//             getNewArgOrOperand<Value, Value>(op.getInp(), newOperands);
-//         assert(toPush && "cannot push nothing to channel");
-
-//         rewriter.create<firrtl::StrictConnectOp>(loc, enq_bits,
-//         toPush.value()); rewriter.create<firrtl::StrictConnectOp>(
-//             loc,
-//             enq_valid,
-//             const0.getResult());
-
-//         rewriter.eraseOp(op);
-
-//         return success();
-//     }
-// };
-
-// // Helper to instantiate Queue according to the channel
-// std::map<std::string, firrtl::FModuleOp> queueList;
-// firrtl::FModuleOp insertQueue(
-//     OpBuilder &builder,
-//     MLIRContext* context,
-//     Location loc,
-//     std::string name,
-//     bool isSigned,
-//     unsigned portBit,
-//     unsigned size)
-// {
-//     // Arguments needed to create a FModuleOp for Queue
-//     auto nameStrAttr = builder.getStringAttr(name);
-//     auto convention =
-//         firrtl::ConventionAttr::get(context, Convention::Internal);
-//     SmallVector<firrtl::PortInfo> ports;
-//     ports.push_back(firrtl::PortInfo(
-//         builder.getStringAttr("clock"),
-//         firrtl::ClockType::get(context),
-//         firrtl::Direction::In));
-//     ports.push_back(firrtl::PortInfo(
-//         builder.getStringAttr("reset"),
-//         firrtl::UIntType::get(context, 1),
-//         firrtl::Direction::In));
-//     ports.push_back(firrtl::PortInfo(
-//         builder.getStringAttr("io_enq_ready"),
-//         firrtl::UIntType::get(context, 1),
-//         firrtl::Direction::Out));
-//     ports.push_back(firrtl::PortInfo(
-//         builder.getStringAttr("io_enq_valid"),
-//         firrtl::UIntType::get(context, 1),
-//         firrtl::Direction::In));
-//     if (isSigned) {
-//         ports.push_back(firrtl::PortInfo(
-//             builder.getStringAttr("io_enq_bits"),
-//             firrtl::SIntType::get(context, portBit),
-//             firrtl::Direction::In));
-//     } else {
-//         ports.push_back(firrtl::PortInfo(
-//             builder.getStringAttr("io_enq_bits"),
-//             firrtl::UIntType::get(context, portBit),
-//             firrtl::Direction::In));
-//     }
-//     ports.push_back(firrtl::PortInfo(
-//         builder.getStringAttr("io_deq_ready"),
-//         firrtl::UIntType::get(context, 1),
-//         firrtl::Direction::In));
-//     ports.push_back(firrtl::PortInfo(
-//         builder.getStringAttr("io_deq_valid"),
-//         firrtl::UIntType::get(context, 1),
-//         firrtl::Direction::Out));
-//     if (isSigned) {
-//         ports.push_back(firrtl::PortInfo(
-//             builder.getStringAttr("io_deq_bits"),
-//             firrtl::SIntType::get(context, portBit),
-//             firrtl::Direction::Out));
-//     } else {
-//         ports.push_back(firrtl::PortInfo(
-//             builder.getStringAttr("io_deq_bits"),
-//             firrtl::UIntType::get(context, portBit),
-//             firrtl::Direction::Out));
-//     }
-
-//     auto moduleOp =
-//         builder.create<firrtl::FModuleOp>(loc, nameStrAttr, convention,
-//         ports);
-
-//     // Create the Queue behavior one by one
-//     OpBuilder newBuilder(context);
-//     newBuilder.setInsertionPointToEnd(&moduleOp.getBodyRegion().front());
-//     auto newLoc = newBuilder.getUnknownLoc();
-
-//     // Constants
-//     uint64_t bitDepth = std::ceil(std::log2(size));
-//     auto isTwoPower = size > 0 && (size & (size - 1)) == 0;
-//     auto const0 = newBuilder.create<firrtl::ConstantOp>(
-//         newLoc,
-//         firrtl::UIntType::get(context, 1),
-//         llvm::APInt(/*numBits=*/1, /*value=*/1));
-//     auto const1 = newBuilder.create<firrtl::ConstantOp>(
-//         newLoc,
-//         firrtl::UIntType::get(context, 1),
-//         llvm::APInt(1, 0));
-//     firrtl::ConstantOp const2, const3;
-//     if (bitDepth > 1) {
-//         const2 = newBuilder.create<firrtl::ConstantOp>(
-//             newLoc,
-//             firrtl::UIntType::get(context, bitDepth),
-//             llvm::APInt(bitDepth, 0));
-//         if (!isTwoPower) {
-//             const3 = newBuilder.create<firrtl::ConstantOp>(
-//                 newLoc,
-//                 firrtl::UIntType::get(context, bitDepth),
-//                 llvm::APInt(bitDepth, size - 1));
-//         }
-//     }
-
-//     // Memory declaration
-//     SmallVector<firrtl::BundleType::BundleElement> bundleMportField;
-//     bundleMportField.push_back(firrtl::BundleType::BundleElement(
-//         newBuilder.getStringAttr("addr"),
-//         false,
-//         firrtl::UIntType::get(context, bitDepth)));
-//     bundleMportField.push_back(firrtl::BundleType::BundleElement(
-//         newBuilder.getStringAttr("en"),
-//         false,
-//         firrtl::UIntType::get(context, 1)));
-//     bundleMportField.push_back(firrtl::BundleType::BundleElement(
-//         newBuilder.getStringAttr("clk"),
-//         false,
-//         firrtl::ClockType::get(context)));
-//     if (isSigned) {
-//         bundleMportField.push_back(firrtl::BundleType::BundleElement(
-//             newBuilder.getStringAttr("data"),
-//             false,
-//             firrtl::SIntType::get(context, portBit)));
-//     } else {
-//         bundleMportField.push_back(firrtl::BundleType::BundleElement(
-//             newBuilder.getStringAttr("data"),
-//             false,
-//             firrtl::UIntType::get(context, portBit)));
-//     }
-//     bundleMportField.push_back(firrtl::BundleType::BundleElement(
-//         newBuilder.getStringAttr("mask"),
-//         false,
-//         firrtl::UIntType::get(context, 1)));
-//     auto bundleMport = firrtl::BundleType::get(context, bundleMportField);
-//     SmallVector<firrtl::BundleType::BundleElement> bundleDeqField;
-//     bundleDeqField.push_back(firrtl::BundleType::BundleElement(
-//         newBuilder.getStringAttr("addr"),
-//         false,
-//         firrtl::UIntType::get(context, bitDepth)));
-//     bundleDeqField.push_back(firrtl::BundleType::BundleElement(
-//         newBuilder.getStringAttr("en"),
-//         false,
-//         firrtl::UIntType::get(context, 1)));
-//     bundleDeqField.push_back(firrtl::BundleType::BundleElement(
-//         newBuilder.getStringAttr("clk"),
-//         false,
-//         firrtl::ClockType::get(context)));
-//     if (isSigned) {
-//         bundleDeqField.push_back(firrtl::BundleType::BundleElement(
-//             newBuilder.getStringAttr("data"),
-//             true,
-//             firrtl::SIntType::get(context, portBit)));
-//     } else {
-//         bundleDeqField.push_back(firrtl::BundleType::BundleElement(
-//             newBuilder.getStringAttr("data"),
-//             true,
-//             firrtl::UIntType::get(context, portBit)));
-//     }
-//     auto bundleDeq = firrtl::BundleType::get(context, bundleDeqField);
-//     SmallVector<Type> memResultTypes;
-//     memResultTypes.push_back(bundleMport);
-//     memResultTypes.push_back(bundleDeq);
-//     SmallVector<Attribute> portNames;
-//     portNames.push_back(newBuilder.getStringAttr("MPORT"));
-//     portNames.push_back(newBuilder.getStringAttr("io_deq_bits_MPORT"));
-//     auto memOp = newBuilder.create<firrtl::MemOp>(
-//         newLoc,
-//         memResultTypes,
-//         0,
-//         1,
-//         size,
-//         RUWAttr::Undefined,
-//         portNames,
-//         "ram");
-
-//     // Extract value from memory bundle field
-//     // auto test = memOp.getPortNamed("MPORT");
-//     auto addrMport = newBuilder.create<firrtl::SubfieldOp>(
-//         newLoc,
-//         memOp.getPortNamed("MPORT"),
-//         "addr");
-//     auto enMport = newBuilder.create<firrtl::SubfieldOp>(
-//         newLoc,
-//         memOp.getPortNamed("MPORT"),
-//         "en");
-//     auto clkMport = newBuilder.create<firrtl::SubfieldOp>(
-//         newLoc,
-//         memOp.getPortNamed("MPORT"),
-//         "clk");
-//     auto dataMport = newBuilder.create<firrtl::SubfieldOp>(
-//         newLoc,
-//         memOp.getPortNamed("MPORT"),
-//         "data");
-//     auto maskMport = newBuilder.create<firrtl::SubfieldOp>(
-//         newLoc,
-//         memOp.getPortNamed("MPORT"),
-//         "mask");
-//     auto addrDeq = newBuilder.create<firrtl::SubfieldOp>(
-//         newLoc,
-//         memOp.getPortNamed("io_deq_bits_MPORT"),
-//         "addr");
-//     auto enDeq = newBuilder.create<firrtl::SubfieldOp>(
-//         newLoc,
-//         memOp.getPortNamed("io_deq_bits_MPORT"),
-//         "en");
-//     auto clkDeq = newBuilder.create<firrtl::SubfieldOp>(
-//         newLoc,
-//         memOp.getPortNamed("io_deq_bits_MPORT"),
-//         "clk");
-//     auto dataDeq = newBuilder.create<firrtl::SubfieldOp>(
-//         newLoc,
-//         memOp.getPortNamed("io_deq_bits_MPORT"),
-//         "data");
-
-//     // Get RegReset value
-//     auto value = newBuilder.create<firrtl::RegResetOp>(
-//         newLoc,
-//         firrtl::UIntType::get(context, bitDepth),
-//         moduleOp.getArgument(0),
-//         moduleOp.getArgument(1),
-//         const2.getResult(),
-//         "value");
-//     value->setAttr(
-//         "firrtl.random_init_start",
-//         newBuilder.getIntegerAttr(newBuilder.getIntegerType(64, false), 0));
-//     auto value_1 = newBuilder.create<firrtl::RegResetOp>(
-//         newLoc,
-//         firrtl::UIntType::get(context, bitDepth),
-//         moduleOp.getArgument(0),
-//         moduleOp.getArgument(1),
-//         const2.getResult(),
-//         "value_1");
-//     value_1->setAttr(
-//         "firrtl.random_init_start",
-//         newBuilder.getIntegerAttr(
-//             newBuilder.getIntegerType(64, false),
-//             bitDepth));
-//     auto maybe_full = newBuilder.create<firrtl::RegResetOp>(
-//         newLoc,
-//         firrtl::UIntType::get(context, 1),
-//         moduleOp.getArgument(0),
-//         moduleOp.getArgument(1),
-//         const1.getResult(),
-//         "maybe_full");
-//     maybe_full->setAttr(
-//         "firrtl.random_init_start",
-//         newBuilder.getIntegerAttr(
-//             newBuilder.getIntegerType(64, false),
-//             bitDepth * 2));
-
-//     // Semantics used to determine empty or full
-//     auto ptr_match = newBuilder.create<firrtl::EQPrimOp>(
-//         newLoc,
-//         value.getResult(),
-//         value_1.getResult());
-//     auto _empty_T =
-//         newBuilder.create<firrtl::NotPrimOp>(newLoc, maybe_full.getResult());
-//     auto empty = newBuilder.create<firrtl::AndPrimOp>(
-//         newLoc,
-//         ptr_match.getResult(),
-//         _empty_T.getResult());
-//     auto full = newBuilder.create<firrtl::AndPrimOp>(
-//         newLoc,
-//         ptr_match.getResult(),
-//         maybe_full.getResult());
-//     auto _do_enq_T = newBuilder.create<firrtl::AndPrimOp>(
-//         newLoc,
-//         moduleOp.getArgument(2),
-//         moduleOp.getArgument(3));
-//     auto do_enq = newBuilder.create<firrtl::WireOp>(
-//         newLoc,
-//         firrtl::UIntType::get(context, 1),
-//         "do_enq");
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         do_enq.getResult(),
-//         _do_enq_T.getResult());
-//     auto _do_deq_T = newBuilder.create<firrtl::AndPrimOp>(
-//         newLoc,
-//         moduleOp.getArgument(5),
-//         moduleOp.getArgument(6));
-//     auto do_deq = newBuilder.create<firrtl::WireOp>(
-//         newLoc,
-//         firrtl::UIntType::get(context, 1),
-//         "do_deq");
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         do_deq.getResult(),
-//         _do_deq_T.getResult());
-
-//     // Connect enq to memory
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         addrMport.getResult(),
-//         value.getResult());
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         enMport.getResult(),
-//         do_enq.getResult());
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         clkMport.getResult(),
-//         moduleOp.getArgument(0));
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         maskMport.getResult(),
-//         const0.getResult());
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         dataMport.getResult(),
-//         moduleOp.getArgument(4));
-
-//     // Addr +1 when enq -1 when deq
-//     // if full then back to 0
-//     firrtl::EQPrimOp wrap;
-//     if (!isTwoPower)
-//         wrap = newBuilder.create<firrtl::EQPrimOp>(
-//             newLoc,
-//             value.getResult(),
-//             const3.getResult());
-//     auto _value_T = newBuilder.create<firrtl::AddPrimOp>(
-//         newLoc,
-//         value.getResult(),
-//         const0.getResult());
-//     auto _value_T_1 = newBuilder.create<firrtl::BitsPrimOp>(
-//         newLoc,
-//         _value_T.getResult(),
-//         bitDepth - 1,
-//         0);
-//     firrtl::MuxPrimOp mux_do_enq;
-//     if (isTwoPower)
-//         mux_do_enq = newBuilder.create<firrtl::MuxPrimOp>(
-//             newLoc,
-//             do_enq.getResult(),
-//             _value_T_1.getResult(),
-//             value.getResult());
-//     else {
-//         auto mux_wrap = newBuilder.create<firrtl::MuxPrimOp>(
-//             newLoc,
-//             wrap.getResult(),
-//             const2.getResult(),
-//             _value_T_1.getResult());
-//         mux_do_enq = newBuilder.create<firrtl::MuxPrimOp>(
-//             newLoc,
-//             do_enq.getResult(),
-//             mux_wrap.getResult(),
-//             value.getResult());
-//     }
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         value.getResult(),
-//         mux_do_enq.getResult());
-//     firrtl::EQPrimOp wrap_1;
-//     if (!isTwoPower)
-//         wrap_1 = newBuilder.create<firrtl::EQPrimOp>(
-//             newLoc,
-//             value_1.getResult(),
-//             const3.getResult());
-//     auto _value_T_2 = newBuilder.create<firrtl::AddPrimOp>(
-//         newLoc,
-//         value_1.getResult(),
-//         const0.getResult());
-//     auto _value_T_3 = newBuilder.create<firrtl::BitsPrimOp>(
-//         newLoc,
-//         _value_T_2.getResult(),
-//         bitDepth - 1,
-//         0);
-//     firrtl::MuxPrimOp mux_do_deq;
-//     if (isTwoPower)
-//         mux_do_deq = newBuilder.create<firrtl::MuxPrimOp>(
-//             newLoc,
-//             do_deq.getResult(),
-//             _value_T_3.getResult(),
-//             value_1.getResult());
-//     else {
-//         auto mux_wrap_1 = newBuilder.create<firrtl::MuxPrimOp>(
-//             newLoc,
-//             wrap_1.getResult(),
-//             const2.getResult(),
-//             _value_T_3.getResult());
-//         mux_do_deq = newBuilder.create<firrtl::MuxPrimOp>(
-//             newLoc,
-//             do_deq.getResult(),
-//             mux_wrap_1.getResult(),
-//             value_1.getResult());
-//     }
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         value_1.getResult(),
-//         mux_do_deq.getResult());
-
-//     // Check if full or empty
-//     auto check_maybe_full = newBuilder.create<firrtl::NEQPrimOp>(
-//         newLoc,
-//         do_enq.getResult(),
-//         do_deq.getResult());
-//     auto mux_maybe_full = newBuilder.create<firrtl::MuxPrimOp>(
-//         newLoc,
-//         check_maybe_full.getResult(),
-//         do_enq.getResult(),
-//         maybe_full.getResult());
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         maybe_full.getResult(),
-//         mux_maybe_full.getResult());
-//     auto _io_deq_valid_T =
-//         newBuilder.create<firrtl::NotPrimOp>(newLoc, empty.getResult());
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         moduleOp.getArgument(6),
-//         _io_deq_valid_T.getResult());
-//     auto _io_enq_ready_T =
-//         newBuilder.create<firrtl::NotPrimOp>(newLoc, full.getResult());
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         moduleOp.getArgument(2),
-//         _io_enq_ready_T.getResult());
-
-//     // Connect deq to memory
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         addrDeq.getResult(),
-//         value_1.getResult());
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         enDeq.getResult(),
-//         const0.getResult());
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         clkDeq.getResult(),
-//         moduleOp.getArgument(0));
-//     newBuilder.create<firrtl::StrictConnectOp>(
-//         newLoc,
-//         moduleOp.getArgument(7),
-//         dataDeq.getResult());
-
-//     return moduleOp;
-// }
-
-// // Help to determine the queue number
-// int queueNum = 0;
-// // SmallVector<>
-// struct ConvertChannel : OpConversionPattern<ChannelOp> {
-//     using OpConversionPattern<ChannelOp>::OpConversionPattern;
-
-//     ConvertChannel(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<ChannelOp>(typeConverter, context){};
-
-//     LogicalResult matchAndRewrite(
-//         ChannelOp op,
-//         ChannelOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         const auto bufferSize = op.getBufferSize();
-//         assert(bufferSize && "need to specify the size of channel");
-
-//         auto channelTy = op.getEncapsulatedType();
-//         auto portTy = dyn_cast<IntegerType>(channelTy);
-//         assert(portTy && "only integer type is supported on hardware");
-//         auto portBit = portTy.getWidth();
-//         auto size = op.getBufferSize();
-//         assert(size && "cannot create infinite fifo buffer on hardware");
-//         auto suffix = (portTy.isSigned() ? "si" : "ui")
-//                       + std::to_string(portBit) + "_"
-//                       + std::to_string(size.value());
-//         auto name = "Queue_" + suffix;
-
-//         auto queueModule = queueList.find(name)->second;
-
-//         auto queueName =
-//             queueNum == 0 ? "queue" : "queue" + std::to_string(queueNum);
-//         auto queueOp = rewriter.create<firrtl::InstanceOp>(
-//             op.getLoc(),
-//             queueModule,
-//             rewriter.getStringAttr(queueName));
-//         queueNum++;
-
-//         SmallVector<Value> enqValues;
-//         for (int i = 2; i < 5; i++)
-//         enqValues.push_back(queueOp.getResult(i));
-//         newChannels.push_back(std::make_pair(enqValues, op.getResult(0)));
-//         SmallVector<Value> deqValues;
-//         for (int i = 5; i < 8; i++)
-//         deqValues.push_back(queueOp.getResult(i));
-//         newChannels.push_back(std::make_pair(deqValues, op.getResult(1)));
-
-//         rewriter.eraseOp(op);
-
-//         return success();
-//     }
-// };
-
-// // Helper to determine if an operator is already instantiated.
-// // If so, change the name by multiple instantiation.
-// std::map<std::string, int> instantiatedOperators;
-// int getNameOfInstance(std::string to_find)
-// {
-//     auto it = instantiatedOperators.find(to_find);
-//     if (it != instantiatedOperators.end()) {
-//         auto num = it->second;
-//         it->second++;
-//         return num;
-//     } else {
-//         instantiatedOperators.emplace(to_find, 1);
-//         return 0;
-//     }
-// }
-
-// struct ConvertInstantiate : OpConversionPattern<InstantiateOp> {
-//     using OpConversionPattern<InstantiateOp>::OpConversionPattern;
-
-//     ConvertInstantiate(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<InstantiateOp>(typeConverter, context){};
-
-//     LogicalResult matchAndRewrite(
-//         InstantiateOp op,
-//         InstantiateOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         auto context = this->getContext();
-//         auto loc = op.getLoc();
-
-//         auto name = op.getCallee();
-//         auto fmoduleOp = operatorList.find(name)->second;
-
-//         auto nameIndex = getNameOfInstance(name);
-//         auto instanceName =
-//             nameIndex == 0 ? name : name + std::to_string(nameIndex);
-
-//         auto newInstance = rewriter.create<firrtl::InstanceOp>(
-//             loc,
-//             fmoduleOp,
-//             rewriter.getStringAttr(instanceName));
-
-//         auto inputs = op.getInputs();
-//         int i = 0;
-//         int j = 0;
-//         for (const auto &input : inputs) {
-//             j = 0;
-//             auto deqBundle = getNewArgOrOperand<SmallVector<Value>, Value>(
-//                 input,
-//                 newChannels);
-//             rewriter.create<firrtl::StrictConnectOp>(
-//                 loc,
-//                 deqBundle.value()[j++],
-//                 newInstance.getResult(i++));
-//             rewriter.create<firrtl::StrictConnectOp>(
-//                 loc,
-//                 newInstance.getResult(i++),
-//                 deqBundle.value()[j++]);
-//             rewriter.create<firrtl::StrictConnectOp>(
-//                 loc,
-//                 newInstance.getResult(i++),
-//                 deqBundle.value()[j]);
-//         }
-//         auto outputs = op.getOutputs();
-//         for (const auto &output : outputs) {
-//             j = 0;
-//             auto enqBundle = getNewArgOrOperand<SmallVector<Value>, Value>(
-//                 output,
-//                 newChannels);
-//             rewriter.create<firrtl::StrictConnectOp>(
-//                 loc,
-//                 newInstance.getResult(i++),
-//                 enqBundle.value()[j++]);
-//             rewriter.create<firrtl::StrictConnectOp>(
-//                 loc,
-//                 enqBundle.value()[j++],
-//                 newInstance.getResult(i++));
-//             rewriter.create<firrtl::StrictConnectOp>(
-//                 loc,
-//                 enqBundle.value()[j],
-//                 newInstance.getResult(i++));
-//         }
-
-//         rewriter.eraseOp(op);
-
-//         return success();
-//     }
-// };
 
 } // namespace
 
@@ -1302,11 +1035,6 @@ void mlir::populateDfgToCirctConversionPatterns(
 {
     patterns.add<ConvertOperator>(typeConverter, patterns.getContext());
     patterns.add<LegalizeHWModule>(typeConverter, patterns.getContext());
-    // patterns.add<ConvertPull>(typeConverter, patterns.getContext());
-    // patterns.add<ConvertPush>(typeConverter, patterns.getContext());
-    // patterns.add<ConvertLoop>(typeConverter, patterns.getContext());
-    // patterns.add<ConvertChannel>(typeConverter, patterns.getContext());
-    // patterns.add<ConvertInstantiate>(typeConverter, patterns.getContext());
 }
 
 namespace {
@@ -1321,12 +1049,12 @@ void ConvertDfgToCirctPass::runOnOperation()
     TypeConverter converter;
 
     converter.addConversion([&](Type type) { return type; });
-    converter.addConversion([&](InputType type) -> Type {
-        return converter.convertType(type.getElementType());
-    });
-    converter.addConversion([&](OutputType type) -> Type {
-        return converter.convertType(type.getElementType());
-    });
+    // converter.addConversion([&](InputType type) -> Type {
+    //     return converter.convertType(type.getElementType());
+    // });
+    // converter.addConversion([&](OutputType type) -> Type {
+    //     return converter.convertType(type.getElementType());
+    // });
 
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
@@ -1342,60 +1070,16 @@ void ConvertDfgToCirctPass::runOnOperation()
     target.addDynamicallyLegalOp<hw::HWModuleOp>([&](hw::HWModuleOp op) {
         auto funcTy = op.getFunctionType();
         for (const auto inTy : funcTy.getInputs())
-            return converter.isLegal(inTy);
+            if (dyn_cast<InputType>(inTy)) return false;
         for (const auto outTy : funcTy.getResults())
-            return converter.isLegal(outTy);
+            if (dyn_cast<OutputType>(outTy)) return false;
         return true;
     });
-
-    // Insert Queue at the top if there is one channel
-    // also check if a specific queue already exists
-    // std::map<unsigned, Type> queueList;
-    // auto module = dyn_cast<ModuleOp>(getOperation());
-    // OpBuilder builder(&getContext());
-    // builder.setInsertionPointToStart(&module.getBodyRegion().front());
-    // module.walk([&](OperatorOp operatorOp) {
-    //     operatorOp.walk([&](ChannelOp channelOp) {
-    //         auto channelTy = channelOp.getEncapsulatedType();
-    //         auto portTy = dyn_cast<IntegerType>(channelTy);
-    //         assert(portTy && "only integer type is supported on hardware");
-    //         auto portBit = portTy.getWidth();
-    //         auto size = channelOp.getBufferSize();
-    //         assert(size && "cannot create infinite fifo buffer on hardware");
-    //         auto suffix = (portTy.isSigned() ? "si" : "ui")
-    //                       + std::to_string(portBit) + "_"
-    //                       + std::to_string(size.value());
-    //         auto name = "Queue_" + suffix;
-    //         auto isExist = queueList.find(name);
-    //         if (isExist == queueList.end()) {
-    //             auto queueModule = insertQueue(
-    //                 builder,
-    //                 &getContext(),
-    //                 builder.getUnknownLoc(),
-    //                 name,
-    //                 portTy.isSigned(),
-    //                 portBit,
-    //                 size.value());
-    //             queueList.emplace(name, queueModule);
-    //         }
-    //     });
-    // });
-    // func::FuncOp top;
-    // module.walk([&](func::FuncOp funcOp) { top = funcOp; });
-
-    // Insert CircuitOp into module and move every op into it
-    // auto circuitOp = builder.create<firrtl::CircuitOp>(
-    //     builder.getUnknownLoc(),
-    //     builder.getStringAttr("TopModule")); // or, walk to find the last
-    //     FuncOp
-    //                                          // and then use its name
-    // for (auto &op :
-    //      llvm::make_early_inc_range(module.getBodyRegion().getOps())) {
-    //     if (dyn_cast<firrtl::CircuitOp>(op)) continue;
-    //     op.moveBefore(
-    //         circuitOp.getBodyBlock(),
-    //         circuitOp.getBodyBlock()->end());
-    // }
+    target.addDynamicallyLegalOp<hw::OutputOp>([&](hw::OutputOp op) {
+        for (auto resultTy : op.getOperandTypes())
+            if (dyn_cast<OutputType>(resultTy)) return false;
+        return true;
+    });
 
     if (failed(applyPartialConversion(
             getOperation(),
