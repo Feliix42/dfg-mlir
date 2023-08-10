@@ -1021,6 +1021,11 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             }
         }
 
+        // Clean up the placeholders
+        hwModule.walk([&](hw::ConstantOp constOp) {
+            if (constOp.getResult().use_empty()) rewriter.eraseOp(constOp);
+        });
+
         rewriter.eraseOp(op);
 
         return success();
