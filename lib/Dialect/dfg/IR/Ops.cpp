@@ -264,6 +264,12 @@ ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
             result.operands))
         return failure();
 
+    // Add derived `operand_segment_sizes` attribute based on parsed
+    // operands.
+    auto operandSegmentSizes =
+        parser.getBuilder().getDenseI32ArrayAttr({numInputs, numOutputs});
+    result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
+
     Region* body = result.addRegion();
     if (parser.parseRegion(*body, {}, {})) return failure();
 
@@ -274,9 +280,39 @@ void LoopOp::print(OpAsmPrinter &p)
 {
     assert(!getOperands().empty());
 
-    p << '(';
-    p << getOperands();
-    p << ')';
+    // print `inputs (...)` if existent
+    Operation::operand_range inputs = getInChans();
+    if (!inputs.empty()) {
+        p << " inputs (";
+        for (unsigned i = 0; i < inputs.size(); i++) {
+            if (i > 0) p << ", ";
+            p.printOperand(inputs[i]);
+            p << " : ";
+            p.printType(inputs[i]
+                            .getImpl()
+                            ->getType()
+                            .cast<OutputType>()
+                            .getElementType());
+        }
+        p << ")";
+    }
+
+    // print `outputs (...)` if existent
+    Operation::operand_range outputs = getOutChans();
+    if (!outputs.empty()) {
+        p << " outputs (";
+        for (unsigned i = 0; i < outputs.size(); i++) {
+            if (i > 0) p << ", ";
+            p.printOperand(outputs[i]);
+            p << " : ";
+            p.printType(outputs[i]
+                            .getImpl()
+                            ->getType()
+                            .cast<InputType>()
+                            .getElementType());
+        }
+        p << ")";
+    }
 
     Region &body = getBody();
     if (!body.empty()) {
@@ -325,10 +361,10 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 
 void ChannelOp::print(OpAsmPrinter &p)
 {
-    p << '<';
+    p << '(';
     p.printType(getEncapsulatedType());
     if (const auto size = getBufferSize()) p << ", " << size;
-    p << '>';
+    p << ')';
 }
 
 //===----------------------------------------------------------------------===//

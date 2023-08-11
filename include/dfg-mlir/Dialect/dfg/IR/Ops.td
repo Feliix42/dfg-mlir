@@ -70,7 +70,7 @@ def Dfg_OperatorOp : Dfg_Op<
 
 // TODO:
 // , RegionBranchOpInterface]>
-def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]> 
+def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator, AttrSizedOperandSegments]>
 {
     let summary = "Defines a list of input/output ports maybe closed";
 
@@ -82,9 +82,9 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
 
         Example:
         ```
-        dfg.operator @add inputs(%a:!dfg.output<type>) outputs(%b:!dfg.input<type>)
+        dfg.operator @add inputs(%a: type) outputs(%b: type)
         {
-            dfg.loop (%a: !dfg.output<type>, %b: !dfg.input<type>) {
+            dfg.loop inputs(%a: type) outputs(%b: type) {
                 ops ...
             }
         }
@@ -92,12 +92,13 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator]>
     }];
 
     // TODO: Constraint to any channel types
-    let arguments = (ins Variadic<AnyType>:$channels);
+    let arguments = (ins Variadic<Dfg_OutputType>: $inChans,
+                         Variadic<Dfg_InputType>: $outChans);
 
     let regions = (region MinSizedRegion<1>: $body);
 
-    let skipDefaultBuilders = 1;
-    let builders = [OpBuilder<(ins "ValueRange":$channels)>];
+    // let skipDefaultBuilders = 1;
+    // let builders = [OpBuilder<(ins "ValueRange":$channels)>];
 
     let hasCustomAssemblyFormat = 1;
 }
