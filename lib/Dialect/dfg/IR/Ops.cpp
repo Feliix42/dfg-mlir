@@ -424,8 +424,7 @@ void InstantiateOp::print(OpAsmPrinter &p)
     if (!getOutputs().empty()) p << " outputs (" << getOutputs() << ")";
 
     // signature
-    SmallVector<Type> inpChans(getInputs().size());
-    SmallVector<Type> outChans(getOutputs().size());
+    SmallVector<Type> inpChans, outChans;
 
     for (auto in : getInputs().getTypes())
         inpChans.push_back(in.cast<OutputType>().getElementType());
