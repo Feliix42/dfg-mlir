@@ -301,37 +301,37 @@ dfg.operator @kernel_projection inputs(%gv0_0_0_0_rx: !GpsVector, %mapcell0_0_0_
 
 
 func.func @run_dfg(%fcdproc_0_0_1: !FCDPROC) -> i32 {
-  %counter_0_1_0_tx, %counter_0_1_0_rx = dfg.channel(i32)
-  %counter_0_0_1_tx, %counter_0_0_1_rx = dfg.channel(i32)
-  %ctrl_0_0_tx, %ctrl_0_0_rx = dfg.channel(tuple<i1, i32>)
-  %fcdproc_0_0_1_tx, %fcdproc_0_0_1_rx = dfg.channel(!FCDPROC)
-  %ctrl_0_1_tx, %ctrl_0_1_rx = dfg.channel(tuple<i1, i32>)
-  %mapcells_0_0_2_tx, %mapcells_0_0_2_rx = dfg.channel(!VecMapCell)
-  %ctrl_0_6_tx, %ctrl_0_6_rx = dfg.channel(tuple<i1, i32>)
-  %gv_0_0_2_tx, %gv_0_0_2_rx = dfg.channel(!GpsVector)
-  %cell_0_0_0_0_tx, %cell_0_0_0_0_rx = dfg.channel(!GpsPosition)
-  %mapcells0_0_0_0_tx, %mapcells0_0_0_0_rx = dfg.channel(!VecMapCell)
-  %mapcells_0_0_1_0_tx, %mapcells_0_0_1_0_rx = dfg.channel(!VecMapCell)
-  %index_0_0_0_tx, %index_0_0_0_rx = dfg.channel(i64)
-  %mapcell_0_0_2_tx, %mapcell_0_0_2_rx = dfg.channel(!MapCell)
-  %gv_0_0_1_0_tx, %gv_0_0_1_0_rx = dfg.channel(!GpsVector)
-  %mapcell0_0_0_0_tx, %mapcell0_0_0_0_rx = dfg.channel(!MapCell)
-  %gv0_0_0_0_tx, %gv0_0_0_0_rx = dfg.channel(!GpsVector)
-  %cv_0_0_1_tx, %cv_0_0_1_rx = dfg.channel(!CandiVector)
-  %mapcell_0_0_1_0_tx, %mapcell_0_0_1_0_rx = dfg.channel(!MapCell)
-  %dijkstra_0_0_0_tx, %dijkstra_0_0_0_rx = dfg.channel(!Dijkstra)
-  %gv_0_0_0_0_tx, %gv_0_0_0_0_rx = dfg.channel(!GpsVector)
-  %cv_0_0_0_0_tx, %cv_0_0_0_0_1_rx = dfg.channel(!CandiVector)
-  %cv_0_0_0_0_2_tx, %cv_0_0_0_0_2_rx = dfg.channel(!CandiVector)
-  %t_0_0_0_tx, %t_0_0_0_rx = dfg.channel(!Trellis)
-  %mapcell_0_0_0_0_tx, %mapcell_0_0_0_0_1_rx = dfg.channel(!MapCell)
-  %mapcell_0_0_0_0_2_tx, %mapcell_0_0_0_0_2_rx = dfg.channel(!MapCell)
-  %rsvbb_0_0_0_tx, %rsvbb_0_0_0_rx = dfg.channel(!RoadSpeedVector)
-  %rsv_0_0_0_tx, %rsv_0_0_0_rx = dfg.channel(!RoadSpeedVector)
-  %something_0_0_0_tx, %something_0_0_0_rx = dfg.channel(i8)
+  %counter_0_1_0_tx, %counter_0_1_0_rx = dfg.channel() : i32
+  %counter_0_0_1_tx, %counter_0_0_1_rx = dfg.channel() : i32
+  %ctrl_0_0_tx, %ctrl_0_0_rx = dfg.channel() : tuple<i1, i32>
+  %fcdproc_0_0_1_tx, %fcdproc_0_0_1_rx = dfg.channel() : !FCDPROC
+  %ctrl_0_1_tx, %ctrl_0_1_rx = dfg.channel() : tuple<i1, i32>
+  %mapcells_0_0_2_tx, %mapcells_0_0_2_rx = dfg.channel() : !VecMapCell
+  %ctrl_0_6_tx, %ctrl_0_6_rx = dfg.channel() : tuple<i1, i32>
+  %gv_0_0_2_tx, %gv_0_0_2_rx = dfg.channel() : !GpsVector
+  %cell_0_0_0_0_tx, %cell_0_0_0_0_rx = dfg.channel() : !GpsPosition
+  %mapcells0_0_0_0_tx, %mapcells0_0_0_0_rx = dfg.channel() : !VecMapCell
+  %mapcells_0_0_1_0_tx, %mapcells_0_0_1_0_rx = dfg.channel() : !VecMapCell
+  %index_0_0_0_tx, %index_0_0_0_rx = dfg.channel() : i64
+  %mapcell_0_0_2_tx, %mapcell_0_0_2_rx = dfg.channel() : !MapCell
+  %gv_0_0_1_0_tx, %gv_0_0_1_0_rx = dfg.channel() : !GpsVector
+  %mapcell0_0_0_0_tx, %mapcell0_0_0_0_rx = dfg.channel() : !MapCell
+  %gv0_0_0_0_tx, %gv0_0_0_0_rx = dfg.channel() : !GpsVector
+  %cv_0_0_1_tx, %cv_0_0_1_rx = dfg.channel() : !CandiVector
+  %mapcell_0_0_1_0_tx, %mapcell_0_0_1_0_rx = dfg.channel() : !MapCell
+  %dijkstra_0_0_0_tx, %dijkstra_0_0_0_rx = dfg.channel() : !Dijkstra
+  %gv_0_0_0_0_tx, %gv_0_0_0_0_rx = dfg.channel() : !GpsVector
+  %cv_0_0_0_0_tx, %cv_0_0_0_0_1_rx = dfg.channel() : !CandiVector
+  %cv_0_0_0_0_2_tx, %cv_0_0_0_0_2_rx = dfg.channel() : !CandiVector
+  %t_0_0_0_tx, %t_0_0_0_rx = dfg.channel() : !Trellis
+  %mapcell_0_0_0_0_tx, %mapcell_0_0_0_0_1_rx = dfg.channel() : !MapCell
+  %mapcell_0_0_0_0_2_tx, %mapcell_0_0_0_0_2_rx = dfg.channel() : !MapCell
+  %rsvbb_0_0_0_tx, %rsvbb_0_0_0_rx = dfg.channel() : !RoadSpeedVector
+  %rsv_0_0_0_tx, %rsv_0_0_0_rx = dfg.channel() : !RoadSpeedVector
+  %something_0_0_0_tx, %something_0_0_0_rx = dfg.channel() : i8
 
-  %cout1, %cin1 = dfg.channel(!MapCell)
-  %cout2, %cin2 = dfg.channel(!MapCell)
+  %cout1, %cin1 = dfg.channel() : !MapCell
+  %cout2, %cin2 = dfg.channel() : !MapCell
 
   // inputs
   dfg.push(%fcdproc_0_0_1) %fcdproc_0_0_1_tx : !FCDPROC
