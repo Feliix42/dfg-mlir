@@ -158,18 +158,18 @@ void OperatorOp::print(OpAsmPrinter &p)
     ArrayRef<Type> outputTypes = getFunctionType().getResults();
 
     if (!inputTypes.empty()) {
-        p << " inputs (";
+        p << "inputs (";
         for (unsigned i = 0; i < inputTypes.size(); i++) {
             if (i > 0) p << ", ";
 
             p.printOperand(body.getArgument(i));
             p << " : " << inputTypes[i].cast<OutputType>().getElementType();
         }
-        p << ')';
+        p << ") ";
     }
 
     if (!outputTypes.empty()) {
-        p << " outputs (";
+        p << "outputs (";
         unsigned inpSize = inputTypes.size();
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
@@ -178,13 +178,14 @@ void OperatorOp::print(OpAsmPrinter &p)
             p << " : "
               << outputTypes[i - inpSize].cast<InputType>().getElementType();
         }
-        p << ')';
+        p << ") ";
     }
 
     // print any attributes in the attribute list into the dict
-    // NOTE(feliix42): Ensure this does not print duplicate attrs
     if (!op->getAttrs().empty())
-        p.printOptionalAttrDictWithKeyword(op->getAttrs());
+        p.printOptionalAttrDictWithKeyword(
+            op->getAttrs(),
+            /*elidedAttrs=*/{getFunctionTypeAttrName(), getSymNameAttrName()});
 
     // Print the region
     if (!body.empty()) {
