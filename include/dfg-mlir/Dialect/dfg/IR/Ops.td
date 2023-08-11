@@ -91,14 +91,10 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator, AttrSize
         ```
     }];
 
-    // TODO: Constraint to any channel types
     let arguments = (ins Variadic<Dfg_OutputType>: $inChans,
                          Variadic<Dfg_InputType>: $outChans);
 
     let regions = (region MinSizedRegion<1>: $body);
-
-    // let skipDefaultBuilders = 1;
-    // let builders = [OpBuilder<(ins "ValueRange":$channels)>];
 
     let hasCustomAssemblyFormat = 1;
 }

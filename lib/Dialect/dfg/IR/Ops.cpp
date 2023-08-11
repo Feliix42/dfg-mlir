@@ -333,6 +333,22 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 {
     if (failed(parser.parseLParen())) return failure();
 
+    // parse an optional channel size
+    int size = 0;
+    OptionalParseResult sizeResult = parser.parseOptionalInteger(size);
+    if (sizeResult.has_value()) {
+        if (succeeded(*sizeResult)) {
+            MLIRContext context;
+            result.addAttribute(
+                getBufferSizeAttrName(result.name),
+                parser.getBuilder().getI32IntegerAttr(size));
+        } else {
+            return failure();
+        }
+    }
+
+    if (parser.parseRParen() || parser.parseColon()) return failure();
+
     Type ty;
     if (parser.parseType(ty)) return failure();
 
@@ -348,24 +364,16 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 
     result.addTypes(results);
 
-    if (succeeded(parser.parseOptionalComma())) {
-        int size = 0;
-        if (parser.parseInteger(size)) return failure();
-        MLIRContext context;
-        result.addAttribute(
-            getBufferSizeAttrName(result.name),
-            parser.getBuilder().getI32IntegerAttr(size));
-    }
-
-    return parser.parseRParen();
+    return success();
 }
 
 void ChannelOp::print(OpAsmPrinter &p)
 {
     p << '(';
+    if (const auto size = getBufferSize()) p << size;
+    p << ") : ";
+
     p.printType(getEncapsulatedType());
-    if (const auto size = getBufferSize()) p << ", " << size;
-    p << ')';
 }
 
 //===----------------------------------------------------------------------===//
