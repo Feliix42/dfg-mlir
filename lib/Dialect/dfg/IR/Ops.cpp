@@ -162,8 +162,8 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = 0; i < inputTypes.size(); i++) {
             if (i > 0) p << ", ";
 
-            ArrayRef<NamedAttribute> attrs;
-            p.printRegionArgument(body.getArgument(i), attrs);
+            p.printOperand(body.getArgument(i));
+            p << " : " << inputTypes[i].cast<OutputType>().getElementType();
         }
         p << ')';
     }
@@ -174,8 +174,9 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
 
-            ArrayRef<NamedAttribute> attrs;
-            p.printRegionArgument(body.getArgument(i), attrs);
+            p.printOperand(body.getArgument(i));
+            p << " : "
+              << outputTypes[i - inpSize].cast<InputType>().getElementType();
         }
         p << ')';
     }
