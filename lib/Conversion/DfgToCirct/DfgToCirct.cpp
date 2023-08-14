@@ -3,8 +3,6 @@
 /// @file
 /// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
-#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
-
 #include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
@@ -16,6 +14,7 @@
 #include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
+#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -40,6 +39,7 @@ SmallVector<std::pair<Operation*, StringAttr>> newOperators;
 fsm::MachineOp insertController(
     ModuleOp module,
     std::string name,
+    int numPullChan,
     FunctionType funcTy,
     SmallVector<Operation*> ops)
 {
@@ -54,18 +54,17 @@ fsm::MachineOp insertController(
 
     // Create constants and variables
     auto i1Ty = builder.getI1Type();
-    auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1);
     auto c_false = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
-    int numPull = 0;
-    int numPush = 0;
+    size_t numPull = 0;
     SmallVector<Value> pullVars;
-    SmallVector<Value> calVars;
+    SmallVector<Value> calcVars;
     SmallVector<std::pair<Value, int>> zeroWidth;
     int numCalculation = 0;
     // Now assume that every computation takes only one cycle
-    // and the computation only returns one value
-    for (auto op : ops) {
+    for (size_t i = 0; i < ops.size(); i++) {
+        auto op = ops[i];
         if (auto pullOp = dyn_cast<PullOp>(op)) {
+            assert(i <= numPull && "must pull every data at beginning");
             auto valueTy = pullOp.getChan().getType().getElementType();
             auto varOp = builder.create<fsm::VariableOp>(
                 loc,
@@ -76,22 +75,28 @@ fsm::MachineOp insertController(
             newArguments.push_back(
                 std::make_pair(varOp.getResult(), pullOp.getOutp()));
         } else if (auto pushOp = dyn_cast<PushOp>(op)) {
-            numPush++;
+            continue;
         } else {
-            auto type = op->getResult(0).getType();
-            auto varOp = builder.create<fsm::VariableOp>(
-                loc,
-                type,
-                builder.getIntegerAttr(type, 0),
-                builder.getStringAttr(
-                    "result" + std::to_string(numCalculation++)));
-            calVars.push_back(varOp.getResult());
-            newArguments.push_back(
-                std::make_pair(varOp.getResult(), op->getResult(0)));
+            auto types = op->getResultTypes();
+            auto numVars = types.size();
+            for (size_t i = 0; i < numVars; i++) {
+                auto type = types[i];
+                auto varName =
+                    "result" + std::to_string(numCalculation++)
+                    + ((numVars == 1) ? "" : "_" + std::to_string(i));
+                auto varOp = builder.create<fsm::VariableOp>(
+                    loc,
+                    type,
+                    builder.getIntegerAttr(type, 0),
+                    builder.getStringAttr(varName));
+                calcVars.push_back(varOp.getResult());
+                newArguments.push_back(
+                    std::make_pair(varOp.getResult(), op->getResult(i)));
+            }
         }
     }
 
-    // Create states and transitions
+    // All zero vector
     std::vector<Value> outputAllZero;
     for (const auto out : machine.getFunctionType().getResults()) {
         auto outWidth = dyn_cast<IntegerType>(out).getWidth();
@@ -111,6 +116,7 @@ fsm::MachineOp insertController(
         }
     }
 
+    // Create states and transitions
     // INIT
     auto stateInit = builder.create<fsm::StateOp>(loc, "INIT");
     builder.setInsertionPointToEnd(&stateInit.getOutput().back());
@@ -120,7 +126,9 @@ fsm::MachineOp insertController(
     builder.create<fsm::TransitionOp>(loc, "READ0");
     builder.setInsertionPointToEnd(&machine.getBody().back());
 
+    // All pulls are at beginning of an operator
     // For every PullOp there are two states: READ and WAIT
+    auto isNextPush = isa<PushOp>(ops[numPull]);
     for (size_t i = 0; i < pullVars.size(); i++) {
         auto pullOp = dyn_cast<PullOp>(ops[i]);
         auto argIndex =
@@ -150,18 +158,13 @@ fsm::MachineOp insertController(
             builder.create<fsm::StateOp>(loc, "WAIT_IN" + std::to_string(i));
         builder.setInsertionPointToEnd(&stateWait.getOutput().back());
         stateWait.getOutput().front().front().erase();
-        auto cmpOp = builder.create<comb::ICmpOp>(
-            loc,
-            comb::ICmpPredicate::eq,
-            machine.getArgument(2 * argIndex),
-            c_true.getResult());
         std::vector<Value> newOutputs = outputAllZero;
-        newOutputs[argIndex] = cmpOp.getResult();
+        newOutputs[argIndex] = machine.getArgument(2 * argIndex);
         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
         builder.setInsertionPointToEnd(&stateWait.getTransitions().back());
         auto transWait = builder.create<fsm::TransitionOp>(
             loc,
-            (i == pullVars.size() - 1) ? "CAL0"
+            (i == pullVars.size() - 1) ? (isNextPush ? "WRITE0" : "CALC0")
                                        : "READ" + std::to_string(i + 1));
         builder.setInsertionPointToEnd(transWait.ensureGuard(builder));
         transWait.getGuard().front().front().erase();
@@ -169,67 +172,83 @@ fsm::MachineOp insertController(
         builder.setInsertionPointToEnd(&machine.getBody().back());
     }
 
-    // For every computation create one STATE: CAL
-    // The last will merged into WAIT_OUT0
     // TODO: Dependency Graph, merge states
     // TODO: multiple cycles computation
-    for (int i = 0; i < numCalculation; i++) {
-        auto stateCal =
-            builder.create<fsm::StateOp>(loc, "CAL" + std::to_string(i));
-        builder.setInsertionPointToEnd(&stateCal.getOutput().back());
-        stateCal.getOutput().front().front().erase();
-        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputAllZero));
-        builder.setInsertionPointToEnd(&stateCal.getTransitions().back());
-        auto transCal = builder.create<fsm::TransitionOp>(
-            loc,
-            (i == numCalculation - 1) ? "WRITE0"
-                                      : "CAL" + std::to_string(i + 1));
-        builder.setInsertionPointToEnd(transCal.ensureAction(builder));
-        // Now assume that all pulls are done before computation
-        auto op = ops[numPull + i];
-        auto newCalOp = op->clone();
-        for (size_t j = 0; j < newCalOp->getNumOperands(); j++) {
-            auto newOperand = getNewIndexOrArg<Value, Value>(
-                                  newCalOp->getOperand(j),
-                                  newArguments)
-                                  .value();
-            newCalOp->setOperand(j, newOperand);
+    int idxCalc = 0;
+    int idxPush = 0;
+    isNextPush = false;
+    for (size_t i = numPull; i < ops.size(); i++) {
+        auto op = ops[i];
+        auto isThisPush = dyn_cast<PushOp>(op);
+        if (i < ops.size() - 1) isNextPush = isa<PushOp>(ops[i + 1]);
+
+        // For every push create one STATE: WRITE
+        if (isThisPush) {
+            auto argIndex =
+                getNewIndexOrArg<int, Value>(isThisPush.getChan(), oldArgsIndex)
+                    .value();
+
+            auto stateWrite = builder.create<fsm::StateOp>(
+                loc,
+                "WRITE" + std::to_string(idxPush));
+            builder.setInsertionPointToEnd(&stateWrite.getOutput().back());
+            stateWrite.getOutput().front().front().erase();
+            std::vector<Value> newOutputs = outputAllZero;
+            newOutputs[2 * argIndex - numPullChan] =
+                machine.getArgument(argIndex + numPullChan);
+            newOutputs[2 * argIndex - numPullChan + 1] =
+                getNewIndexOrArg<Value, Value>(
+                    isThisPush.getInp(),
+                    newArguments)
+                    .value();
+            builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
+            builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
+            auto transWrite = builder.create<fsm::TransitionOp>(
+                loc,
+                (i == ops.size() - 1)
+                    ? "INIT"
+                    : (isNextPush ? "WRITE" + std::to_string(idxPush + 1)
+                                  : "CALC" + std::to_string(idxCalc)));
+            builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
+            transWrite.getGuard().front().front().erase();
+            builder.create<fsm::ReturnOp>(
+                loc,
+                machine.getArgument(argIndex + numPullChan));
+            builder.setInsertionPointToEnd(&machine.getBody().back());
+            idxPush++;
         }
-        builder.insert(newCalOp);
-        builder.create<fsm::UpdateOp>(loc, calVars[i], newCalOp->getResult(0));
-        builder.setInsertionPointToEnd(&machine.getBody().back());
-    }
-
-    // For every PushOp create one state: WRITE
-    for (int i = 0; i < numPush; i++) {
-        auto pushOp = dyn_cast<PushOp>(ops[i + numPull + numCalculation]);
-        auto argIndex =
-            getNewIndexOrArg<int, Value>(pushOp.getChan(), oldArgsIndex)
-                .value();
-
-        auto stateWrite =
-            builder.create<fsm::StateOp>(loc, "WRITE" + std::to_string(i));
-        builder.setInsertionPointToEnd(&stateWrite.getOutput().back());
-        stateWrite.getOutput().front().front().erase();
-        auto cmpOp = builder.create<comb::ICmpOp>(
-            loc,
-            comb::ICmpPredicate::eq,
-            machine.getArgument(argIndex + 2),
-            c_true.getResult());
-        std::vector<Value> newOutputs = outputAllZero;
-        newOutputs[2 * argIndex - 2] = cmpOp.getResult();
-        newOutputs[2 * argIndex - 1] =
-            getNewIndexOrArg<Value, Value>(pushOp.getInp(), newArguments)
-                .value();
-        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
-        builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
-        auto transWrite = builder.create<fsm::TransitionOp>(
-            loc,
-            (i == numPush - 1) ? "INIT" : "WRITE" + std::to_string(i + 1));
-        builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
-        transWrite.getGuard().front().front().erase();
-        builder.create<fsm::ReturnOp>(loc, machine.getArgument(argIndex + 2));
-        builder.setInsertionPointToEnd(&machine.getBody().back());
+        // For every computation create one STATE: CALC
+        else {
+            auto stateCal = builder.create<fsm::StateOp>(
+                loc,
+                "CALC" + std::to_string(idxCalc));
+            builder.setInsertionPointToEnd(&stateCal.getOutput().back());
+            stateCal.getOutput().front().front().erase();
+            builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputAllZero));
+            builder.setInsertionPointToEnd(&stateCal.getTransitions().back());
+            auto transCal = builder.create<fsm::TransitionOp>(
+                loc,
+                (i == ops.size() - 1)
+                    ? "INIT"
+                    : (isNextPush ? "WRITE" + std::to_string(idxPush)
+                                  : "CALC" + std::to_string(idxCalc + 1)));
+            builder.setInsertionPointToEnd(transCal.ensureAction(builder));
+            auto newCalcOp = op->clone();
+            for (size_t j = 0; j < newCalcOp->getNumOperands(); j++) {
+                auto newOperand = getNewIndexOrArg<Value, Value>(
+                                      newCalcOp->getOperand(j),
+                                      newArguments)
+                                      .value();
+                newCalcOp->setOperand(j, newOperand);
+            }
+            builder.insert(newCalcOp);
+            builder.create<fsm::UpdateOp>(
+                loc,
+                calcVars[idxCalc],
+                newCalcOp->getResult(0));
+            builder.setInsertionPointToEnd(&machine.getBody().back());
+            idxCalc++;
+        }
     }
 
     return machine;
@@ -381,6 +400,7 @@ public:
         auto newMachine = insertController(
             module,
             op.getSymName().str() + "_controller",
+            numInputs,
             FunctionType::get(hwFuncTy.getContext(), fsmInTypes, hwOutTypes),
             ops);
 
@@ -733,15 +753,15 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             for (auto operand : outputs.getOperands())
                 oldOutputs.push_back(std::make_pair(i, operand));
         });
-        unsigned numChannels = 0;
-        op.walk([&](ChannelOp channel) { numChannels++; });
+        // unsigned numChannels = 0;
+        // op.walk([&](ChannelOp channel) { numChannels++; });
 
         auto funcTy = op.getFunctionType();
         auto numInputs = funcTy.getNumInputs();
         auto numOutputs = funcTy.getNumResults();
-        assert(
-            (numChannels >= numInputs + numOutputs)
-            && "potentially not enough channels for input/output ports");
+        // assert(
+        //     (numChannels >= numInputs + numOutputs)
+        //     && "potentially not enough channels for input/output ports");
 
         SmallVector<hw::PortInfo> ports;
         int in_num = 1;

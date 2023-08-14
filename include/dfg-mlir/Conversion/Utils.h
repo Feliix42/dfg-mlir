@@ -9,9 +9,9 @@
 
 #include "llvm/ADT/SmallVector.h"
 
-using namespace llvm;
 using namespace mlir;
 
+// Searching for the mapped value of provided one
 template<typename T1, typename T2>
 std::optional<T1> getNewIndexOrArg(T2 find, SmallVector<std::pair<T1, T2>> args)
 {
