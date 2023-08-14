@@ -63,6 +63,7 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTHWArith
     CIRCTHWArithToHW
     CIRCTIbis
+    CIRCTIbisTransforms
     CIRCTInteropDialect
     CIRCTHWToLLHD
     CIRCTHWToSystemC
@@ -79,6 +80,7 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTSSPTransforms
     CIRCTStandardToHandshake
     CIRCTOM
+    CIRCTOMTransforms
     CIRCTPipelineOps
     CIRCTPipelineToHW
     CIRCTPipelineTransforms
