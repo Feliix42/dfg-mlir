@@ -3,9 +3,8 @@
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
-#include "dfg-mlir/Dialect/dfg/IR/Ops.h"
-
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
+#include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
@@ -161,10 +160,10 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = 0; i < inputTypes.size(); i++) {
             if (i > 0) p << ", ";
 
-            ArrayRef<NamedAttribute> attrs;
-            p.printRegionArgument(body.getArgument(i), attrs);
+            p.printOperand(body.getArgument(i));
+            p << " : " << inputTypes[i].cast<OutputType>().getElementType();
         }
-        p << ')';
+        p << ") ";
     }
 
     if (!outputTypes.empty()) {
@@ -173,16 +172,18 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
 
-            ArrayRef<NamedAttribute> attrs;
-            p.printRegionArgument(body.getArgument(i), attrs);
+            p.printOperand(body.getArgument(i));
+            p << " : "
+              << outputTypes[i - inpSize].cast<InputType>().getElementType();
         }
-        p << ')';
+        p << ") ";
     }
 
     // print any attributes in the attribute list into the dict
-    // NOTE(feliix42): Ensure this does not print duplicate attrs
     if (!op->getAttrs().empty())
-        p.printOptionalAttrDictWithKeyword(op->getAttrs());
+        p.printOptionalAttrDictWithKeyword(
+            op->getAttrs(),
+            /*elidedAttrs=*/{getFunctionTypeAttrName(), getSymNameAttrName()});
 
     // Print the region
     if (!body.empty()) {
@@ -262,6 +263,12 @@ ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
             result.operands))
         return failure();
 
+    // Add derived `operand_segment_sizes` attribute based on parsed
+    // operands.
+    auto operandSegmentSizes =
+        parser.getBuilder().getDenseI32ArrayAttr({numInputs, numOutputs});
+    result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
+
     Region* body = result.addRegion();
     if (parser.parseRegion(*body, {}, {})) return failure();
 
@@ -272,9 +279,39 @@ void LoopOp::print(OpAsmPrinter &p)
 {
     assert(!getOperands().empty());
 
-    p << '(';
-    p << getOperands();
-    p << ')';
+    // print `inputs (...)` if existent
+    Operation::operand_range inputs = getInChans();
+    if (!inputs.empty()) {
+        p << " inputs (";
+        for (unsigned i = 0; i < inputs.size(); i++) {
+            if (i > 0) p << ", ";
+            p.printOperand(inputs[i]);
+            p << " : ";
+            p.printType(inputs[i]
+                            .getImpl()
+                            ->getType()
+                            .cast<OutputType>()
+                            .getElementType());
+        }
+        p << ")";
+    }
+
+    // print `outputs (...)` if existent
+    Operation::operand_range outputs = getOutChans();
+    if (!outputs.empty()) {
+        p << " outputs (";
+        for (unsigned i = 0; i < outputs.size(); i++) {
+            if (i > 0) p << ", ";
+            p.printOperand(outputs[i]);
+            p << " : ";
+            p.printType(outputs[i]
+                            .getImpl()
+                            ->getType()
+                            .cast<InputType>()
+                            .getElementType());
+        }
+        p << ")";
+    }
 
     Region &body = getBody();
     if (!body.empty()) {
@@ -294,6 +331,22 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 {
     if (failed(parser.parseLParen())) return failure();
 
+    // parse an optional channel size
+    int size = 0;
+    OptionalParseResult sizeResult = parser.parseOptionalInteger(size);
+    if (sizeResult.has_value()) {
+        if (succeeded(*sizeResult)) {
+            MLIRContext context;
+            result.addAttribute(
+                getBufferSizeAttrName(result.name),
+                parser.getBuilder().getI32IntegerAttr(size));
+        } else {
+            return failure();
+        }
+    }
+
+    if (parser.parseRParen() || parser.parseColon()) return failure();
+
     Type ty;
     if (parser.parseType(ty)) return failure();
 
@@ -309,24 +362,16 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 
     result.addTypes(results);
 
-    if (succeeded(parser.parseOptionalComma())) {
-        int size = 0;
-        if (parser.parseInteger(size)) return failure();
-        MLIRContext context;
-        result.addAttribute(
-            getBufferSizeAttrName(result.name),
-            parser.getBuilder().getI32IntegerAttr(size));
-    }
-
-    return parser.parseRParen();
+    return success();
 }
 
 void ChannelOp::print(OpAsmPrinter &p)
 {
     p << '(';
+    if (const auto size = getBufferSize()) p << size;
+    p << ") : ";
+
     p.printType(getEncapsulatedType());
-    if (const auto size = getBufferSize()) p << ", " << size;
-    p << ')';
 }
 
 //===----------------------------------------------------------------------===//
@@ -423,8 +468,7 @@ void InstantiateOp::print(OpAsmPrinter &p)
     if (!getOutputs().empty()) p << " outputs(" << getOutputs() << ")";
 
     // signature
-    SmallVector<Type> inpChans; //(getInputs().size());
-    SmallVector<Type> outChans; //(getOutputs().size());
+    SmallVector<Type> inpChans, outChans;
 
     for (auto in : getInputs().getTypes())
         inpChans.push_back(in.cast<OutputType>().getElementType());
