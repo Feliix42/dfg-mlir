@@ -1,7 +1,7 @@
 /// Declaration of the Dfg lowering pass.
 ///
 /// @file
-/// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
 #pragma once
 

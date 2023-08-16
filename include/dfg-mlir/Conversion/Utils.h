@@ -1,7 +1,7 @@
 /// Declares some shared utility functions for conversions.
 ///
 /// @file
-/// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
 #pragma once
 
