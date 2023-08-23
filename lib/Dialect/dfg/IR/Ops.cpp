@@ -28,7 +28,7 @@ using namespace mlir::dfg;
 //===----------------------------------------------------------------------===//
 
 // -> for multiple variadic attributes
-constexpr char kOperandSegmentSizesAttr[] = "operand_segment_sizes";
+constexpr char kOperandSegmentSizesAttr[] = "operandSegmentSizes";
 
 //===----------------------------------------------------------------------===//
 // OperatorOp
