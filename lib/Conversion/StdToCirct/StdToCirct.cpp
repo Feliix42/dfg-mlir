@@ -3,8 +3,6 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
-#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
-
 #include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
@@ -14,6 +12,7 @@
 #include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
+#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"

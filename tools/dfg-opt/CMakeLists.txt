@@ -75,6 +75,7 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTSCFToCalyx
     CIRCTScheduling
     CIRCTSeq
+    CIRCTSeqToSV
     CIRCTSeqTransforms
     CIRCTSSP
     CIRCTSSPTransforms

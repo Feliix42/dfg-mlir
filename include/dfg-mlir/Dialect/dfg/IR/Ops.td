@@ -281,4 +281,33 @@ def Dfg_HWConnectOp
     let hasCustomAssemblyFormat = 1;
 }
 
+// def Dfg_HWJoinOp
+//         : Dfg_HWOpBase<"join", []>
+// {
+//     let summary = "";
+//     let description = [{}];
+
+//     let arguments = (ins
+//         AnyType: $toPush,
+//         Dfg_OutputType: $channel
+//     );
+// }
+
+def Dfg_HWInstanceOp
+        : Dfg_HWOpBase<"instance", []>
+{
+    let summary = "";
+    let description = [{}];
+
+    let arguments = (ins
+        SymbolRefAttr:$moduleName,
+        Variadic<AnyType>:$operands
+    );
+    let results = (outs Variadic<AnyType>:$results);
+
+    let assemblyFormat = [{
+        $moduleName `(` $operands `)` attr-dict `:` functional-type($operands, $results)
+    }];
+}
+
 #endif
