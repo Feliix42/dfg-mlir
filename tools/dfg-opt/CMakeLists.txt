@@ -28,6 +28,7 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTArcTransforms
     CIRCTCalyx
     CIRCTCalyxToHW
+    CIRCTCalyxNative
     CIRCTCalyxToFSM
     CIRCTCalyxTransforms
     CIRCTComb
@@ -79,7 +80,7 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTSeqTransforms
     CIRCTSSP
     CIRCTSSPTransforms
-    CIRCTStandardToHandshake
+    CIRCTCFToHandshake
     CIRCTOM
     CIRCTOMTransforms
     CIRCTPipelineOps

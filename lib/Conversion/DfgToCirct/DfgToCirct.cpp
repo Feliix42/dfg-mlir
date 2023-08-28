@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
+#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
+
 #include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
@@ -14,7 +16,6 @@
 #include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
-#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -408,15 +409,15 @@ public:
         rewriter.setInsertionPointToStart(&hwModule.getBody().front());
         SmallVector<Value> fsmInputs;
         for (size_t i = 2; i < hwInTypes.size(); i++)
-            fsmInputs.push_back(hwModule.getArgument(i));
+            fsmInputs.push_back(hwModule.getBody().getArgument(i));
         auto outputs = rewriter.create<fsm::HWInstanceOp>(
             rewriter.getUnknownLoc(),
             newMachine.getFunctionType().getResults(),
             rewriter.getStringAttr("controller"),
             newMachine.getSymNameAttr(),
             fsmInputs,
-            hwModule.getArgument(0),
-            hwModule.getArgument(1));
+            hwModule.getBody().getArgument(0),
+            hwModule.getBody().getArgument(1));
 
         rewriter.create<hw::OutputOp>(
             rewriter.getUnknownLoc(),
@@ -504,11 +505,11 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
         ArrayRef<NamedAttribute>{},
         StringAttr{},
         false);
-    auto clk = hwModule.getArgument(0);
-    auto rst = hwModule.getArgument(1);
-    auto in_valid = hwModule.getArgument(2);
-    auto in_bits = hwModule.getArgument(3);
-    auto out_ready = hwModule.getArgument(4);
+    auto clk = hwModule.getBody().getArgument(0);
+    auto rst = hwModule.getBody().getArgument(1);
+    auto in_valid = hwModule.getBody().getArgument(2);
+    auto in_bits = hwModule.getBody().getArgument(3);
+    auto out_ready = hwModule.getBody().getArgument(4);
     builder.setInsertionPointToStart(&hwModule.getBodyRegion().front());
 
     // Constants
@@ -902,7 +903,8 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
         // Store the pair of old and new argument(s) in vector
         oldArgsIndex.clear();
         for (size_t i = 0; i < numInputs; i++)
-            oldArgsIndex.push_back(std::make_pair(i, op.getArgument(i)));
+            oldArgsIndex.push_back(
+                std::make_pair(i, op.getBody().getArgument(i)));
 
         // Convert ops in the old HWModule into new one
         int queueSuffixNum = 0;
@@ -931,15 +933,17 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                     (newModuleArg || isConnectedLater)
                     && "all ports must be connected");
                 SmallVector<Value> inputs;
-                inputs.push_back(hwModule.getArgument(0));
-                inputs.push_back(hwModule.getArgument(1));
+                inputs.push_back(hwModule.getBody().getArgument(0));
+                inputs.push_back(hwModule.getBody().getArgument(1));
                 if (!isConnectedLater) { // If connected to arguments
                     auto newArgIndex = getNewIndexOrArg<int, Value>(
                         newModuleArg.value(),
                         oldArgsIndex);
                     auto idx_input = newArgIndex.value();
-                    inputs.push_back(hwModule.getArgument(2 * idx_input + 2));
-                    inputs.push_back(hwModule.getArgument(2 * idx_input + 3));
+                    inputs.push_back(
+                        hwModule.getBody().getArgument(2 * idx_input + 2));
+                    inputs.push_back(
+                        hwModule.getBody().getArgument(2 * idx_input + 3));
                 } else { // If connected later
                     auto placeholders =
                         getNewIndexOrArg<SmallVector<Value>, Value>(
@@ -952,7 +956,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                     channelOp.getOutChan(),
                     oldOutputs);
                 if (oldOutputArg) // If connected to output
-                    inputs.push_back(hwModule.getArgument(
+                    inputs.push_back(hwModule.getBody().getArgument(
                         2 * numInputs + 2 + oldOutputArg.value()));
                 else { // If connected later
                     auto placeholder = getNewIndexOrArg<Value, Value>(
@@ -987,8 +991,8 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             } else if (auto instantiateOp = dyn_cast<InstantiateOp>(opInside)) {
                 // TODO: lower here
                 SmallVector<Value> inputs;
-                inputs.push_back(hwModule.getArgument(0));
-                inputs.push_back(hwModule.getArgument(1));
+                inputs.push_back(hwModule.getBody().getArgument(0));
+                inputs.push_back(hwModule.getBody().getArgument(1));
                 for (auto input : instantiateOp.getInputs()) {
                     auto queuePorts = getNewIndexOrArg(input, instanceInputs);
                     inputs.append(queuePorts.value());
