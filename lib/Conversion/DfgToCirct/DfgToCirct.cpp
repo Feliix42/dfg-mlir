@@ -128,7 +128,7 @@ fsm::MachineOp insertController(
     builder.setInsertionPointToEnd(&machine.getBody().back());
 
     // All pulls are at beginning of an operator
-    // For every PullOp there are two states: READ and WAIT
+    // For every PullOp there is one READ state
     auto isNextPush = isa<PushOp>(ops[numPull]);
     for (size_t i = 0; i < pullVars.size(); i++) {
         auto pullOp = dyn_cast<PullOp>(ops[i]);
@@ -140,36 +140,22 @@ fsm::MachineOp insertController(
             builder.create<fsm::StateOp>(loc, "READ" + std::to_string(i));
         builder.setInsertionPointToEnd(&stateRead.getOutput().back());
         stateRead.getOutput().front().front().erase();
-        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputAllZero));
+        std::vector<Value> newOutputs = outputAllZero;
+        newOutputs[argIndex] = machine.getArgument(2 * argIndex);
+        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
         builder.setInsertionPointToEnd(&stateRead.getTransitions().back());
-        auto transRead = builder.create<fsm::TransitionOp>(
+        auto transCalc = builder.create<fsm::TransitionOp>(
             loc,
-            "WAIT_IN" + std::to_string(i));
-        builder.setInsertionPointToEnd(transRead.ensureGuard(builder));
-        transRead.getGuard().front().front().erase();
+            (i == pullVars.size() - 1) ? (isNextPush ? "WRITE0" : "CALC0")
+                                       : "READ" + std::to_string(i + 1));
+        builder.setInsertionPointToEnd(transCalc.ensureGuard(builder));
+        transCalc.getGuard().front().front().erase();
         builder.create<fsm::ReturnOp>(loc, machine.getArgument(2 * argIndex));
-        builder.setInsertionPointToEnd(transRead.ensureAction(builder));
+        builder.setInsertionPointToEnd(transCalc.ensureAction(builder));
         builder.create<fsm::UpdateOp>(
             loc,
             pullVars[i],
             machine.getArgument(2 * argIndex + 1));
-        builder.setInsertionPointToEnd(&machine.getBody().back());
-
-        auto stateWait =
-            builder.create<fsm::StateOp>(loc, "WAIT_IN" + std::to_string(i));
-        builder.setInsertionPointToEnd(&stateWait.getOutput().back());
-        stateWait.getOutput().front().front().erase();
-        std::vector<Value> newOutputs = outputAllZero;
-        newOutputs[argIndex] = machine.getArgument(2 * argIndex);
-        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
-        builder.setInsertionPointToEnd(&stateWait.getTransitions().back());
-        auto transWait = builder.create<fsm::TransitionOp>(
-            loc,
-            (i == pullVars.size() - 1) ? (isNextPush ? "WRITE0" : "CALC0")
-                                       : "READ" + std::to_string(i + 1));
-        builder.setInsertionPointToEnd(transWait.ensureGuard(builder));
-        transWait.getGuard().front().front().erase();
-        builder.create<fsm::ReturnOp>(loc, machine.getArgument(2 * argIndex));
         builder.setInsertionPointToEnd(&machine.getBody().back());
     }
 
