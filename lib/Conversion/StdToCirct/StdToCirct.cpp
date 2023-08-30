@@ -12,6 +12,7 @@
 #include "circt/Dialect/HW/HWOpInterfaces.h"
 #include "circt/Dialect/HW/HWOps.h"
 #include "circt/Dialect/HW/HWTypes.h"
+#include "circt/Dialect/Handshake/HandshakeOps.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
 #include "dfg-mlir/Conversion/Utils.h"
@@ -262,6 +263,190 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
     }
 };
 
+// Wrap calc ops in one handshake func
+std::optional<int> getResultIdx(Value value, Operation* op)
+{
+    for (size_t i = 0; i < op->getNumResults(); i++)
+        if (op->getResult(i) == value) return (int)i;
+    return std::nullopt;
+}
+struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
+    using OpConversionPattern<OperatorOp>::OpConversionPattern;
+
+    WrapOperatorOps(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<OperatorOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        OperatorOp op,
+        OperatorOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto context = rewriter.getContext();
+        auto operatorName = op.getSymName();
+        auto funcTy = op.getFunctionType();
+        auto ops = op.getOps();
+        auto moduleOp = op->getParentOfType<ModuleOp>();
+
+        int idxPull = 0;
+        int numPull = 0;
+        int idxCalc = 0;
+        int numCalc = 0;
+        int numPush = 0;
+        int numResult = 0;
+        SmallVector<Value> pulledValue;
+        SmallVector<Type> pulledTypes;
+        SmallVector<int> pulledChanIdx;
+        SmallVector<std::pair<int, Value>> pulledValueIdx;
+        SmallVector<Value> pushedValueRepeat;
+        SmallVector<Value> pushedValueNonRepeat;
+        SmallVector<Type> pushedTypes;
+        SmallVector<int> pushedChanIdx;
+        std::vector<int> pushedValueIdx;
+        SmallVector<std::pair<int, Value>> calcResultIdx;
+        SmallVector<std::pair<int, Operation*>> calcOpIndx;
+        for (auto &opi : ops) {
+            if (auto pullOp = dyn_cast<PullOp>(opi)) {
+                auto pullValue = pullOp.getOutp();
+                pulledValue.push_back(pullValue);
+                auto pullChan = pullOp.getChan();
+                pulledTypes.push_back(pullChan.getType().getElementType());
+                auto idxChan = pullChan.cast<BlockArgument>().getArgNumber();
+                pulledChanIdx.push_back(idxChan);
+                pulledValueIdx.push_back(std::make_pair(idxPull++, pullValue));
+                numPull++;
+            } else if (!isa<PushOp>(opi)) {
+                for (auto result : opi.getResults())
+                    calcResultIdx.push_back(std::make_pair(idxCalc++, result));
+                calcOpIndx.push_back(std::make_pair(numCalc++, &opi));
+            } else if (auto pushOp = dyn_cast<PushOp>(opi)) {
+                auto pushValue = pushOp.getInp();
+                auto pushChan = pushOp.getChan();
+                auto isPushPulledValue =
+                    isInSmallVector<Value>(pushValue, pulledValue);
+                if (!isInSmallVector<Value>(pushValue, pushedValueNonRepeat)
+                    && !isPushPulledValue) {
+                    pushedValueNonRepeat.push_back(pushValue);
+                    pushedTypes.push_back(pushChan.getType().getElementType());
+                    numResult++;
+                }
+                pushedValueRepeat.push_back(pushValue);
+                auto idxChan = pushChan.cast<BlockArgument>().getArgNumber();
+                pushedChanIdx.push_back(idxChan);
+                if (!isPushPulledValue) {
+                    auto idx =
+                        getNewIndexOrArg<int, Value>(pushValue, calcResultIdx);
+                    pushedValueIdx.push_back(idx.value());
+                }
+                numPush++;
+            }
+        }
+
+        auto newOperator =
+            rewriter.create<OperatorOp>(op.getLoc(), op.getSymName(), funcTy);
+        Block* entryBlock = rewriter.createBlock(&newOperator.getBody());
+        for (auto inTy : funcTy.getInputs())
+            entryBlock->addArgument(inTy, newOperator.getLoc());
+        for (auto outTy : funcTy.getResults())
+            entryBlock->addArgument(outTy, newOperator.getLoc());
+
+        SmallVector<Value> newPulledValue;
+        auto loc = rewriter.getUnknownLoc();
+        rewriter.setInsertionPointToStart(entryBlock);
+        for (int i = 0; i < numPull; i++) {
+            auto newPull = rewriter.create<PullOp>(
+                loc,
+                newOperator.getBody().getArgument(pulledChanIdx[i]));
+            newPulledValue.push_back(newPull.getResult());
+        }
+
+        auto name = "handshake_" + operatorName.str() + "_calc";
+        auto instanceOp = rewriter.create<HWInstanceOp>(
+            loc,
+            pushedTypes,
+            SymbolRefAttr::get(context, name),
+            newPulledValue);
+
+        for (int i = 0; i < numPush; i++) {
+            auto pushValue = pushedValueRepeat[i];
+            auto idxChan = pushedChanIdx[i];
+            if (isInSmallVector<Value>(pushValue, pulledValue)) {
+                auto idxPullValue =
+                    getNewIndexOrArg<int, Value>(pushValue, pulledValueIdx);
+                rewriter.create<PushOp>(
+                    loc,
+                    newPulledValue[idxPullValue.value()],
+                    newOperator.getBody().getArgument(idxChan));
+                continue;
+            }
+            auto posValue = std::find(
+                pushedValueIdx.begin(),
+                pushedValueIdx.end(),
+                pushedValueIdx[i]);
+            auto idxValue = std::distance(pushedValueIdx.begin(), posValue);
+            rewriter.create<PushOp>(
+                loc,
+                instanceOp.getResult(idxValue),
+                newOperator.getBody().getArgument(idxChan));
+        }
+
+        rewriter.setInsertionPointToStart(&moduleOp.getBodyRegion().front());
+        auto genFuncOp = rewriter.create<handshake::FuncOp>(
+            loc,
+            name,
+            rewriter.getFunctionType(pulledTypes, pushedTypes));
+        Block* funcEntryBlock = rewriter.createBlock(&genFuncOp.getBody());
+        for (int i = 0; i < numPull; i++)
+            funcEntryBlock->addArgument(pulledTypes[i], genFuncOp.getLoc());
+        if (!genFuncOp.isExternal()) genFuncOp.resolveArgAndResNames();
+        rewriter.setInsertionPointToStart(funcEntryBlock);
+
+        SmallVector<Operation*> newCalcOps;
+        for (int i = 0; i < numCalc; i++) {
+            auto it = ops.begin();
+            std::advance(it, numPull + i);
+            auto oldCalcOp = &*it;
+            auto newCalcOp = oldCalcOp->clone();
+            int idxOperand = 0;
+            for (auto operand : newCalcOp->getOperands()) {
+                if (auto idxArg =
+                        getNewIndexOrArg<int, Value>(operand, pulledValueIdx)) {
+                    newCalcOp->setOperand(
+                        idxOperand++,
+                        genFuncOp.getBody().getArgument(idxArg.value()));
+                } else {
+                    auto definingOp = operand.getDefiningOp();
+                    auto idxCalcOp = getNewIndexOrArg<int, Operation*>(
+                        definingOp,
+                        calcOpIndx);
+                    auto idxResult = getResultIdx(operand, definingOp);
+                    newCalcOp->setOperand(
+                        idxOperand++,
+                        newCalcOps[idxCalcOp.value()]->getResult(
+                            idxResult.value()));
+                }
+            }
+            newCalcOps.push_back(newCalcOp);
+            rewriter.insert(newCalcOp);
+        }
+        SmallVector<Value> returnValues;
+        for (int i = 0; i < numResult; i++) {
+            auto result = pushedValueNonRepeat[i];
+            auto definingOp = result.getDefiningOp();
+            auto idxCalcOp =
+                getNewIndexOrArg<int, Operation*>(definingOp, calcOpIndx);
+            auto idxResult = getResultIdx(result, definingOp);
+            returnValues.push_back(
+                newCalcOps[idxCalcOp.value()]->getResult(idxResult.value()));
+        }
+
+        rewriter.create<handshake::ReturnOp>(loc, returnValues);
+
+        rewriter.eraseOp(op);
+
+        return success();
+    }
+};
+
 } // namespace
 
 void mlir::populateStdToCirctConversionPatterns(
@@ -269,58 +454,61 @@ void mlir::populateStdToCirctConversionPatterns(
     RewritePatternSet &patterns)
 {
     // arith -> comb
-    patterns.add<OneToOneConversion<arith::ConstantOp, hw::ConstantOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::AddIOp, comb::AddOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::SubIOp, comb::SubOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::MulIOp, comb::MulOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::DivSIOp, comb::DivSOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::DivUIOp, comb::DivUOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::RemSIOp, comb::ModSOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::RemUIOp, comb::ModUOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::AndIOp, comb::AndOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::OrIOp, comb::OrOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::XOrIOp, comb::XorOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::ShLIOp, comb::ShlOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::ShRSIOp, comb::ShrSOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::ShRUIOp, comb::ShrUOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<OneToOneConversion<arith::SelectOp, comb::MuxOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<ExtSConversion>(typeConverter, patterns.getContext());
-    patterns.add<ExtZConversion>(typeConverter, patterns.getContext());
-    patterns.add<TruncConversion>(typeConverter, patterns.getContext());
-    patterns.add<CompConversion>(typeConverter, patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::ConstantOp, hw::ConstantOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::AddIOp, comb::AddOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::SubIOp, comb::SubOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::MulIOp, comb::MulOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::DivSIOp, comb::DivSOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::DivUIOp, comb::DivUOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::RemSIOp, comb::ModSOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::RemUIOp, comb::ModUOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::AndIOp, comb::AndOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::OrIOp, comb::OrOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::XOrIOp, comb::XorOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::ShLIOp, comb::ShlOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::ShRSIOp, comb::ShrSOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::ShRUIOp, comb::ShrUOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<OneToOneConversion<arith::SelectOp, comb::MuxOp>>(
+    //     typeConverter,
+    //     patterns.getContext());
+    // patterns.add<ExtSConversion>(typeConverter, patterns.getContext());
+    // patterns.add<ExtZConversion>(typeConverter, patterns.getContext());
+    // patterns.add<TruncConversion>(typeConverter, patterns.getContext());
+    // patterns.add<CompConversion>(typeConverter, patterns.getContext());
 
     // func.func -> hw.module
     patterns.add<FuncConversion>(typeConverter, patterns.getContext());
+
+    // operator calc ops -> handshake.func
+    patterns.add<WrapOperatorOps>(typeConverter, patterns.getContext());
 }
 
 namespace {
@@ -345,11 +533,22 @@ void ConvertStdToCirctPass::runOnOperation()
     populateStdToCirctConversionPatterns(converter, patterns);
 
     target.addLegalDialect<
+        arith::ArithDialect,
+
         comb::CombDialect,
+        handshake::HandshakeDialect,
         hw::HWDialect,
         sv::SVDialect,
         dfg::DfgDialect>();
-    target.addIllegalDialect<arith::ArithDialect, func::FuncDialect>();
+    target.addIllegalDialect<func::FuncDialect>();
+
+    target.addDynamicallyLegalOp<OperatorOp>([&](OperatorOp op) {
+        for (auto &opi : op.getBody().getOps())
+            if (!isa<PullOp>(opi) && !isa<HWInstanceOp>(opi)
+                && !isa<PushOp>(opi) && !isa<hw::ConstantOp>(opi))
+                return false;
+        return true;
+    });
 
     if (failed(applyPartialConversion(
             getOperation(),
