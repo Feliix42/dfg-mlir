@@ -18,6 +18,10 @@ namespace fsm {
 class FSMDialect;
 } // namespace fsm
 
+namespace handshake {
+class HandshakeDialect;
+} // namespace handshake
+
 namespace hw {
 class HWDialect;
 } // namespace hw
