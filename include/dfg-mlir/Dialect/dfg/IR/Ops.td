@@ -300,13 +300,13 @@ def Dfg_HWInstanceOp
     let description = [{}];
 
     let arguments = (ins
-        SymbolRefAttr:$moduleName,
+        SymbolRefAttr:$module,
         Variadic<AnyType>:$operands
     );
     let results = (outs Variadic<AnyType>:$results);
 
     let assemblyFormat = [{
-        $moduleName `(` $operands `)` attr-dict `:` functional-type($operands, $results)
+        $module `(` $operands `)` attr-dict `:` functional-type($operands, $results)
     }];
 }
 
