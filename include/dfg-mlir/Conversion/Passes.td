@@ -26,7 +26,30 @@ def ConvertDfgToCirct : Pass<"convert-dfg-to-circt"> {
     let constructor = "mlir::createConvertDfgToCirctPass()";
 
     let dependentDialects = [
-        "circt::firrtl::FIRRTLDialect",
+        "circt::comb::CombDialect",
+        "circt::fsm::FSMDialect",
+        "circt::hw::HWDialect",
+        "circt::sv::SVDialect",
+
+        "dfg::DfgDialect"
+    ];
+}
+
+def ConvertStdToCirct : Pass<"convert-std-to-circt"> {
+    let summary = "Convert Std dialect to CIRCT";
+
+    let constructor = "mlir::createConvertStdToCirctPass()";
+
+    let dependentDialects = [
+        "arith::ArithDialect",
+        "func::FuncDialect",
+        "scf::SCFDialect",
+
+        "circt::comb::CombDialect",
+        "circt::handshake::HandshakeDialect",
+        "circt::hw::HWDialect",
+        "circt::sv::SVDialect",
+
         "dfg::DfgDialect"
     ];
 }

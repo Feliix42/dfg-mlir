@@ -29,7 +29,7 @@ using namespace mlir::dfg;
 //===----------------------------------------------------------------------===//
 
 // -> for multiple variadic attributes
-constexpr char kOperandSegmentSizesAttr[] = "operand_segment_sizes";
+constexpr char kOperandSegmentSizesAttr[] = "operandSegmentSizes";
 
 //===----------------------------------------------------------------------===//
 // OperatorOp
@@ -152,13 +152,12 @@ void OperatorOp::print(OpAsmPrinter &p)
 
     p << ' ';
     p.printSymbolName(funcName);
-    p << ' ';
 
     ArrayRef<Type> inputTypes = getFunctionType().getInputs();
     ArrayRef<Type> outputTypes = getFunctionType().getResults();
 
     if (!inputTypes.empty()) {
-        p << "inputs (";
+        p << " inputs(";
         for (unsigned i = 0; i < inputTypes.size(); i++) {
             if (i > 0) p << ", ";
 
@@ -169,7 +168,7 @@ void OperatorOp::print(OpAsmPrinter &p)
     }
 
     if (!outputTypes.empty()) {
-        p << "outputs (";
+        p << " outputs(";
         unsigned inpSize = inputTypes.size();
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
@@ -464,10 +463,10 @@ void InstantiateOp::print(OpAsmPrinter &p)
     p.printAttributeWithoutType(getCalleeAttr());
 
     // print `inputs (...)` if existent
-    if (!getInputs().empty()) p << " inputs (" << getInputs() << ")";
+    if (!getInputs().empty()) p << " inputs(" << getInputs() << ")";
 
     // print `outputs (...)` if existent
-    if (!getOutputs().empty()) p << " outputs (" << getOutputs() << ")";
+    if (!getOutputs().empty()) p << " outputs(" << getOutputs() << ")";
 
     // signature
     SmallVector<Type> inpChans, outChans;
@@ -534,6 +533,39 @@ ParseResult PushOp::parse(OpAsmParser &parser, OperationState &result)
 void PushOp::print(OpAsmPrinter &p)
 {
     p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType();
+}
+
+//===----------------------------------------------------------------------===//
+// Intermediate HW operations
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// HWConnectOp
+//===----------------------------------------------------------------------===//
+
+ParseResult HWConnectOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand portArgument;
+    OpAsmParser::UnresolvedOperand portQueue;
+    Type dataTy;
+
+    if (parser.parseOperand(portArgument) || parser.parseComma()
+        || parser.parseOperand(portQueue) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    Type channelTy = InputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(portArgument, channelTy, result.operands)
+        || parser.resolveOperand(portQueue, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void HWConnectOp::print(OpAsmPrinter &p)
+{
+    p << " " << getPortArgument() << ", " << getPortQueue() << " : "
+      << getPortArgument().getType().getElementType();
 }
 
 //===----------------------------------------------------------------------===//

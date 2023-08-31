@@ -1,2 +1,3 @@
 add_subdirectory(DfgToAsync)
 add_subdirectory(DfgToCirct)
+add_subdirectory(StdToCirct)

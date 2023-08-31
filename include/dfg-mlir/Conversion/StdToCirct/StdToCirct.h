@@ -1,4 +1,4 @@
-/// Declaration of the Dfg to Circt lowering pass.
+/// Declaration of the standard to Circt lowering pass.
 ///
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
@@ -12,15 +12,15 @@ namespace mlir {
 
 //===- Generated includes -------------------------------------------------===//
 
-#define GEN_PASS_DECL_CONVERTDFGTOCIRCT
+#define GEN_PASS_DECL_CONVERTSTDTOCIRCT
 #include "dfg-mlir/Conversion/Passes.h.inc"
 
 //===----------------------------------------------------------------------===//
 
-void populateDfgToCirctConversionPatterns(
+void populateStdToCirctConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns);
 
-std::unique_ptr<Pass> createConvertDfgToCirctPass();
+std::unique_ptr<Pass> createConvertStdToCirctPass();
 
 } // namespace mlir

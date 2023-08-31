@@ -21,9 +21,9 @@ int main(int argc, char* argv[])
 {
     DialectRegistry registry;
     registerAllDialects(registry);
+    circt::registerAllDialects(registry);
 
     registry.insert<dfg::DfgDialect>();
-    registry.insert<circt::firrtl::FIRRTLDialect>();
 
     return asMainReturnCode(MlirLspServerMain(argc, argv, registry));
 }

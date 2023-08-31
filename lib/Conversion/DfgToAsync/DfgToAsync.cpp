@@ -1,10 +1,11 @@
 /// Implementation of DfgToAsync pass.
 ///
 /// @file
-/// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
+
+#include "dfg-mlir/Conversion/DfgToAsync/DfgToAsync.h"
 
 #include "../PassDetails.h"
-#include "dfg-mlir/Conversion/DfgToAsync/DfgToAsync.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "mlir/Dialect/Async/IR/Async.h"
 #include "mlir/IR/BuiltinDialect.h"

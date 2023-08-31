@@ -1,12 +1,13 @@
 /// Declares the conversion passes.
 ///
 /// @file
-/// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
 #pragma once
 
 #include "dfg-mlir/Conversion/DfgToAsync/DfgToAsync.h"
 #include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
+#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
 
 namespace mlir::dfg {
 

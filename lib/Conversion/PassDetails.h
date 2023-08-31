@@ -1,20 +1,34 @@
 /// Declaration of the Dfg lowering pass.
 ///
 /// @file
-/// @author     Jihaong Bi (jiahong.bi@mailbox.tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
 #pragma once
 
-#include "circt/Dialect/ESI/ESIDialect.h"
-#include "circt/Dialect/Handshake/HandshakeDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
 namespace circt {
 
-namespace firrtl {
-class FIRRTLDialect;
-} // namespace firrtl
+namespace comb {
+class CombDialect;
+} // namespace comb
+
+namespace fsm {
+class FSMDialect;
+} // namespace fsm
+
+namespace handshake {
+class HandshakeDialect;
+} // namespace handshake
+
+namespace hw {
+class HWDialect;
+} // namespace hw
+
+namespace sv {
+class SVDialect;
+} // namespace sv
 
 } // namespace circt
 
@@ -23,6 +37,10 @@ namespace mlir {
 // Forward declaration from Dialect.h
 template<typename ConcreteDialect>
 void registerDialect(DialectRegistry &registry);
+
+namespace arith {
+class ArithDialect;
+} // namespace arith
 
 namespace async {
 class AsyncDialect;
@@ -35,6 +53,10 @@ class DfgDialect;
 namespace func {
 class FuncDialect;
 } // namespace func
+
+namespace scf {
+class SCFDialect;
+} // namespace scf
 
 //===- Generated passes ---------------------------------------------------===//
 

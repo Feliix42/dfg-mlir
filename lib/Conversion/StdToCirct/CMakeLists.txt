@@ -1,5 +1,5 @@
-add_mlir_conversion_library(DfgToCirct
-    DfgToCirct.cpp
+add_mlir_conversion_library(StdToCirct
+    StdToCirct.cpp
 
     DEPENDS
     ConversionIncGen
@@ -10,9 +10,12 @@ add_mlir_conversion_library(DfgToCirct
     LINK_LIBS PUBLIC
     MLIRDialectUtils
     MLIRTransformUtils
-    DfgDialect
+    MLIRArithDialect
+    MLIRFuncDialect
+    MLIRSCFDialect
+
     CIRCTComb
-    CIRCTFSM
     CIRCTHW
     CIRCTSV
+    CIRCTHandshake
 )
