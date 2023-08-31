@@ -3,8 +3,6 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
-#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
-
 #include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
@@ -15,11 +13,13 @@
 #include "circt/Dialect/Handshake/HandshakeOps.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
+#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
@@ -390,14 +390,14 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         }
 
         rewriter.setInsertionPointToStart(&moduleOp.getBodyRegion().front());
-        auto genFuncOp = rewriter.create<handshake::FuncOp>(
+        auto genFuncOp = rewriter.create<func::FuncOp>(
             loc,
             name,
             rewriter.getFunctionType(pulledTypes, pushedTypes));
         Block* funcEntryBlock = rewriter.createBlock(&genFuncOp.getBody());
         for (int i = 0; i < numPull; i++)
             funcEntryBlock->addArgument(pulledTypes[i], genFuncOp.getLoc());
-        if (!genFuncOp.isExternal()) genFuncOp.resolveArgAndResNames();
+        // if (!genFuncOp.isExternal()) genFuncOp.resolveArgAndResNames();
         rewriter.setInsertionPointToStart(funcEntryBlock);
 
         SmallVector<Operation*> newCalcOps;
@@ -406,27 +406,86 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
             std::advance(it, numPull + i);
             auto oldCalcOp = &*it;
             auto newCalcOp = oldCalcOp->clone();
-            int idxOperand = 0;
-            for (auto operand : newCalcOp->getOperands()) {
-                if (auto idxArg =
-                        getNewIndexOrArg<int, Value>(operand, pulledValueIdx)) {
-                    newCalcOp->setOperand(
-                        idxOperand++,
-                        genFuncOp.getBody().getArgument(idxArg.value()));
-                } else {
-                    auto definingOp = operand.getDefiningOp();
-                    auto idxCalcOp = getNewIndexOrArg<int, Operation*>(
-                        definingOp,
-                        calcOpIndx);
-                    auto idxResult = getResultIdx(operand, definingOp);
-                    newCalcOp->setOperand(
-                        idxOperand++,
-                        newCalcOps[idxCalcOp.value()]->getResult(
-                            idxResult.value()));
+            if (newCalcOp->getRegions().size() == 0) {
+                int idxOperand = 0;
+                for (auto operand : newCalcOp->getOperands()) {
+                    if (auto idxArg = getNewIndexOrArg<int, Value>(
+                            operand,
+                            pulledValueIdx)) {
+                        newCalcOp->setOperand(
+                            idxOperand++,
+                            genFuncOp.getBody().getArgument(idxArg.value()));
+                    } else {
+                        auto definingOp = operand.getDefiningOp();
+                        auto idxCalcOp = getNewIndexOrArg<int, Operation*>(
+                            definingOp,
+                            calcOpIndx);
+                        auto idxResult = getResultIdx(operand, definingOp);
+                        newCalcOp->setOperand(
+                            idxOperand++,
+                            newCalcOps[idxCalcOp.value()]->getResult(
+                                idxResult.value()));
+                    }
                 }
+                newCalcOps.push_back(newCalcOp);
+                rewriter.insert(newCalcOp);
+            } else {
+                int idxOperand = 0;
+                for (auto operand : newCalcOp->getOperands()) {
+                    if (auto idxArg = getNewIndexOrArg<int, Value>(
+                            operand,
+                            pulledValueIdx)) {
+                        newCalcOp->setOperand(
+                            idxOperand++,
+                            genFuncOp.getBody().getArgument(idxArg.value()));
+                    } else {
+                        auto definingOp = operand.getDefiningOp();
+                        auto idxCalcOp = getNewIndexOrArg<int, Operation*>(
+                            definingOp,
+                            calcOpIndx);
+                        auto idxResult = getResultIdx(operand, definingOp);
+                        newCalcOp->setOperand(
+                            idxOperand++,
+                            newCalcOps[idxCalcOp.value()]->getResult(
+                                idxResult.value()));
+                    }
+                }
+                for (auto &region : newCalcOp->getRegions()) {
+                    for (auto &opRegion : region.getOps()) {
+                        int idxOperand = 0;
+                        for (auto operand : opRegion.getOperands()) {
+                            if (auto idxArg = getNewIndexOrArg<int, Value>(
+                                    operand,
+                                    pulledValueIdx)) {
+                                opRegion.setOperand(
+                                    idxOperand++,
+                                    genFuncOp.getBody().getArgument(
+                                        idxArg.value()));
+                            } else {
+                                auto definingOp = operand.getDefiningOp();
+                                auto idxCalcOp =
+                                    getNewIndexOrArg<int, Operation*>(
+                                        definingOp,
+                                        calcOpIndx);
+                                auto idxResult =
+                                    getResultIdx(operand, definingOp);
+                                if (idxCalcOp)
+                                    opRegion.setOperand(
+                                        idxOperand++,
+                                        newCalcOps[idxCalcOp.value()]
+                                            ->getResult(idxResult.value()));
+                                else
+                                    continue;
+                            }
+                        }
+                    }
+                }
+                newCalcOps.push_back(newCalcOp);
+                rewriter.insert(newCalcOp);
+                // return rewriter.notifyMatchFailure(
+                //     newCalcOp->getLoc(),
+                //     "multi-region ops will be supported later");
             }
-            newCalcOps.push_back(newCalcOp);
-            rewriter.insert(newCalcOp);
         }
         SmallVector<Value> returnValues;
         for (int i = 0; i < numResult; i++) {
@@ -439,7 +498,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                 newCalcOps[idxCalcOp.value()]->getResult(idxResult.value()));
         }
 
-        rewriter.create<handshake::ReturnOp>(loc, returnValues);
+        rewriter.create<func::ReturnOp>(loc, returnValues);
 
         rewriter.eraseOp(op);
 
@@ -534,19 +593,38 @@ void ConvertStdToCirctPass::runOnOperation()
 
     target.addLegalDialect<
         arith::ArithDialect,
+        scf::SCFDialect,
 
         comb::CombDialect,
         handshake::HandshakeDialect,
         hw::HWDialect,
         sv::SVDialect,
         dfg::DfgDialect>();
-    target.addIllegalDialect<func::FuncDialect>();
+    // target.addIllegalDialect<func::FuncDialect>();
+
+    func::FuncOp lastFunc;
+    auto module = dyn_cast<ModuleOp>(getOperation());
+    module.walk([&](func::FuncOp funcOp) { lastFunc = funcOp; });
+
+    target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp funcOp) {
+        // auto name = funcOp.getSymName().str();
+        // return name != "top";
+        return funcOp != lastFunc;
+    });
+    target.addDynamicallyLegalOp<func::ReturnOp>([&](func::ReturnOp returnOp) {
+        auto funcOp = returnOp.getParentOp();
+        // auto name = funcOp.getSymName().str();
+        // return name != "top";
+        return funcOp != lastFunc;
+    });
 
     target.addDynamicallyLegalOp<OperatorOp>([&](OperatorOp op) {
-        for (auto &opi : op.getBody().getOps())
+        for (auto &opi : op.getBody().getOps()) {
             if (!isa<PullOp>(opi) && !isa<HWInstanceOp>(opi)
-                && !isa<PushOp>(opi) && !isa<hw::ConstantOp>(opi))
+                && !isa<PushOp>(opi)) {
                 return false;
+            }
+        }
         return true;
     });
 

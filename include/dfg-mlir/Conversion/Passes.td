@@ -43,6 +43,7 @@ def ConvertStdToCirct : Pass<"convert-std-to-circt"> {
     let dependentDialects = [
         "arith::ArithDialect",
         "func::FuncDialect",
+        "scf::SCFDialect",
 
         "circt::comb::CombDialect",
         "circt::handshake::HandshakeDialect",

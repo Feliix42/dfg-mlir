@@ -54,6 +54,10 @@ namespace func {
 class FuncDialect;
 } // namespace func
 
+namespace scf {
+class SCFDialect;
+} // namespace scf
+
 //===- Generated passes ---------------------------------------------------===//
 
 #define GEN_PASS_CLASSES

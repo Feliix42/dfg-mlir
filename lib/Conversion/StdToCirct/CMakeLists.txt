@@ -11,6 +11,8 @@ add_mlir_conversion_library(StdToCirct
     MLIRDialectUtils
     MLIRTransformUtils
     MLIRArithDialect
+    MLIRFuncDialect
+    MLIRSCFDialect
 
     CIRCTComb
     CIRCTHW
