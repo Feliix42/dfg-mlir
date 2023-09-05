@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
+#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
+
 #include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
@@ -13,7 +15,6 @@
 #include "circt/Dialect/Handshake/HandshakeOps.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
-#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -270,6 +271,21 @@ std::optional<int> getResultIdx(Value value, Operation* op)
         if (op->getResult(i) == value) return (int)i;
     return std::nullopt;
 }
+void writeFuncToFile(func::FuncOp funcOp, StringRef funcName)
+{
+    std::string filename = funcName.str() + ".mlir";
+    std::error_code error;
+    llvm::raw_fd_ostream outputFile(filename, error);
+
+    if (error) {
+        llvm::errs()
+            << "Could not open output file: " << error.message() << "\n";
+        return;
+    }
+
+    funcOp.print(outputFile);
+    outputFile.close();
+}
 struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
     using OpConversionPattern<OperatorOp>::OpConversionPattern;
 
@@ -359,7 +375,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
             newPulledValue.push_back(newPull.getResult());
         }
 
-        auto name = "handshake_" + operatorName.str() + "_calc";
+        auto name = "hls_" + operatorName.str() + "_calc";
         auto instanceOp = rewriter.create<HWInstanceOp>(
             loc,
             pushedTypes,
@@ -482,9 +498,6 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                 }
                 newCalcOps.push_back(newCalcOp);
                 rewriter.insert(newCalcOp);
-                // return rewriter.notifyMatchFailure(
-                //     newCalcOp->getLoc(),
-                //     "multi-region ops will be supported later");
             }
         }
         SmallVector<Value> returnValues;
@@ -499,6 +512,77 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         }
 
         rewriter.create<func::ReturnOp>(loc, returnValues);
+
+        writeFuncToFile(genFuncOp, genFuncOp.getSymName());
+        rewriter.setInsertionPointToStart(&moduleOp.getBodyRegion().front());
+        SmallVector<hw::PortInfo> ports;
+        for (size_t i = 0; i <= pulledTypes.size(); i++) {
+            Type type;
+            if (i != pulledTypes.size())
+                type = pulledTypes[i];
+            else
+                type = rewriter.getIntegerType(0);
+            std::string name;
+            hw::PortInfo in_data;
+            name = "in" + std::to_string(i);
+            in_data.name = rewriter.getStringAttr(name);
+            in_data.dir = hw::ModulePort::Direction::Input;
+            in_data.type = type;
+            ports.push_back(in_data);
+            hw::PortInfo in_valid;
+            name = "in" + std::to_string(i) + "_valid";
+            in_valid.name = rewriter.getStringAttr(name);
+            in_valid.dir = hw::ModulePort::Direction::Input;
+            in_valid.type = rewriter.getI1Type();
+            ports.push_back(in_valid);
+            hw::PortInfo in_ready;
+            name = "in" + std::to_string(i) + "_ready";
+            in_ready.name = rewriter.getStringAttr(name);
+            in_ready.dir = hw::ModulePort::Direction::Output;
+            in_ready.type = rewriter.getI1Type();
+            ports.push_back(in_ready);
+        }
+        hw::PortInfo clock;
+        clock.name = rewriter.getStringAttr("clock");
+        clock.dir = hw::ModulePort::Direction::Input;
+        clock.type = rewriter.getI1Type();
+        ports.push_back(clock);
+        hw::PortInfo reset;
+        reset.name = rewriter.getStringAttr("reset");
+        reset.dir = hw::ModulePort::Direction::Input;
+        reset.type = rewriter.getI1Type();
+        ports.push_back(reset);
+        for (size_t i = 0; i <= pushedTypes.size(); i++) {
+            Type type;
+            if (i != pushedTypes.size())
+                type = pushedTypes[i];
+            else
+                type = rewriter.getIntegerType(0);
+            std::string name;
+            hw::PortInfo out_ready;
+            name = "out" + std::to_string(i) + "_ready";
+            out_ready.name = rewriter.getStringAttr(name);
+            out_ready.dir = hw::ModulePort::Direction::Input;
+            out_ready.type = rewriter.getI1Type();
+            ports.push_back(out_ready);
+            hw::PortInfo out_data;
+            name = "out" + std::to_string(i);
+            out_data.name = rewriter.getStringAttr(name);
+            out_data.dir = hw::ModulePort::Direction::Output;
+            out_data.type = type;
+            ports.push_back(out_data);
+            hw::PortInfo out_valid;
+            name = "out" + std::to_string(i) + "_valid";
+            out_valid.name = rewriter.getStringAttr(name);
+            out_valid.dir = hw::ModulePort::Direction::Output;
+            out_valid.type = rewriter.getI1Type();
+            ports.push_back(out_valid);
+        }
+        rewriter.create<hw::HWModuleExternOp>(
+            loc,
+            rewriter.getStringAttr(name),
+            ports);
+        rewriter.eraseOp(genFuncOp);
 
         rewriter.eraseOp(op);
 
