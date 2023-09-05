@@ -9,6 +9,7 @@
 
 include "dfg-mlir/Dialect/dfg/IR/Types.td"
 include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
+include "dfg-mlir/Dialect/dfg/IR/HWOps.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
@@ -257,57 +258,57 @@ def Dfg_PullOp : Dfg_Op<
 // Intermediate HW operations
 //===----------------------------------------------------------------------===//
 
-// Template for hw ops.
-class Dfg_HWOpBase<string mnemonic, list<Trait> traits = []>
-        : Dfg_Op< "hw." # mnemonic, traits> {}
+// // Template for hw ops.
+// class Dfg_HWOpBase<string mnemonic, list<Trait> traits = []>
+//         : Dfg_Op< "hw." # mnemonic, traits> {}
 
-def Dfg_HWConnectOp
-        : Dfg_HWOpBase<"connect", []>
-{
-    let summary = "intermediate connect between ports";
+// def Dfg_HWConnectOp
+//         : Dfg_HWOpBase<"connect", []>
+// {
+//     let summary = "intermediate connect between ports";
 
-    let description = [{
-        This op will replace the dfg.push during conversion
-        of StdToCirct. It represents the actual connection
-        between top module ports and head/tail fifo buffer
-        ports.
-    }];
+//     let description = [{
+//         This op will replace the dfg.push during conversion
+//         of StdToCirct. It represents the actual connection
+//         between top module ports and head/tail fifo buffer
+//         ports.
+//     }];
 
-    let arguments = (ins
-        Dfg_InputType: $portArgument,
-        Dfg_InputType: $portQueue
-    );
+//     let arguments = (ins
+//         Dfg_InputType: $portArgument,
+//         Dfg_InputType: $portQueue
+//     );
 
-    let hasCustomAssemblyFormat = 1;
-}
+//     let hasCustomAssemblyFormat = 1;
+// }
 
-// def Dfg_HWJoinOp
-//         : Dfg_HWOpBase<"join", []>
+// // def Dfg_HWJoinOp
+// //         : Dfg_HWOpBase<"join", []>
+// // {
+// //     let summary = "";
+// //     let description = [{}];
+
+// //     let arguments = (ins
+// //         AnyType: $toPush,
+// //         Dfg_OutputType: $channel
+// //     );
+// // }
+
+// def Dfg_HWInstanceOp
+//         : Dfg_HWOpBase<"instance", []>
 // {
 //     let summary = "";
 //     let description = [{}];
 
 //     let arguments = (ins
-//         AnyType: $toPush,
-//         Dfg_OutputType: $channel
+//         SymbolRefAttr:$module,
+//         Variadic<AnyType>:$operands
 //     );
+//     let results = (outs Variadic<AnyType>:$results);
+
+//     let assemblyFormat = [{
+//         $module `(` $operands `)` attr-dict `:` functional-type($operands, $results)
+//     }];
 // }
-
-def Dfg_HWInstanceOp
-        : Dfg_HWOpBase<"instance", []>
-{
-    let summary = "";
-    let description = [{}];
-
-    let arguments = (ins
-        SymbolRefAttr:$module,
-        Variadic<AnyType>:$operands
-    );
-    let results = (outs Variadic<AnyType>:$results);
-
-    let assemblyFormat = [{
-        $module `(` $operands `)` attr-dict `:` functional-type($operands, $results)
-    }];
-}
 
 #endif
