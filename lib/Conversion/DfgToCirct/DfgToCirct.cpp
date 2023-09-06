@@ -41,6 +41,7 @@ fsm::MachineOp insertController(
     ModuleOp module,
     std::string name,
     int numPullChan,
+    int numPushChan,
     FunctionType funcTy,
     SmallVector<Operation*> ops)
 {
@@ -55,17 +56,26 @@ fsm::MachineOp insertController(
 
     // Create constants and variables
     auto i1Ty = builder.getI1Type();
+    auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1);
     auto c_false = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
     size_t numPull = 0;
+    size_t numHWInstanceResults = 0;
+    SmallVector<Value> hwInstanceValids;
     SmallVector<Value> pullVars;
-    SmallVector<Value> calcVars;
+    SmallVector<Value> calcResults;
     SmallVector<std::pair<Value, int>> zeroWidth;
-    int numCalculation = 0;
-    // Now assume that every computation takes only one cycle
+    // int numCalculation = 0;
+    // Now assume work pipeline: pull -> calc -> push
     for (size_t i = 0; i < ops.size(); i++) {
         auto op = ops[i];
         if (auto pullOp = dyn_cast<PullOp>(op)) {
             assert(i <= numPull && "must pull every data at beginning");
+            auto validVarOp = builder.create<fsm::VariableOp>(
+                loc,
+                i1Ty,
+                builder.getIntegerAttr(i1Ty, 0),
+                builder.getStringAttr("valid" + std::to_string(numPull)));
+            hwInstanceValids.push_back(validVarOp.getResult());
             auto valueTy = pullOp.getChan().getType().getElementType();
             auto varOp = builder.create<fsm::VariableOp>(
                 loc,
@@ -77,23 +87,24 @@ fsm::MachineOp insertController(
                 std::make_pair(varOp.getResult(), pullOp.getOutp()));
         } else if (auto pushOp = dyn_cast<PushOp>(op)) {
             continue;
-        } else {
-            auto types = op->getResultTypes();
-            auto numVars = types.size();
-            for (size_t i = 0; i < numVars; i++) {
+        } else if (auto hwInstanceOp = dyn_cast<HWInstanceOp>(op)) {
+            auto types = hwInstanceOp.getResultTypes();
+            numHWInstanceResults = types.size();
+            for (size_t i = 0; i < numHWInstanceResults; i++) {
                 auto type = types[i];
-                auto varName =
-                    "result" + std::to_string(numCalculation++)
-                    + ((numVars == 1) ? "" : "_" + std::to_string(i));
+                auto varName = "result" + std::to_string(i);
                 auto varOp = builder.create<fsm::VariableOp>(
                     loc,
                     type,
                     builder.getIntegerAttr(type, 0),
                     builder.getStringAttr(varName));
-                calcVars.push_back(varOp.getResult());
-                newArguments.push_back(
-                    std::make_pair(varOp.getResult(), op->getResult(i)));
+                calcResults.push_back(varOp.getResult());
+                newArguments.push_back(std::make_pair(
+                    varOp.getResult(),
+                    hwInstanceOp.getResult(i)));
             }
+        } else {
+            return fsm::MachineOp{};
         }
     }
 
@@ -116,19 +127,40 @@ fsm::MachineOp insertController(
             outputAllZero.push_back(zero.getResult());
         }
     }
+    auto idxBias = numPullChan + 2 * numPushChan;
+    // Init output vector
+    std::vector<Value> outputInit = outputAllZero;
+    outputInit[idxBias] = c_true.getResult();
+    // Output vectors, need to be modified
+    std::vector<Value> outputTempVec = outputAllZero;
+    for (size_t i = 0; i < numPull; i++) {
+        outputTempVec[idxBias + 1 + 2 * i] = hwInstanceValids[i];
+        outputTempVec[idxBias + 1 + 2 * i + 1] = pullVars[i];
+    }
 
     // Create states and transitions
     // INIT
     auto stateInit = builder.create<fsm::StateOp>(loc, "INIT");
     builder.setInsertionPointToEnd(&stateInit.getOutput().back());
     stateInit.getOutput().front().front().erase();
-    builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputAllZero));
+    builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputInit));
     builder.setInsertionPointToEnd(&stateInit.getTransitions().back());
-    builder.create<fsm::TransitionOp>(loc, "READ0");
+    auto transRead = builder.create<fsm::TransitionOp>(loc, "READ0");
+    builder.setInsertionPointToEnd(transRead.ensureAction(builder));
+    for (size_t i = 0; i < numPull; i++) {
+        builder.create<fsm::UpdateOp>(
+            loc,
+            hwInstanceValids[i],
+            c_false.getResult());
+        auto pullVarWidth = pullVars[i].getType().getIntOrFloatBitWidth();
+        auto zeroValue = getNewIndexOrArg<Value, int>(pullVarWidth, zeroWidth);
+        builder.create<fsm::UpdateOp>(loc, pullVars[i], zeroValue.value());
+    }
     builder.setInsertionPointToEnd(&machine.getBody().back());
 
     // All pulls are at beginning of an operator
     // For every PullOp there is one READ state
+    assert(ops.size() > numPull && "cannot only pull");
     auto isNextPush = isa<PushOp>(ops[numPull]);
     for (size_t i = 0; i < pullVars.size(); i++) {
         auto pullOp = dyn_cast<PullOp>(ops[i]);
@@ -140,13 +172,13 @@ fsm::MachineOp insertController(
             builder.create<fsm::StateOp>(loc, "READ" + std::to_string(i));
         builder.setInsertionPointToEnd(&stateRead.getOutput().back());
         stateRead.getOutput().front().front().erase();
-        std::vector<Value> newOutputs = outputAllZero;
+        std::vector<Value> newOutputs = outputTempVec;
         newOutputs[argIndex] = machine.getArgument(2 * argIndex);
         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
         builder.setInsertionPointToEnd(&stateRead.getTransitions().back());
         auto transCalc = builder.create<fsm::TransitionOp>(
             loc,
-            (i == pullVars.size() - 1) ? (isNextPush ? "WRITE0" : "CALC0")
+            (i == pullVars.size() - 1) ? (isNextPush ? "WRITE0" : "CALC")
                                        : "READ" + std::to_string(i + 1));
         builder.setInsertionPointToEnd(transCalc.ensureGuard(builder));
         transCalc.getGuard().front().front().erase();
@@ -154,89 +186,149 @@ fsm::MachineOp insertController(
         builder.setInsertionPointToEnd(transCalc.ensureAction(builder));
         builder.create<fsm::UpdateOp>(
             loc,
+            hwInstanceValids[i],
+            c_true.getResult());
+        builder.create<fsm::UpdateOp>(
+            loc,
             pullVars[i],
             machine.getArgument(2 * argIndex + 1));
         builder.setInsertionPointToEnd(&machine.getBody().back());
     }
 
-    // TODO: Dependency Graph, merge states
-    // TODO: multiple cycles computation
-    int idxCalc = 0;
-    int idxPush = 0;
-    isNextPush = false;
-    for (size_t i = numPull; i < ops.size(); i++) {
-        auto op = ops[i];
-        auto isThisPush = dyn_cast<PushOp>(op);
-        if (i < ops.size() - 1) isNextPush = isa<PushOp>(ops[i + 1]);
-
-        // For every push create one STATE: WRITE
-        if (isThisPush) {
-            auto argIndex =
-                getNewIndexOrArg<int, Value>(isThisPush.getChan(), oldArgsIndex)
-                    .value();
-
-            auto stateWrite = builder.create<fsm::StateOp>(
-                loc,
-                "WRITE" + std::to_string(idxPush));
-            builder.setInsertionPointToEnd(&stateWrite.getOutput().back());
-            stateWrite.getOutput().front().front().erase();
-            std::vector<Value> newOutputs = outputAllZero;
-            newOutputs[2 * argIndex - numPullChan] =
-                machine.getArgument(argIndex + numPullChan);
-            newOutputs[2 * argIndex - numPullChan + 1] =
-                getNewIndexOrArg<Value, Value>(
-                    isThisPush.getInp(),
-                    newArguments)
-                    .value();
-            builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
-            builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
-            auto transWrite = builder.create<fsm::TransitionOp>(
-                loc,
-                (i == ops.size() - 1)
-                    ? "INIT"
-                    : (isNextPush ? "WRITE" + std::to_string(idxPush + 1)
-                                  : "CALC" + std::to_string(idxCalc)));
-            builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
-            transWrite.getGuard().front().front().erase();
-            builder.create<fsm::ReturnOp>(
-                loc,
-                machine.getArgument(argIndex + numPullChan));
-            builder.setInsertionPointToEnd(&machine.getBody().back());
-            idxPush++;
-        }
-        // For every computation create one STATE: CALC
-        else {
-            auto stateCal = builder.create<fsm::StateOp>(
-                loc,
-                "CALC" + std::to_string(idxCalc));
-            builder.setInsertionPointToEnd(&stateCal.getOutput().back());
-            stateCal.getOutput().front().front().erase();
-            builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputAllZero));
-            builder.setInsertionPointToEnd(&stateCal.getTransitions().back());
-            auto transCal = builder.create<fsm::TransitionOp>(
-                loc,
-                (i == ops.size() - 1)
-                    ? "INIT"
-                    : (isNextPush ? "WRITE" + std::to_string(idxPush)
-                                  : "CALC" + std::to_string(idxCalc + 1)));
-            builder.setInsertionPointToEnd(transCal.ensureAction(builder));
-            auto newCalcOp = op->clone();
-            for (size_t j = 0; j < newCalcOp->getNumOperands(); j++) {
-                auto newOperand = getNewIndexOrArg<Value, Value>(
-                                      newCalcOp->getOperand(j),
-                                      newArguments)
-                                      .value();
-                newCalcOp->setOperand(j, newOperand);
-            }
-            builder.insert(newCalcOp);
-            builder.create<fsm::UpdateOp>(
-                loc,
-                calcVars[idxCalc],
-                newCalcOp->getResult(0));
-            builder.setInsertionPointToEnd(&machine.getBody().back());
-            idxCalc++;
-        }
+    // Wait until HwInstance's op are done
+    auto stateCalc = builder.create<fsm::StateOp>(loc, "CALC");
+    builder.setInsertionPointToEnd(&stateCalc.getOutput().back());
+    stateCalc.getOutput().front().front().erase();
+    builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputTempVec));
+    builder.setInsertionPointToEnd(&stateCalc.getTransitions().back());
+    auto transWrite = builder.create<fsm::TransitionOp>(loc, "WRITE0");
+    // TODO: Action region of calc state
+    builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
+    transWrite.getGuard().front().front().erase();
+    builder.create<fsm::ReturnOp>(
+        loc,
+        machine.getArgument(2 * numPullChan + numPushChan));
+    builder.setInsertionPointToEnd(transWrite.ensureAction(builder));
+    for (size_t i = 0; i < numHWInstanceResults; i++) {
+        builder.create<fsm::UpdateOp>(
+            loc,
+            calcResults[i],
+            machine.getArgument(2 * numPullChan + numPushChan + i + 1));
     }
+    builder.setInsertionPointToEnd(&machine.getBody().back());
+
+    // Here should be all push ops
+    int idxStateWrite = 0;
+    for (size_t i = numPull + 1; i < ops.size(); i++) {
+        auto pushOp = dyn_cast<PushOp>(ops[i]);
+        assert(pushOp && "here shoule be all PushOp");
+        auto argIndex =
+            getNewIndexOrArg<int, Value>(pushOp.getChan(), oldArgsIndex)
+                .value();
+        auto stateWrite = builder.create<fsm::StateOp>(
+            loc,
+            "WRITE" + std::to_string(idxStateWrite));
+        builder.setInsertionPointToEnd(&stateWrite.getOutput().back());
+        stateWrite.getOutput().front().front().erase();
+        std::vector<Value> newOutputs = outputTempVec;
+        newOutputs[2 * argIndex - numPullChan] =
+            machine.getArgument(argIndex + numPullChan);
+        newOutputs[2 * argIndex - numPullChan + 1] =
+            getNewIndexOrArg<Value, Value>(pushOp.getInp(), newArguments)
+                .value();
+        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
+        builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
+        auto transInit = builder.create<fsm::TransitionOp>(
+            loc,
+            (i == ops.size() - 1)
+                ? "INIT"
+                : "WRITE" + std::to_string(idxStateWrite + 1));
+        builder.setInsertionPointToEnd(transInit.ensureGuard(builder));
+        transInit.getGuard().front().front().erase();
+        builder.create<fsm::ReturnOp>(
+            loc,
+            machine.getArgument(argIndex + numPullChan));
+        builder.setInsertionPointToEnd(&machine.getBody().back());
+    }
+
+    // int idxCalc = 0;
+    // int idxPush = 0;
+    // isNextPush = false;
+    // for (size_t i = numPull; i < ops.size(); i++) {
+    //     auto op = ops[i];
+    //     auto isThisPush = dyn_cast<PushOp>(op);
+    //     if (i < ops.size() - 1) isNextPush = isa<PushOp>(ops[i + 1]);
+
+    //     // For every push create one STATE: WRITE
+    //     if (isThisPush) {
+    //         auto argIndex =
+    //             getNewIndexOrArg<int, Value>(isThisPush.getChan(),
+    //             oldArgsIndex)
+    //                 .value();
+
+    //         auto stateWrite = builder.create<fsm::StateOp>(
+    //             loc,
+    //             "WRITE" + std::to_string(idxPush));
+    //         builder.setInsertionPointToEnd(&stateWrite.getOutput().back());
+    //         stateWrite.getOutput().front().front().erase();
+    //         std::vector<Value> newOutputs = outputAllZero;
+    //         newOutputs[2 * argIndex - numPullChan] =
+    //             machine.getArgument(argIndex + numPullChan);
+    //         newOutputs[2 * argIndex - numPullChan + 1] =
+    //             getNewIndexOrArg<Value, Value>(
+    //                 isThisPush.getInp(),
+    //                 newArguments)
+    //                 .value();
+    //         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
+    //         builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
+    //         auto transWrite = builder.create<fsm::TransitionOp>(
+    //             loc,
+    //             (i == ops.size() - 1)
+    //                 ? "INIT"
+    //                 : (isNextPush ? "WRITE" + std::to_string(idxPush + 1)
+    //                               : "CALC" + std::to_string(idxCalc)));
+    //         builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
+    //         transWrite.getGuard().front().front().erase();
+    //         builder.create<fsm::ReturnOp>(
+    //             loc,
+    //             machine.getArgument(argIndex + numPullChan));
+    //         builder.setInsertionPointToEnd(&machine.getBody().back());
+    //         idxPush++;
+    //     }
+    //     // For every computation create one STATE: CALC
+    //     else {
+    //         auto stateCal = builder.create<fsm::StateOp>(
+    //             loc,
+    //             "CALC" + std::to_string(idxCalc));
+    //         builder.setInsertionPointToEnd(&stateCal.getOutput().back());
+    //         stateCal.getOutput().front().front().erase();
+    //         builder.create<fsm::OutputOp>(loc,
+    //         ArrayRef<Value>(outputAllZero));
+    //         builder.setInsertionPointToEnd(&stateCal.getTransitions().back());
+    //         auto transCal = builder.create<fsm::TransitionOp>(
+    //             loc,
+    //             (i == ops.size() - 1)
+    //                 ? "INIT"
+    //                 : (isNextPush ? "WRITE" + std::to_string(idxPush)
+    //                               : "CALC" + std::to_string(idxCalc + 1)));
+    //         builder.setInsertionPointToEnd(transCal.ensureAction(builder));
+    //         auto newCalcOp = op->clone();
+    //         for (size_t j = 0; j < newCalcOp->getNumOperands(); j++) {
+    //             auto newOperand = getNewIndexOrArg<Value, Value>(
+    //                                   newCalcOp->getOperand(j),
+    //                                   newArguments)
+    //                                   .value();
+    //             newCalcOp->setOperand(j, newOperand);
+    //         }
+    //         builder.insert(newCalcOp);
+    //         builder.create<fsm::UpdateOp>(
+    //             loc,
+    //             calcResults[idxCalc],
+    //             newCalcOp->getResult(0));
+    //         builder.setInsertionPointToEnd(&machine.getBody().back());
+    //         idxCalc++;
+    //     }
+    // }
 
     return machine;
 }
@@ -377,27 +469,96 @@ public:
         // Insert controller machine at top of module
         auto module = op->getParentOfType<ModuleOp>();
         SmallVector<Operation*> ops;
-        for (auto &opi : op.getBody().getOps()) ops.push_back(&opi);
+        std::string hwInstanceName;
+        SmallVector<Type> hwInstanceInTypes;
+        SmallVector<Type> hwInstanceOutTypes;
+        for (auto &opi : op.getBody().getOps()) {
+            if (auto hwInstanceOp = dyn_cast<HWInstanceOp>(opi)) {
+                hwInstanceName =
+                    hwInstanceOp.getModuleAttr().getRootReference().str();
+                auto inTypes = opi.getOperands().getTypes();
+                hwInstanceInTypes.append(inTypes.begin(), inTypes.end());
+                auto outTypes = opi.getResults().getTypes();
+                hwInstanceOutTypes.append(outTypes.begin(), outTypes.end());
+            }
+            ops.push_back(&opi);
+        }
         auto hwFuncTy = hwModule.getFunctionType();
         auto hwInTypes = hwFuncTy.getInputs();
         auto hwOutTypes = hwFuncTy.getResults();
         // The machine inputs don't contain clock and reset
+        rewriter.setInsertionPointToStart(&hwModule.getBody().front());
+        auto loc = rewriter.getUnknownLoc();
+        SmallVector<Value> placeholderInstInputs;
         ArrayRef<Type> fsmInTypes(hwInTypes.data() + 2, hwInTypes.size() - 2);
+        SmallVector<Type> fsmInTypesVec(fsmInTypes.begin(), fsmInTypes.end());
+        auto i1Ty = rewriter.getI1Type();
+        fsmInTypesVec.push_back(i1Ty);
+        fsmInTypesVec.append(
+            hwInstanceOutTypes.begin(),
+            hwInstanceOutTypes.end());
+        SmallVector<Type> fsmOutTypesVec(hwOutTypes.begin(), hwOutTypes.end());
+        fsmOutTypesVec.push_back(i1Ty);
+        for (auto type : hwInstanceInTypes) {
+            auto placeholderInstanceData =
+                rewriter.create<hw::ConstantOp>(loc, type, 0);
+            placeholderInstInputs.push_back(
+                placeholderInstanceData.getResult());
+            auto placeholderInstanceValid =
+                rewriter.create<hw::ConstantOp>(loc, i1Ty, 0);
+            placeholderInstInputs.push_back(
+                placeholderInstanceValid.getResult());
+            fsmOutTypesVec.push_back(i1Ty);
+            fsmOutTypesVec.push_back(type);
+        }
+        auto placeholderCalcReset =
+            rewriter.create<hw::ConstantOp>(loc, i1Ty, 0);
 
+        // Insert fsm.machine at top
         auto newMachine = insertController(
             module,
             op.getSymName().str() + "_controller",
             numInputs,
-            FunctionType::get(hwFuncTy.getContext(), fsmInTypes, hwOutTypes),
+            numOutputs,
+            FunctionType::get(
+                hwFuncTy.getContext(),
+                fsmInTypesVec,
+                fsmOutTypesVec),
             ops);
 
+        // Create a hw.instance op and take the results to fsm
+        auto c_true =
+            rewriter.create<hw::ConstantOp>(loc, rewriter.getI1Type(), 1);
+        hw::HWModuleExternOp opToInstance = nullptr;
+        module.walk([&](hw::HWModuleExternOp externModuleOp) {
+            auto name = externModuleOp.getSymNameAttr().str();
+            llvm::errs() << name;
+            if (name == hwInstanceName) opToInstance = externModuleOp;
+        });
+        SmallVector<Value> instanceInputs;
+        instanceInputs.append(
+            placeholderInstInputs.begin(),
+            placeholderInstInputs.end());
+        instanceInputs.push_back(hwModule.getBody().getArgument(0));
+        instanceInputs.push_back(placeholderCalcReset.getResult());
+        instanceInputs.push_back(c_true.getResult());
+        auto instanceOp = rewriter.create<hw::InstanceOp>(
+            loc,
+            opToInstance,
+            "instance",
+            instanceInputs);
+        if (hwInstanceOutTypes.size() != 1) {
+            // TODO: deal with multiple outputs from instance
+        }
         // Create a fsm.hw_instance op and take the results to output
-        rewriter.setInsertionPointToStart(&hwModule.getBody().front());
         SmallVector<Value> fsmInputs;
         for (size_t i = 2; i < hwInTypes.size(); i++)
             fsmInputs.push_back(hwModule.getBody().getArgument(i));
+        auto idxBias = hwInstanceInTypes.size();
+        fsmInputs.push_back(instanceOp.getResult(idxBias + 1));
+        fsmInputs.push_back(instanceOp.getResult(idxBias));
         auto outputs = rewriter.create<fsm::HWInstanceOp>(
-            rewriter.getUnknownLoc(),
+            loc,
             newMachine.getFunctionType().getResults(),
             rewriter.getStringAttr("controller"),
             newMachine.getSymNameAttr(),
@@ -405,9 +566,26 @@ public:
             hwModule.getBody().getArgument(0),
             hwModule.getBody().getArgument(1));
 
-        rewriter.create<hw::OutputOp>(
-            rewriter.getUnknownLoc(),
-            outputs.getResults());
+        size_t resultIdxBias = numInputs + numOutputs * 2;
+        SmallVector<Value> outputVec;
+        for (size_t i = 0; i < resultIdxBias; i++)
+            outputVec.push_back(outputs.getResult(i));
+        rewriter.create<hw::OutputOp>(loc, outputVec);
+
+        placeholderCalcReset.replaceAllUsesWith(
+            outputs.getResult(resultIdxBias));
+        for (size_t i = 0; i < placeholderInstInputs.size(); i += 2) {
+            auto newBias = resultIdxBias + 1 + i;
+            placeholderInstInputs[i].replaceAllUsesWith(
+                outputs.getResult(newBias + 1));
+            placeholderInstInputs[i + 1].replaceAllUsesWith(
+                outputs.getResult(newBias));
+        }
+
+        // Clean up the placeholders
+        hwModule.walk([&](hw::ConstantOp constOp) {
+            if (constOp.getResult().use_empty()) rewriter.eraseOp(constOp);
+        });
 
         rewriter.eraseOp(op);
 
