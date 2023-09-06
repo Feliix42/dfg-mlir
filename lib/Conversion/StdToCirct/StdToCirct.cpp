@@ -516,12 +516,8 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         writeFuncToFile(genFuncOp, genFuncOp.getSymName());
         rewriter.setInsertionPointToStart(&moduleOp.getBodyRegion().front());
         SmallVector<hw::PortInfo> ports;
-        for (size_t i = 0; i <= pulledTypes.size(); i++) {
-            Type type;
-            if (i != pulledTypes.size())
-                type = pulledTypes[i];
-            else
-                type = rewriter.getIntegerType(0);
+        for (size_t i = 0; i < pulledTypes.size(); i++) {
+            auto type = pulledTypes[i];
             std::string name;
             hw::PortInfo in_data;
             name = "in" + std::to_string(i);
@@ -552,12 +548,8 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         reset.dir = hw::ModulePort::Direction::Input;
         reset.type = rewriter.getI1Type();
         ports.push_back(reset);
-        for (size_t i = 0; i <= pushedTypes.size(); i++) {
-            Type type;
-            if (i != pushedTypes.size())
-                type = pushedTypes[i];
-            else
-                type = rewriter.getIntegerType(0);
+        for (size_t i = 0; i < pushedTypes.size(); i++) {
+            auto type = pushedTypes[i];
             std::string name;
             hw::PortInfo out_ready;
             name = "out" + std::to_string(i) + "_ready";
