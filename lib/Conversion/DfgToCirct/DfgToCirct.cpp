@@ -243,14 +243,14 @@ fsm::MachineOp insertController(
     } else {
         builder.create<fsm::ReturnOp>(loc, machine.getArgument(idxBias));
     }
-    builder.setInsertionPointToEnd(transWrite.ensureAction(builder));
-    for (size_t i = 0; i < numHWInstanceResults; i++) {
+    if (!hasMultiOutputs) {
+        builder.setInsertionPointToEnd(transWrite.ensureAction(builder));
         builder.create<fsm::UpdateOp>(
             loc,
-            calcResults[i],
-            machine.getArgument(idxBias + 2 * i + 1));
+            calcResults[0],
+            machine.getArgument(idxBias + 1));
+        builder.setInsertionPointToEnd(&machine.getBody().back());
     }
-    builder.setInsertionPointToEnd(&machine.getBody().back());
     if (hasMultiOutputs) {
         builder.setInsertionPointToEnd(&stateCalc.getTransitions().back());
         auto transCalcSelf = builder.create<fsm::TransitionOp>(loc, "CALC");
@@ -262,6 +262,10 @@ fsm::MachineOp insertController(
                 calcValid,
                 machine.getArgument(idxBias + 2 * i));
             builder.create<fsm::UpdateOp>(loc, calcValid, newValid.getResult());
+            builder.create<fsm::UpdateOp>(
+                loc,
+                calcResults[i],
+                machine.getArgument(idxBias + 2 * i + 1));
         }
         builder.setInsertionPointToEnd(&machine.getBody().back());
     }
