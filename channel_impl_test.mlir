@@ -1,4 +1,5 @@
 llvm.func @malloc(i64) -> !llvm.ptr<i8>
+llvm.func @free(!llvm.ptr<i8>) -> ()
 
 // payload, pointer to next element
 !bufferItem = !llvm.struct<"elem", (i64, ptr<struct<"elem">>)>
@@ -105,9 +106,41 @@ llvm.func @send_data(%sender: !llvm.ptr<!channelTy>, %to_send: i64) {
 
 llvm.func @recv_data(%recv: !llvm.ptr<!channelTy>) -> i64 {
     // TODO
+    %rx = llvm.load %recv : !llvm.ptr<!channelTy>
+    %size = llvm.extractvalue %rx[3] : !channelTy
+    %zero = llvm.mlir.constant(0) : i64
+    %empty = llvm.icmp "eq" %size, %zero : i64
+    llvm.cond_br %empty, ^emptyqueue(%rx: !channelTy), ^nonemptyqueue(%rx, %size: !channelTy, i64)
+^emptyqueue(%rx1: !channelTy):
+    // if size == 0:
+    // channel open? if yes: block
+    %chan_open = llvm.extractvalue %rx1[4] : !channelTy
+    // TODO: abort on close
 
     %111111 = llvm.mlir.constant(0) : i64
-    llvm.return %111111 : i64
+    llvm.br ^done(%111111: i64)
+^nonemptyqueue(%rx2: !channelTy, %old_size: i64):
+    // read start
+    %startp = llvm.extractvalue %rx2[0] : !channelTy
+    %start = llvm.load %startp : !llvm.ptr<!bufferItem>
+    %next_startptr = llvm.extractvalue %start[1] : !bufferItem
+    // set start = start->next
+    %rx21 = llvm.insertvalue %next_startptr, %rx2[0] : !channelTy
+    // size -=1
+    %one = llvm.mlir.constant(1) : i64
+    %newsize = llvm.sub %old_size, %one : i64
+    // if cur == end: end = null
+    %null = llvm.mlir.null : !llvm.ptr<!bufferItem>
+    // get pointer to `end` ptr
+    %endptr = llvm.getelementptr inbounds %recv[0, 1] : (!llvm.ptr<!channelTy>) -> !llvm.ptr<!llvm.ptr<!bufferItem>>
+    llvm.cmpxchg %endptr, %next_startptr, %null acq_rel monotonic: !llvm.ptr<!llvm.ptr<!bufferItem>>, !llvm.ptr<!bufferItem>
+    // dealloc item, return contained value
+    %result = llvm.extractvalue %start[0] : !bufferItem
+    %buf = llvm.bitcast %startp : !llvm.ptr<!bufferItem> to !llvm.ptr<i8>
+    llvm.call @free(%buf) : (!llvm.ptr<i8>) -> ()
+    llvm.br ^done(%result: i64)
+^done(%res: i64):
+    llvm.return %res : i64
 }
 
 llvm.func @close(%chan: !llvm.ptr<!channelTy>) {
