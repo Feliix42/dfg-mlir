@@ -1,8 +1,14 @@
+llvm.func @printf(!llvm.ptr<i8>, ...) -> i32
 llvm.func @malloc(i64) -> !llvm.ptr<i8>
 llvm.func @free(!llvm.ptr<i8>) -> ()
+llvm.mlir.global internal constant @str0("num recvd: %d\0A\00")
+
+// ============================================================================
+// -- channel boilerplate
+// ============================================================================
 
 // payload, pointer to next element
-!bufferItem = !llvm.struct<"elem", (i64, ptr<struct<"elem">>)>
+!bufferItem = !llvm.struct<"elem", (i32, ptr<struct<"elem">>)>
 
 // first element, last element, capacity, occupancy, connected (bool)
 !channelTy = !llvm.struct<(ptr<!bufferItem>, ptr<!bufferItem>, i64, i64, i1)>
@@ -34,7 +40,7 @@ llvm.func @make_channel() -> !llvm.ptr<!channelTy> {
     llvm.return %chan : !llvm.ptr<!channelTy>
 }
 
-llvm.func @send_data(%sender: !llvm.ptr<!channelTy>, %to_send: i64) {
+llvm.func @send_data(%sender: !llvm.ptr<!channelTy>, %to_send: i32) {
 // ^entry(%sender: !llvm.ptr<!channelTy>, %to_send: i64):
     // TODO:
     // check taint marker
@@ -94,8 +100,7 @@ llvm.func @send_data(%sender: !llvm.ptr<!channelTy>, %to_send: i64) {
     llvm.return
 }
 
-llvm.func @recv_data(%recv: !llvm.ptr<!channelTy>) -> i64 {
-    // TODO
+llvm.func @recv_data(%recv: !llvm.ptr<!channelTy>) -> i32 {
     %rx = llvm.load %recv : !llvm.ptr<!channelTy>
     %size = llvm.extractvalue %rx[3] : !channelTy
     %zero = llvm.mlir.constant(0) : i64
@@ -107,8 +112,10 @@ llvm.func @recv_data(%recv: !llvm.ptr<!channelTy>) -> i64 {
     %chan_open = llvm.extractvalue %rx1[4] : !channelTy
     // TODO: abort on close
 
-    %111111 = llvm.mlir.constant(0) : i64
-    llvm.br ^done(%111111: i64)
+    // TODO(feliix42): block on empty queue -> omp.taskyield? => jump back to entry block
+    //                 -> maybe use gep to have a ptr to the size variable
+    %111111 = llvm.mlir.constant(0) : i32
+    llvm.br ^done(%111111: i32)
 ^nonemptyqueue(%rx2: !channelTy, %old_size: i64):
     // read start
     %startp = llvm.extractvalue %rx2[0] : !channelTy
@@ -128,16 +135,64 @@ llvm.func @recv_data(%recv: !llvm.ptr<!channelTy>) -> i64 {
     %result = llvm.extractvalue %start[0] : !bufferItem
     %buf = llvm.bitcast %startp : !llvm.ptr<!bufferItem> to !llvm.ptr<i8>
     llvm.call @free(%buf) : (!llvm.ptr<i8>) -> ()
-    llvm.br ^done(%result: i64)
-^done(%res: i64):
-    llvm.return %res : i64
+    llvm.br ^done(%result: i32)
+^done(%res: i32):
+    llvm.return %res : i32
 }
 
 llvm.func @close(%chan: !llvm.ptr<!channelTy>) {
+    // TODO(feliix42): Change as follows
+    // 1. gep for the closed pointer
+    // 2. cmpxchg 1 -> 0
+    //     -> if that fails (i.e., the channel is closed on the other side), deallocate the channel and all items buffered
+
     // mark the channel as closed
     %0 = llvm.load %chan : !llvm.ptr<!channelTy>
     %1 = llvm.mlir.constant(0: i1) : i1
     %2 = llvm.insertvalue %1, %0[4] : !channelTy
     llvm.store %2, %chan : !channelTy, !llvm.ptr<!channelTy>
     llvm.return
+}
+
+// TODO(feliix42): deallocation function
+
+
+// ============================================================================
+// -- actual "lowering"
+// ============================================================================
+
+func.func @produce_value(%val: !llvm.ptr<!channelTy>) {
+    %val1 = arith.constant 323729 : i32
+
+    llvm.call @send_data(%val, %val1) : (!llvm.ptr<!channelTy>, i32) -> ()
+
+    llvm.call @close(%val) : (!llvm.ptr<!channelTy>) -> ()
+    return
+}
+
+func.func @consume(%number: !llvm.ptr<!channelTy>) {
+    %recvd = llvm.call @recv_data(%number) : (!llvm.ptr<!channelTy>) -> i32
+
+    %5 = llvm.mlir.addressof @str0 : !llvm.ptr<array<15 x i8>>
+    %4 = llvm.mlir.constant(0 : i32) : i32
+    %6 = llvm.getelementptr %5[%4, %4] : (!llvm.ptr<array<15 x i8>>, i32, i32) -> !llvm.ptr<i8>
+    %21 = llvm.call @printf(%6, %recvd) : (!llvm.ptr<i8>, i32) -> i32
+
+    // TODO(feliix42): normally, we could have a loop that is wrapped around the block above. then, termination would drop us here, where cleanup needs to happen in any case:
+    // 1. mark channels as closed. If closed already -> deallocate
+    llvm.call @close(%number) : (!llvm.ptr<!channelTy>) -> ()
+    return
+}
+
+func.func @algo() {
+    %op_chan = llvm.call @make_channel() : () -> !llvm.ptr<!channelTy>
+
+    %num_threads = arith.constant 4 : index
+    omp.parallel num_threads(%num_threads : index) {
+        func.call @produce_value(%op_chan) : (!llvm.ptr<!channelTy>) -> ()
+        func.call @consume(%op_chan) : (!llvm.ptr<!channelTy>) -> ()
+        omp.terminator
+    }
+
+    return
 }
