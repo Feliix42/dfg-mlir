@@ -3,8 +3,6 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
-#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
-
 #include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
@@ -15,6 +13,7 @@
 #include "circt/Dialect/Handshake/HandshakeOps.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
+#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -303,6 +302,23 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         auto ops = op.getOps();
         auto moduleOp = op->getParentOfType<ModuleOp>();
 
+        LoopOp loopOp = nullptr;
+        bool hasLoopOp = false;
+        SmallVector<int> loopInChanIdx, loopOutChanIdx;
+        if (auto oldLoop = dyn_cast<LoopOp>(*ops.begin())) {
+            ops = oldLoop.getOps();
+            loopOp = oldLoop;
+            hasLoopOp = true;
+            for (auto inChan : oldLoop.getInChans()) {
+                auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
+                loopInChanIdx.push_back(idxChan);
+            }
+            for (auto outChan : oldLoop.getOutChans()) {
+                auto idxChan = outChan.cast<BlockArgument>().getArgNumber();
+                loopOutChanIdx.push_back(idxChan);
+            }
+        }
+
         int idxPull = 0;
         int numPull = 0;
         int idxCalc = 0;
@@ -368,6 +384,21 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         SmallVector<Value> newPulledValue;
         auto loc = rewriter.getUnknownLoc();
         rewriter.setInsertionPointToStart(entryBlock);
+        if (hasLoopOp) {
+            SmallVector<Value> loopInChans, loopOutChans;
+            for (auto inChanIdx : loopInChanIdx) {
+                loopInChans.push_back(
+                    newOperator.getBody().getArgument(inChanIdx));
+            }
+            for (auto outChanIdx : loopOutChanIdx) {
+                loopOutChans.push_back(
+                    newOperator.getBody().getArgument(outChanIdx));
+            }
+            auto newLoop =
+                rewriter.create<LoopOp>(loc, loopInChans, loopOutChans);
+            Block* loopEntryBlock = rewriter.createBlock(&newLoop.getBody());
+            rewriter.setInsertionPointToStart(loopEntryBlock);
+        }
         for (int i = 0; i < numPull; i++) {
             auto newPull = rewriter.create<PullOp>(
                 loc,
@@ -695,7 +726,10 @@ void ConvertStdToCirctPass::runOnOperation()
     });
 
     target.addDynamicallyLegalOp<OperatorOp>([&](OperatorOp op) {
-        for (auto &opi : op.getBody().getOps()) {
+        auto ops = op.getBody().getOps();
+        if (auto loopOp = dyn_cast<LoopOp>(*ops.begin()))
+            ops = loopOp.getBody().getOps();
+        for (auto &opi : ops) {
             if (!isa<PullOp>(opi) && !isa<HWInstanceOp>(opi)
                 && !isa<PushOp>(opi)) {
                 return false;
