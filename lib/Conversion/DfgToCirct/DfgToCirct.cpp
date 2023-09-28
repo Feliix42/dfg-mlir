@@ -52,11 +52,6 @@ fsm::MachineOp insertController(
     builder.setInsertionPointToStart(module.getBody());
     auto loc = builder.getUnknownLoc();
 
-    // Check if LoopOp doesn't monitor any ports
-    if (hasLoopOp) {
-        if (loopChanArgIdx.empty()) hasLoopOp = false;
-    }
-
     // Create a new fsm.machine
     auto machine = builder.create<fsm::MachineOp>(loc, name, "INIT", funcTy);
     builder.setInsertionPointToStart(&machine.getBody().front());
@@ -470,6 +465,8 @@ fsm::MachineOp insertController(
     return machine;
 }
 
+SmallVector<std::pair<bool, std::string>> operatorHasLoop;
+SmallVector<std::pair<SmallVector<int>, std::string>> operatorPortIdx;
 struct ConvertOperator : OpConversionPattern<OperatorOp> {
 public:
     using OpConversionPattern<OperatorOp>::OpConversionPattern;
@@ -482,6 +479,7 @@ public:
         OperatorOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        auto opName = op.getSymName().str();
         auto funcTy = op.getFunctionType();
         auto numInputs = funcTy.getNumInputs();
         auto numOutputs = funcTy.getNumResults();
@@ -500,12 +498,16 @@ public:
                     loopOp.getLoc(),
                     "Not supported closing on output ports yet!");
             opsInBody = loopOp.getBody().getOps();
-            hasLoopOp = true;
-            for (auto inChan : loopOp.getInChans()) {
-                auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
-                loopChanIdx.push_back(idxChan);
+            if (!loopOp.getInChans().empty()) {
+                hasLoopOp = true;
+                for (auto inChan : loopOp.getInChans()) {
+                    auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
+                    loopChanIdx.push_back(idxChan);
+                }
             }
         }
+        operatorHasLoop.push_back(std::make_pair(hasLoopOp, opName));
+        operatorPortIdx.push_back(std::make_pair(loopChanIdx, opName));
 
         SmallVector<hw::PortInfo> ports;
         int in_num = 1;
@@ -1145,15 +1147,33 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             for (auto operand : outputs.getOperands())
                 oldOutputs.push_back(std::make_pair(i, operand));
         });
-        // unsigned numChannels = 0;
-        // op.walk([&](ChannelOp channel) { numChannels++; });
+        // Determine the monitored ports are from arguments
+        SmallVector<int> needClosePortIdx;
+        op.walk([&](InstantiateOp instanceOp) {
+            auto calleeName = instanceOp.getCallee().getRootReference().str();
+            auto inputChans = instanceOp.getInputs();
+            auto loopedOperator = getNewIndexOrArg(calleeName, operatorHasLoop);
+            if (loopedOperator.value()) {
+                auto indices =
+                    getNewIndexOrArg(calleeName, operatorPortIdx).value();
+                for (auto idx : indices) {
+                    auto loopedQueue =
+                        dyn_cast<ChannelOp>(inputChans[idx].getDefiningOp());
+                    auto isConnected = getNewIndexOrArg<Value, Value>(
+                        loopedQueue.getInChan(),
+                        newConnections);
+                    if (isConnected) {
+                        needClosePortIdx.push_back(isConnected.value()
+                                                       .cast<BlockArgument>()
+                                                       .getArgNumber());
+                    }
+                }
+            }
+        });
 
         auto funcTy = op.getFunctionType();
         auto numInputs = funcTy.getNumInputs();
         auto numOutputs = funcTy.getNumResults();
-        // assert(
-        //     (numChannels >= numInputs + numOutputs)
-        //     && "potentially not enough channels for input/output ports");
 
         SmallVector<hw::PortInfo> ports;
         int in_num = 1;
@@ -1187,14 +1207,6 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             in_ready.dir = hw::ModulePort::Direction::Output;
             in_ready.type = rewriter.getI1Type();
             ports.push_back(in_ready);
-            // Add done for input port
-            hw::PortInfo in_done;
-            name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
-                   + "_done";
-            in_done.name = rewriter.getStringAttr(name);
-            in_done.dir = hw::ModulePort::Direction::Output;
-            in_done.type = rewriter.getI1Type();
-            ports.push_back(in_done);
             // Add valid for input port
             hw::PortInfo in_valid;
             name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
@@ -1211,14 +1223,16 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             in_bits.dir = hw::ModulePort::Direction::Input;
             in_bits.type = rewriter.getIntegerType(elemTy.getWidth());
             ports.push_back(in_bits);
-            // Add close for input port
-            hw::PortInfo in_close;
-            name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
-                   + "_close";
-            in_close.name = rewriter.getStringAttr(name);
-            in_close.dir = hw::ModulePort::Direction::Input;
-            in_close.type = rewriter.getI1Type();
-            ports.push_back(in_close);
+            // Add close for input port when needed
+            if (llvm::find(needClosePortIdx, i) != needClosePortIdx.end()) {
+                hw::PortInfo in_close;
+                name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
+                       + "_close";
+                in_close.name = rewriter.getStringAttr(name);
+                in_close.dir = hw::ModulePort::Direction::Input;
+                in_close.type = rewriter.getI1Type();
+                ports.push_back(in_close);
+            }
             // Index increment
             in_num++;
         }
@@ -1236,14 +1250,6 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             out_ready.dir = hw::ModulePort::Direction::Input;
             out_ready.type = rewriter.getI1Type();
             ports.push_back(out_ready);
-            // Add close for output port
-            hw::PortInfo out_close;
-            name = ((numOutputs == 1) ? "out" : "out" + std::to_string(out_num))
-                   + "_close";
-            out_close.name = rewriter.getStringAttr(name);
-            out_close.dir = hw::ModulePort::Direction::Input;
-            out_close.type = rewriter.getI1Type();
-            ports.push_back(out_close);
             // Add valid for output port
             hw::PortInfo out_valid;
             name = ((numOutputs == 1) ? "out" : "out" + std::to_string(out_num))
@@ -1272,6 +1278,31 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             out_num++;
         }
 
+        // Compute the indices for later instantiation
+        SmallVector<std::pair<bool, int>> hwModulePortIdx;
+        int idxArgBias = 4;
+        for (size_t i = 0; i < numInputs; i++) {
+            if (llvm::find(needClosePortIdx, i) != needClosePortIdx.end()) {
+                hwModulePortIdx.push_back(std::make_pair(true, idxArgBias));
+                idxArgBias += 3;
+            } else {
+                hwModulePortIdx.push_back(
+                    std::make_pair(false, idxArgBias - 1));
+                idxArgBias += 2;
+            }
+        }
+        idxArgBias = hwModulePortIdx.back().second + 1;
+        for (size_t i = 0; i < numOutputs; i++) {
+            if (llvm::find(needClosePortIdx, i + numInputs)
+                != needClosePortIdx.end()) {
+                hwModulePortIdx.push_back(std::make_pair(true, idxArgBias + 1));
+                idxArgBias += 2;
+            } else {
+                hwModulePortIdx.push_back(std::make_pair(false, idxArgBias));
+                idxArgBias++;
+            }
+        }
+
         // Create new HWModule
         auto hwModule = rewriter.create<hw::HWModuleOp>(
             loc,
@@ -1283,6 +1314,19 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             false);
         auto moduleOp = hwModule.getParentOp<ModuleOp>();
         rewriter.setInsertionPointToStart(&hwModule.getBody().front());
+        // false signal for the queues are not gonna close
+        Value noClose;
+        for (size_t i = 0; i < numInputs; i++) {
+            if (llvm::find(needClosePortIdx, i) != needClosePortIdx.end()) {
+                continue;
+            } else {
+                noClose =
+                    rewriter
+                        .create<hw::ConstantOp>(loc, rewriter.getI1Type(), 0)
+                        .getResult();
+                break;
+            }
+        }
         // Create placeholders for the port that may connected later
         op.walk([&](InstantiateOp instances) {
             for (auto inport : instances.getInputs()) {
@@ -1360,12 +1404,22 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                         newModuleArg.value(),
                         oldArgsIndex);
                     auto idx_input = newArgIndex.value();
-                    inputs.push_back(
-                        hwModule.getBody().getArgument(3 * idx_input + 4));
-                    inputs.push_back(
-                        hwModule.getBody().getArgument(3 * idx_input + 2));
-                    inputs.push_back(
-                        hwModule.getBody().getArgument(3 * idx_input + 3));
+                    auto needClose = hwModulePortIdx[idx_input].first;
+                    auto newIdxInput = hwModulePortIdx[idx_input].second;
+                    if (needClose) {
+                        inputs.push_back(
+                            hwModule.getBody().getArgument(newIdxInput));
+                        inputs.push_back(
+                            hwModule.getBody().getArgument(newIdxInput - 2));
+                        inputs.push_back(
+                            hwModule.getBody().getArgument(newIdxInput - 1));
+                    } else {
+                        inputs.push_back(noClose);
+                        inputs.push_back(
+                            hwModule.getBody().getArgument(newIdxInput - 1));
+                        inputs.push_back(
+                            hwModule.getBody().getArgument(newIdxInput));
+                    }
                 } else { // If connected later
                     auto placeholders =
                         getNewIndexOrArg<SmallVector<Value>, Value>(
@@ -1380,7 +1434,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                     oldOutputs);
                 if (oldOutputArg) // If connected to output
                     inputs.push_back(hwModule.getBody().getArgument(
-                        3 * numInputs + 2 + oldOutputArg.value()));
+                        hwModulePortIdx.back().second + oldOutputArg.value()));
                 else { // If connected later
                     auto placeholder = getNewIndexOrArg<Value, Value>(
                         channelOp.getOutChan(),
@@ -1396,17 +1450,13 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                 auto in_valid = queueInstance.getResult(1);
                 auto in_bits = queueInstance.getResult(2);
                 auto in_done = queueInstance.getResult(3);
-                if (newModuleArg) {
-                    newOutputs.push_back(in_ready);
-                    newOutputs.push_back(in_done);
-                }
+                if (newModuleArg) newOutputs.push_back(in_ready);
                 SmallVector<Value, 3> instancePorts;
                 instancePorts.push_back(in_valid);
                 instancePorts.push_back(in_bits);
                 instancePorts.push_back(in_done);
                 instanceInputs.push_back(
                     std::make_pair(instancePorts, channelOp.getOutChan()));
-                // }
                 if (oldOutputArg) {
                     SmallVector<Value, 3> newBundle;
                     newBundle.push_back(in_valid);
@@ -1421,20 +1471,36 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                 SmallVector<Value> inputs;
                 inputs.push_back(hwModule.getBody().getArgument(0));
                 inputs.push_back(hwModule.getBody().getArgument(1));
-                for (auto input : instantiateOp.getInputs()) {
-                    auto queuePorts = getNewIndexOrArg(input, instanceInputs);
-                    inputs.append(queuePorts.value());
+                auto calleeName = instantiateOp.getCallee().getRootReference();
+                auto calleeStr = calleeName.str();
+                auto needClosePortIdx =
+                    getNewIndexOrArg(calleeStr, operatorPortIdx).value();
+                SmallVector<Value> instantiateOpInChans(
+                    instantiateOp.getInputs().begin(),
+                    instantiateOp.getInputs().end());
+                for (size_t i = 0; i < instantiateOpInChans.size(); i++) {
+                    auto queuePorts = getNewIndexOrArg(
+                        instantiateOpInChans[i],
+                        instanceInputs);
+                    if (llvm::find(needClosePortIdx, i)
+                        != needClosePortIdx.end()) {
+                        inputs.append(queuePorts.value());
+                    } else {
+                        inputs.push_back(queuePorts.value()[0]);
+                        inputs.push_back(queuePorts.value()[1]);
+                    }
                 }
+                // for (auto input : instantiateOp.getInputs()) {
+                //     auto queuePorts = getNewIndexOrArg(input,
+                //     instanceInputs); inputs.append(queuePorts.value());
+                // }
                 for (auto output : instantiateOp.getOutputs()) {
                     auto queuePort = getNewIndexOrArg(output, instanceOutputs);
                     inputs.push_back(queuePort.value());
                 }
-                auto calleeName =
-                    instantiateOp.getCalleeAttr().getRootReference();
                 auto operatorToCall = getNewIndexOrArg<Operation*, StringAttr>(
                     calleeName,
                     newOperators);
-                auto calleeStr = calleeName.str();
                 auto nameSuffix = getNameOfInstance(calleeStr);
                 auto instanceName =
                     nameSuffix == 0 ? calleeStr
