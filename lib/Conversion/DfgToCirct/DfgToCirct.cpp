@@ -43,12 +43,19 @@ fsm::MachineOp insertController(
     int numPushChan,
     FunctionType funcTy,
     SmallVector<Operation*> ops,
-    bool hasMultiOutputs)
+    bool hasMultiOutputs,
+    bool hasLoopOp = false,
+    SmallVector<std::pair<bool, int>> loopChanArgIdx = {})
 {
     auto context = module.getContext();
     OpBuilder builder(context);
     builder.setInsertionPointToStart(module.getBody());
     auto loc = builder.getUnknownLoc();
+
+    // Check if LoopOp doesn't monitor any ports
+    if (hasLoopOp) {
+        if (loopChanArgIdx.empty()) hasLoopOp = false;
+    }
 
     // Create a new fsm.machine
     auto machine = builder.create<fsm::MachineOp>(loc, name, "INIT", funcTy);
@@ -109,7 +116,7 @@ fsm::MachineOp insertController(
     }
     SmallVector<Value> calcDataValids;
     if (hasMultiOutputs) {
-        auto idxBias = 2 * numPullChan + numPushChan;
+        auto idxBias = numPullChan + 2 * numPushChan;
         auto numOutputs = (funcTy.getNumResults() - idxBias) / 2;
         for (size_t i = 0; i < numOutputs; i++) {
             auto validVarOp = builder.create<fsm::VariableOp>(
@@ -140,7 +147,7 @@ fsm::MachineOp insertController(
             outputAllZero.push_back(zero.getResult());
         }
     }
-    auto idxBias = numPullChan + 2 * numPushChan;
+    auto idxBias = numPullChan + 2 * numPushChan + 1;
     // Init output vector
     std::vector<Value> outputInit = outputAllZero;
     outputInit[idxBias] = c_true.getResult();
@@ -188,13 +195,16 @@ fsm::MachineOp insertController(
         auto argIndex =
             getNewIndexOrArg<int, Value>(pullOp.getChan(), oldArgsIndex)
                 .value();
+        auto isChanLooped = loopChanArgIdx[argIndex].first;
+        auto loopedArgIdx = loopChanArgIdx[argIndex].second;
+        auto validIdx = isChanLooped ? loopedArgIdx - 2 : loopedArgIdx - 1;
 
         auto stateRead =
             builder.create<fsm::StateOp>(loc, "READ" + std::to_string(i));
         builder.setInsertionPointToEnd(&stateRead.getOutput().back());
         stateRead.getOutput().front().front().erase();
         std::vector<Value> newOutputs = outputTempVec;
-        newOutputs[argIndex] = machine.getArgument(2 * argIndex);
+        newOutputs[argIndex] = machine.getArgument(validIdx);
         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
         builder.setInsertionPointToEnd(&stateRead.getTransitions().back());
         auto transCalc = builder.create<fsm::TransitionOp>(
@@ -203,7 +213,7 @@ fsm::MachineOp insertController(
                                        : "READ" + std::to_string(i + 1));
         builder.setInsertionPointToEnd(transCalc.ensureGuard(builder));
         transCalc.getGuard().front().front().erase();
-        builder.create<fsm::ReturnOp>(loc, machine.getArgument(2 * argIndex));
+        builder.create<fsm::ReturnOp>(loc, machine.getArgument(validIdx));
         builder.setInsertionPointToEnd(transCalc.ensureAction(builder));
         builder.create<fsm::UpdateOp>(
             loc,
@@ -212,7 +222,16 @@ fsm::MachineOp insertController(
         builder.create<fsm::UpdateOp>(
             loc,
             pullVars[i],
-            machine.getArgument(2 * argIndex + 1));
+            machine.getArgument(validIdx + 1));
+        if (isChanLooped) {
+            builder.setInsertionPointToEnd(&stateRead.getTransitions().back());
+            auto transClose = builder.create<fsm::TransitionOp>(loc, "CLOSE");
+            builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
+            transClose.getGuard().front().front().erase();
+            builder.create<fsm::ReturnOp>(
+                loc,
+                machine.getArgument(loopedArgIdx));
+        }
         builder.setInsertionPointToEnd(&machine.getBody().back());
     }
 
@@ -225,7 +244,7 @@ fsm::MachineOp insertController(
     auto transWrite = builder.create<fsm::TransitionOp>(loc, "WRITE0");
     builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
     transWrite.getGuard().front().front().erase();
-    idxBias = 2 * numPullChan + numPushChan;
+    idxBias = loopChanArgIdx.back().second + 1;
     auto numCalcDataValid = calcDataValids.size();
     if (hasMultiOutputs) {
         Value calcDone;
@@ -278,14 +297,17 @@ fsm::MachineOp insertController(
         auto argIndex =
             getNewIndexOrArg<int, Value>(pushOp.getChan(), oldArgsIndex)
                 .value();
+        auto isChanLooped = loopChanArgIdx[argIndex].first;
+        auto loopedArgIdx = loopChanArgIdx[argIndex].second;
+        auto readyIdx = isChanLooped ? loopedArgIdx - 1 : loopedArgIdx;
+
         auto stateWrite = builder.create<fsm::StateOp>(
             loc,
             "WRITE" + std::to_string(idxStateWrite));
         builder.setInsertionPointToEnd(&stateWrite.getOutput().back());
         stateWrite.getOutput().front().front().erase();
         std::vector<Value> newOutputs = outputTempVec;
-        newOutputs[2 * argIndex - numPullChan] =
-            machine.getArgument(argIndex + numPullChan);
+        newOutputs[2 * argIndex - numPullChan] = machine.getArgument(readyIdx);
         newOutputs[2 * argIndex - numPullChan + 1] =
             getNewIndexOrArg<Value, Value>(pushOp.getInp(), newArguments)
                 .value();
@@ -298,11 +320,72 @@ fsm::MachineOp insertController(
                 : "WRITE" + std::to_string(idxStateWrite + 1));
         builder.setInsertionPointToEnd(transInit.ensureGuard(builder));
         transInit.getGuard().front().front().erase();
-        builder.create<fsm::ReturnOp>(
-            loc,
-            machine.getArgument(argIndex + numPullChan));
+        if (hasLoopOp) {
+            Value closeQueue;
+            for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                auto chanIdx = loopChanArgIdx[i];
+                auto hasClose = chanIdx.first;
+                auto closeSignalIdx = chanIdx.second;
+                if (!hasClose) continue;
+                auto closeSignal = machine.getArgument(closeSignalIdx);
+                if (i == 0)
+                    closeQueue = closeSignal;
+                else {
+                    auto closeOrResult = builder.create<comb::OrOp>(
+                        loc,
+                        closeQueue,
+                        closeSignal);
+                    closeQueue = closeOrResult.getResult();
+                }
+            }
+            auto notCloseSignal = builder.create<comb::XorOp>(
+                loc,
+                closeQueue,
+                c_true.getResult());
+            auto canWriteOut = builder.create<comb::AndOp>(
+                loc,
+                machine.getArgument(readyIdx),
+                notCloseSignal.getResult());
+            builder.create<fsm::ReturnOp>(loc, canWriteOut.getResult());
+        } else {
+            builder.create<fsm::ReturnOp>(loc, machine.getArgument(readyIdx));
+        }
+        if (hasLoopOp) {
+            builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
+            auto transClose = builder.create<fsm::TransitionOp>(loc, "CLOSE");
+            builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
+            transClose.getGuard().front().front().erase();
+            Value closeQueue;
+            for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                auto chanIdx = loopChanArgIdx[i];
+                auto hasClose = chanIdx.first;
+                auto closeSignalIdx = chanIdx.second;
+                if (!hasClose) continue;
+                auto closeSignal = machine.getArgument(closeSignalIdx);
+                if (i == 0)
+                    closeQueue = closeSignal;
+                else {
+                    auto closeOrResult = builder.create<comb::OrOp>(
+                        loc,
+                        closeQueue,
+                        closeSignal);
+                    closeQueue = closeOrResult.getResult();
+                }
+            }
+            builder.create<fsm::ReturnOp>(loc, closeQueue);
+        }
         builder.setInsertionPointToEnd(&machine.getBody().back());
         idxStateWrite++;
+    }
+
+    if (hasLoopOp) {
+        auto stateClose = builder.create<fsm::StateOp>(loc, "CLOSE");
+        builder.setInsertionPointToEnd(&stateClose.getOutput().back());
+        stateClose.getOutput().front().front().erase();
+        std::vector<Value> newOutputs = outputTempVec;
+        newOutputs[numPullChan + 2 * numPushChan] = c_true.getResult();
+        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
+        builder.setInsertionPointToEnd(&machine.getBody().back());
     }
 
     // int idxCalc = 0;
@@ -407,6 +490,23 @@ public:
         auto types = op.getBody().getArgumentTypes();
         size_t size = types.size();
 
+        // If there is a LoopOp, get ops inside and log the index of channel
+        auto opsInBody = op.getBody().getOps();
+        bool hasLoopOp = false;
+        SmallVector<int> loopChanIdx;
+        if (auto loopOp = dyn_cast<LoopOp>(*opsInBody.begin())) {
+            if (!loopOp.getOutChans().empty())
+                return rewriter.notifyMatchFailure(
+                    loopOp.getLoc(),
+                    "Not supported closing on output ports yet!");
+            opsInBody = loopOp.getBody().getOps();
+            hasLoopOp = true;
+            for (auto inChan : loopOp.getInChans()) {
+                auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
+                loopChanIdx.push_back(idxChan);
+            }
+        }
+
         SmallVector<hw::PortInfo> ports;
         int in_num = 1;
         int out_num = 1;
@@ -416,7 +516,6 @@ public:
         clock.name = rewriter.getStringAttr("clock");
         clock.dir = hw::ModulePort::Direction::Input;
         clock.type = rewriter.getI1Type();
-        clock.argNum = 0;
         ports.push_back(clock);
 
         // Add reset port.
@@ -424,12 +523,17 @@ public:
         reset.name = rewriter.getStringAttr("reset");
         reset.dir = hw::ModulePort::Direction::Input;
         reset.type = rewriter.getI1Type();
-        reset.argNum = 1;
         ports.push_back(reset);
 
         for (size_t i = 0; i < size; i++) {
             const auto type = types[i];
             std::string name;
+
+            bool isMonitored = false;
+            if (hasLoopOp) {
+                if (llvm::find(loopChanIdx, i) != loopChanIdx.end())
+                    isMonitored = true;
+            }
 
             if (const auto inTy = dyn_cast<OutputType>(type)) {
                 auto elemTy = dyn_cast<IntegerType>(inTy.getElementType());
@@ -441,7 +545,6 @@ public:
                 in_ready.name = rewriter.getStringAttr(name);
                 in_ready.dir = hw::ModulePort::Direction::Output;
                 in_ready.type = rewriter.getI1Type();
-                in_ready.argNum = in_num + 1;
                 ports.push_back(in_ready);
                 // Add valid for input port
                 hw::PortInfo in_valid;
@@ -450,7 +553,6 @@ public:
                 in_valid.name = rewriter.getStringAttr(name);
                 in_valid.dir = hw::ModulePort::Direction::Input;
                 in_valid.type = rewriter.getI1Type();
-                in_valid.argNum = in_num + 1;
                 ports.push_back(in_valid);
                 // Add bits for input port
                 hw::PortInfo in_bits;
@@ -459,8 +561,18 @@ public:
                 in_bits.name = rewriter.getStringAttr(name);
                 in_bits.dir = hw::ModulePort::Direction::Input;
                 in_bits.type = rewriter.getIntegerType(elemTy.getWidth());
-                in_bits.argNum = in_num + 1;
                 ports.push_back(in_bits);
+                // Add close for input port if it's monitored
+                if (isMonitored) {
+                    hw::PortInfo in_close;
+                    name = ((numInputs == 1) ? "in"
+                                             : "in" + std::to_string(in_num))
+                           + "_close";
+                    in_close.name = rewriter.getStringAttr(name);
+                    in_close.dir = hw::ModulePort::Direction::Input;
+                    in_close.type = rewriter.getI1Type();
+                    ports.push_back(in_close);
+                }
                 // Index increment
                 in_num++;
             } else if (const auto outTy = dyn_cast<InputType>(type)) {
@@ -474,7 +586,6 @@ public:
                 out_ready.name = rewriter.getStringAttr(name);
                 out_ready.dir = hw::ModulePort::Direction::Input;
                 out_ready.type = rewriter.getI1Type();
-                out_ready.argNum = out_num;
                 ports.push_back(out_ready);
                 // Add valid for output port
                 hw::PortInfo out_valid;
@@ -484,7 +595,6 @@ public:
                 out_valid.name = rewriter.getStringAttr(name);
                 out_valid.dir = hw::ModulePort::Direction::Output;
                 out_valid.type = rewriter.getI1Type();
-                out_valid.argNum = out_num;
                 ports.push_back(out_valid);
                 // Add bits for output port
                 hw::PortInfo out_bits;
@@ -494,12 +604,18 @@ public:
                 out_bits.name = rewriter.getStringAttr(name);
                 out_bits.dir = hw::ModulePort::Direction::Output;
                 out_bits.type = rewriter.getIntegerType(elemTy.getWidth());
-                out_bits.argNum = out_num;
                 ports.push_back(out_bits);
-                // Index increment
-                out_num++;
             }
         }
+        // Add done for output port
+        hw::PortInfo out_done;
+        std::string name = "out_done";
+        out_done.name = rewriter.getStringAttr(name);
+        out_done.dir = hw::ModulePort::Direction::Output;
+        out_done.type = rewriter.getI1Type();
+        ports.push_back(out_done);
+        // Index increment
+        out_num++;
 
         // Create new HWModule
         auto hwModule = rewriter.create<hw::HWModuleOp>(
@@ -526,7 +642,7 @@ public:
         std::string hwInstanceName;
         SmallVector<Type> hwInstanceInTypes;
         SmallVector<Type> hwInstanceOutTypes;
-        for (auto &opi : op.getBody().getOps()) {
+        for (auto &opi : opsInBody) {
             if (auto hwInstanceOp = dyn_cast<HWInstanceOp>(opi)) {
                 hwInstanceName =
                     hwInstanceOp.getModuleAttr().getRootReference().str();
@@ -543,10 +659,10 @@ public:
         // The machine inputs don't contain clock and reset
         rewriter.setInsertionPointToStart(&hwModule.getBody().front());
         auto loc = rewriter.getUnknownLoc();
+        auto i1Ty = rewriter.getI1Type();
         SmallVector<Value> placeholderInstInputs;
         ArrayRef<Type> fsmInTypes(hwInTypes.data() + 2, hwInTypes.size() - 2);
         SmallVector<Type> fsmInTypesVec(fsmInTypes.begin(), fsmInTypes.end());
-        auto i1Ty = rewriter.getI1Type();
         for (auto type : hwInstanceOutTypes) {
             fsmInTypesVec.push_back(i1Ty);
             fsmInTypesVec.push_back(type);
@@ -568,6 +684,28 @@ public:
         auto placeholderCalcReset =
             rewriter.create<hw::ConstantOp>(loc, i1Ty, 0);
 
+        // Update LoopChanIdx to indices in fsm machine
+        SmallVector<std::pair<bool, int>> loopChanArgIdx;
+        int idxArgBias = 2;
+        for (size_t i = 0; i < numInputs; i++) {
+            if (llvm::find(loopChanIdx, i) != loopChanIdx.end()) {
+                loopChanArgIdx.push_back(std::make_pair(true, idxArgBias));
+                idxArgBias += 3;
+            } else {
+                loopChanArgIdx.push_back(std::make_pair(false, idxArgBias - 1));
+                idxArgBias += 2;
+            }
+        }
+        idxArgBias = loopChanArgIdx.back().second + 1;
+        for (size_t i = 0; i < numOutputs; i++) {
+            if (llvm::find(loopChanIdx, i + numInputs) != loopChanIdx.end()) {
+                loopChanArgIdx.push_back(std::make_pair(true, idxArgBias + 1));
+                idxArgBias += 2;
+            } else {
+                loopChanArgIdx.push_back(std::make_pair(false, idxArgBias));
+                idxArgBias++;
+            }
+        }
         // Insert fsm.machine at top
         auto newMachine = insertController(
             module,
@@ -579,7 +717,9 @@ public:
                 fsmInTypesVec,
                 fsmOutTypesVec),
             ops,
-            hwInstanceOutTypes.size() > 1);
+            hwInstanceOutTypes.size() > 1,
+            hasLoopOp,
+            loopChanArgIdx);
 
         // Create a hw.instance op and take the results to fsm
         auto c_true =
@@ -622,7 +762,7 @@ public:
             hwModule.getBody().getArgument(0),
             hwModule.getBody().getArgument(1));
 
-        size_t resultIdxBias = numInputs + numOutputs * 2;
+        size_t resultIdxBias = numInputs + numOutputs * 2 + 1;
         SmallVector<Value> outputVec;
         for (size_t i = 0; i < resultIdxBias; i++)
             outputVec.push_back(outputs.getResult(i));
@@ -665,57 +805,61 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
     clock.name = builder.getStringAttr("clock");
     clock.dir = hw::ModulePort::Direction::Input;
     clock.type = i1Ty;
-    // clock.argNum = 0;
     ports.push_back(clock);
     // Add reset port.
     hw::PortInfo reset;
     reset.name = builder.getStringAttr("reset");
     reset.dir = hw::ModulePort::Direction::Input;
     reset.type = i1Ty;
-    // reset.argNum = 1;
     ports.push_back(reset);
+    // Add close signal
+    hw::PortInfo close;
+    close.name = builder.getStringAttr("close");
+    close.dir = hw::ModulePort::Direction::Input;
+    close.type = i1Ty;
+    ports.push_back(close);
     // Add io_enq_valid
     hw::PortInfo io_enq_valid;
     io_enq_valid.name = builder.getStringAttr("io_enq_valid");
     io_enq_valid.dir = hw::ModulePort::Direction::Input;
     io_enq_valid.type = i1Ty;
-    // io_enq_valid.argNum = 2;
     ports.push_back(io_enq_valid);
     // Add io_enq_bits
     hw::PortInfo io_enq_bits;
     io_enq_bits.name = builder.getStringAttr("io_enq_bits");
     io_enq_bits.dir = hw::ModulePort::Direction::Input;
     io_enq_bits.type = builder.getIntegerType(portBit);
-    // io_enq_bits.argNum = 3;
     ports.push_back(io_enq_bits);
     // Add io_deq_ready
     hw::PortInfo io_deq_ready;
     io_deq_ready.name = builder.getStringAttr("io_deq_ready");
     io_deq_ready.dir = hw::ModulePort::Direction::Input;
     io_deq_ready.type = i1Ty;
-    // io_deq_ready.argNum = 4;
     ports.push_back(io_deq_ready);
     // Add io_enq_ready
     hw::PortInfo io_enq_ready;
     io_enq_ready.name = builder.getStringAttr("io_enq_ready");
     io_enq_ready.dir = hw::ModulePort::Direction::Output;
     io_enq_ready.type = i1Ty;
-    // io_enq_ready.argNum = 5;
     ports.push_back(io_enq_ready);
     // Add io_deq_valid
     hw::PortInfo io_deq_valid;
     io_deq_valid.name = builder.getStringAttr("io_deq_valid");
     io_deq_valid.dir = hw::ModulePort::Direction::Output;
     io_deq_valid.type = i1Ty;
-    // io_deq_valid.argNum = 5;
     ports.push_back(io_deq_valid);
     // Add io_deq_bits
     hw::PortInfo io_deq_bits;
     io_deq_bits.name = builder.getStringAttr("io_deq_bits");
     io_deq_bits.dir = hw::ModulePort::Direction::Output;
     io_deq_bits.type = builder.getIntegerType(portBit);
-    // io_deq_bits.argNum = 3;
     ports.push_back(io_deq_bits);
+    // Add done signal
+    hw::PortInfo done;
+    done.name = builder.getStringAttr("done");
+    done.dir = hw::ModulePort::Direction::Output;
+    done.type = i1Ty;
+    ports.push_back(done);
     // Create new HWModule
     auto hwModule = builder.create<hw::HWModuleOp>(
         loc,
@@ -727,9 +871,10 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
         false);
     auto clk = hwModule.getBody().getArgument(0);
     auto rst = hwModule.getBody().getArgument(1);
-    auto in_valid = hwModule.getBody().getArgument(2);
-    auto in_bits = hwModule.getBody().getArgument(3);
-    auto out_ready = hwModule.getBody().getArgument(4);
+    auto close_signal = hwModule.getBody().getArgument(2);
+    auto in_valid = hwModule.getBody().getArgument(3);
+    auto in_bits = hwModule.getBody().getArgument(4);
+    auto out_ready = hwModule.getBody().getArgument(5);
     builder.setInsertionPointToStart(&hwModule.getBodyRegion().front());
 
     // Constants
@@ -745,6 +890,9 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
         c_sizeMax = builder.create<hw::ConstantOp>(loc, ptrTy, size - 1);
 
     // RAM
+    auto want_close = builder.create<sv::RegOp>(loc, i1Ty);
+    auto want_close_value =
+        builder.create<sv::ReadInOutOp>(loc, want_close.getResult());
     auto ram = builder.create<sv::RegOp>(
         loc,
         hw::UnpackedArrayType::get(builder.getIntegerType(portBit), size));
@@ -815,6 +963,18 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
     auto not_full =
         builder.create<comb::XorOp>(loc, full.getResult(), c_true.getResult());
     placeholderNotFull.replaceAllUsesWith(not_full.getResult());
+    auto not_want_close = builder.create<comb::XorOp>(
+        loc,
+        want_close_value.getResult(),
+        c_true.getResult());
+    auto io_enq_ready_value = builder.create<comb::AndOp>(
+        loc,
+        not_full.getResult(),
+        not_want_close.getResult());
+    auto isDone = builder.create<comb::AndOp>(
+        loc,
+        want_close_value.getResult(),
+        empty.getResult());
 
     // Clocked logic
     builder.create<sv::AlwaysOp>(loc, sv::EventControl::AtPosEdge, clk, [&] {
@@ -833,6 +993,10 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
                 builder.create<sv::PAssignOp>(
                     loc,
                     maybe_full.getResult(),
+                    c_false.getResult());
+                builder.create<sv::PAssignOp>(
+                    loc,
+                    want_close.getResult(),
                     c_false.getResult());
             },
             [&] {
@@ -908,6 +1072,12 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
                         maybe_full.getResult(),
                         do_enq.getResult());
                 });
+                builder.create<sv::IfOp>(loc, close_signal, [&] {
+                    builder.create<sv::PAssignOp>(
+                        loc,
+                        want_close.getResult(),
+                        c_true.getResult());
+                });
             });
     });
 
@@ -918,9 +1088,10 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
 
     // Output
     SmallVector<Value> outputs;
-    outputs.push_back(not_full.getResult());
+    outputs.push_back(io_enq_ready_value.getResult());
     outputs.push_back(not_empty.getResult());
     outputs.push_back(ram_read_data.getResult());
+    outputs.push_back(isDone.getResult());
     builder.create<hw::OutputOp>(loc, outputs);
     queueList.emplace(name, hwModule);
     return hwModule;
@@ -993,7 +1164,6 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
         clock.name = rewriter.getStringAttr("clock");
         clock.dir = hw::ModulePort::Direction::Input;
         clock.type = rewriter.getI1Type();
-        clock.argNum = 0;
         ports.push_back(clock);
 
         // Add reset port.
@@ -1001,7 +1171,6 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
         reset.name = rewriter.getStringAttr("reset");
         reset.dir = hw::ModulePort::Direction::Input;
         reset.type = rewriter.getI1Type();
-        reset.argNum = 1;
         ports.push_back(reset);
 
         for (size_t i = 0; i < numInputs; i++) {
@@ -1017,8 +1186,15 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             in_ready.name = rewriter.getStringAttr(name);
             in_ready.dir = hw::ModulePort::Direction::Output;
             in_ready.type = rewriter.getI1Type();
-            in_ready.argNum = in_num + 1;
             ports.push_back(in_ready);
+            // Add done for input port
+            hw::PortInfo in_done;
+            name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
+                   + "_done";
+            in_done.name = rewriter.getStringAttr(name);
+            in_done.dir = hw::ModulePort::Direction::Output;
+            in_done.type = rewriter.getI1Type();
+            ports.push_back(in_done);
             // Add valid for input port
             hw::PortInfo in_valid;
             name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
@@ -1026,7 +1202,6 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             in_valid.name = rewriter.getStringAttr(name);
             in_valid.dir = hw::ModulePort::Direction::Input;
             in_valid.type = rewriter.getI1Type();
-            in_valid.argNum = in_num + 1;
             ports.push_back(in_valid);
             // Add bits for input port
             hw::PortInfo in_bits;
@@ -1035,8 +1210,15 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             in_bits.name = rewriter.getStringAttr(name);
             in_bits.dir = hw::ModulePort::Direction::Input;
             in_bits.type = rewriter.getIntegerType(elemTy.getWidth());
-            in_bits.argNum = in_num + 1;
             ports.push_back(in_bits);
+            // Add close for input port
+            hw::PortInfo in_close;
+            name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
+                   + "_close";
+            in_close.name = rewriter.getStringAttr(name);
+            in_close.dir = hw::ModulePort::Direction::Input;
+            in_close.type = rewriter.getI1Type();
+            ports.push_back(in_close);
             // Index increment
             in_num++;
         }
@@ -1053,8 +1235,15 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             out_ready.name = rewriter.getStringAttr(name);
             out_ready.dir = hw::ModulePort::Direction::Input;
             out_ready.type = rewriter.getI1Type();
-            out_ready.argNum = out_num;
             ports.push_back(out_ready);
+            // Add close for output port
+            hw::PortInfo out_close;
+            name = ((numOutputs == 1) ? "out" : "out" + std::to_string(out_num))
+                   + "_close";
+            out_close.name = rewriter.getStringAttr(name);
+            out_close.dir = hw::ModulePort::Direction::Input;
+            out_close.type = rewriter.getI1Type();
+            ports.push_back(out_close);
             // Add valid for output port
             hw::PortInfo out_valid;
             name = ((numOutputs == 1) ? "out" : "out" + std::to_string(out_num))
@@ -1062,7 +1251,6 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             out_valid.name = rewriter.getStringAttr(name);
             out_valid.dir = hw::ModulePort::Direction::Output;
             out_valid.type = rewriter.getI1Type();
-            out_valid.argNum = out_num;
             ports.push_back(out_valid);
             // Add bits for output port
             hw::PortInfo out_bits;
@@ -1071,8 +1259,15 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             out_bits.name = rewriter.getStringAttr(name);
             out_bits.dir = hw::ModulePort::Direction::Output;
             out_bits.type = rewriter.getIntegerType(elemTy.getWidth());
-            out_bits.argNum = out_num;
             ports.push_back(out_bits);
+            // Add done for output port
+            hw::PortInfo out_done;
+            name = ((numOutputs == 1) ? "out" : "out" + std::to_string(out_num))
+                   + "_done";
+            out_done.name = rewriter.getStringAttr(name);
+            out_done.dir = hw::ModulePort::Direction::Output;
+            out_done.type = rewriter.getI1Type();
+            ports.push_back(out_done);
             // Index increment
             out_num++;
         }
@@ -1112,9 +1307,14 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                             .getElementType()
                             .getIntOrFloatBitWidth()),
                     0);
+                auto placeholderClose = rewriter.create<hw::ConstantOp>(
+                    loc,
+                    rewriter.getI1Type(),
+                    0);
                 SmallVector<Value> placeholders;
                 placeholders.push_back(placeholderValid.getResult());
                 placeholders.push_back(placeholderBits.getResult());
+                placeholders.push_back(placeholderClose.getResult());
                 placeholderOutputs.push_back(
                     std::make_pair(placeholders, outport));
             }
@@ -1161,14 +1361,17 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                         oldArgsIndex);
                     auto idx_input = newArgIndex.value();
                     inputs.push_back(
-                        hwModule.getBody().getArgument(2 * idx_input + 2));
+                        hwModule.getBody().getArgument(3 * idx_input + 4));
                     inputs.push_back(
-                        hwModule.getBody().getArgument(2 * idx_input + 3));
+                        hwModule.getBody().getArgument(3 * idx_input + 2));
+                    inputs.push_back(
+                        hwModule.getBody().getArgument(3 * idx_input + 3));
                 } else { // If connected later
                     auto placeholders =
                         getNewIndexOrArg<SmallVector<Value>, Value>(
                             channelOp.getInChan(),
                             placeholderOutputs);
+                    inputs.push_back(placeholders.value()[2]);
                     inputs.push_back(placeholders.value()[0]);
                     inputs.push_back(placeholders.value()[1]);
                 }
@@ -1177,7 +1380,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                     oldOutputs);
                 if (oldOutputArg) // If connected to output
                     inputs.push_back(hwModule.getBody().getArgument(
-                        2 * numInputs + 2 + oldOutputArg.value()));
+                        3 * numInputs + 2 + oldOutputArg.value()));
                 else { // If connected later
                     auto placeholder = getNewIndexOrArg<Value, Value>(
                         channelOp.getOutChan(),
@@ -1192,24 +1395,29 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                 auto in_ready = queueInstance.getResult(0);
                 auto in_valid = queueInstance.getResult(1);
                 auto in_bits = queueInstance.getResult(2);
-                if (newModuleArg) newOutputs.push_back(in_ready);
-                SmallVector<Value, 2> instancePorts;
+                auto in_done = queueInstance.getResult(3);
+                if (newModuleArg) {
+                    newOutputs.push_back(in_ready);
+                    newOutputs.push_back(in_done);
+                }
+                SmallVector<Value, 3> instancePorts;
                 instancePorts.push_back(in_valid);
                 instancePorts.push_back(in_bits);
+                instancePorts.push_back(in_done);
                 instanceInputs.push_back(
                     std::make_pair(instancePorts, channelOp.getOutChan()));
                 // }
                 if (oldOutputArg) {
-                    SmallVector<Value, 2> newBundle;
+                    SmallVector<Value, 3> newBundle;
                     newBundle.push_back(in_valid);
                     newBundle.push_back(in_bits);
+                    newBundle.push_back(in_done);
                     newOutputBundles.push_back(
                         std::make_pair(newBundle, channelOp.getOutChan()));
                 }
                 instanceOutputs.push_back(
                     std::make_pair(in_ready, channelOp.getInChan()));
             } else if (auto instantiateOp = dyn_cast<InstantiateOp>(opInside)) {
-                // TODO: lower here
                 SmallVector<Value> inputs;
                 inputs.push_back(hwModule.getBody().getArgument(0));
                 inputs.push_back(hwModule.getBody().getArgument(1));
@@ -1250,6 +1458,8 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                     placeholders.value()[0].replaceAllUsesWith(
                         instanceOp.getResult(i + j++));
                     placeholders.value()[1].replaceAllUsesWith(
+                        instanceOp.getResult(i + j++));
+                    placeholders.value()[2].replaceAllUsesWith(
                         instanceOp.getResult(i + j++));
                 }
             } else if (auto connectOp = dyn_cast<HWConnectOp>(opInside)) {
