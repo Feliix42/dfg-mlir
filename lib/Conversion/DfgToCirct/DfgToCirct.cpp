@@ -111,7 +111,7 @@ fsm::MachineOp insertController(
     }
     SmallVector<Value> calcDataValids;
     if (hasMultiOutputs) {
-        auto idxBias = numPullChan + 2 * numPushChan;
+        auto idxBias = numPullChan + 2 * numPushChan + (hasLoopOp ? 1 : 0);
         auto numOutputs = (funcTy.getNumResults() - idxBias) / 2;
         for (size_t i = 0; i < numOutputs; i++) {
             auto validVarOp = builder.create<fsm::VariableOp>(
@@ -1526,7 +1526,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                     placeholders.value()[1].replaceAllUsesWith(
                         instanceOp.getResult(i + j++));
                     placeholders.value()[2].replaceAllUsesWith(
-                        instanceOp.getResult(i + j++));
+                        instanceOp.getResults().back());
                 }
             } else if (auto connectOp = dyn_cast<HWConnectOp>(opInside)) {
                 continue;
