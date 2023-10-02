@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
+#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
+
 #include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
@@ -14,7 +16,6 @@
 #include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
-#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -315,7 +316,7 @@ fsm::MachineOp insertController(
                 : "WRITE" + std::to_string(idxStateWrite + 1));
         builder.setInsertionPointToEnd(transInit.ensureGuard(builder));
         transInit.getGuard().front().front().erase();
-        if (hasLoopOp) {
+        if (hasLoopOp && i == ops.size() - 1) {
             Value closeQueue;
             for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
                 auto chanIdx = loopChanArgIdx[i];
@@ -345,7 +346,7 @@ fsm::MachineOp insertController(
         } else {
             builder.create<fsm::ReturnOp>(loc, machine.getArgument(readyIdx));
         }
-        if (hasLoopOp) {
+        if (hasLoopOp && i == ops.size() - 1) {
             builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
             auto transClose = builder.create<fsm::TransitionOp>(loc, "CLOSE");
             builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
