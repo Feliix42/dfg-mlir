@@ -54,4 +54,16 @@ def ConvertStdToCirct : Pass<"convert-std-to-circt"> {
     ];
 }
 
+def ConvertDfgToFunc : Pass<"convert-dfg-to-func"> {
+    let summary = "Convert DFG dialect nodes to Func";
+
+    let constructor = "mlir::createConvertDfgToFuncPass()";
+
+    let dependentDialects = [
+        "func::FuncDialect",
+
+        "dfg::DfgDialect"
+    ];
+}
+
 #endif // DFG_MLIR_CONVERSION_PASSES
