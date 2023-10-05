@@ -55,7 +55,7 @@ struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
 
             // add return op at the bottom of the body
             rewriter.setInsertionPointToEnd(&genFuncOp.getBody().back());
-            auto returnOp = rewriter.create<func::ReturnOp>(
+            rewriter.create<func::ReturnOp>(
                 genFuncOp.getBody().back().back().getLoc(),
                 ValueRange());
         }
@@ -77,6 +77,9 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
         InstantiateOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        // don't lower offloaded functions
+        if (op.getOffloaded()) return failure();
+
         // TODO(feiix42): Match for offloaded instantiate and DON'T lower
         rewriter.replaceOpWithNewOp<func::CallOp>(
             op,
@@ -96,8 +99,10 @@ void ConvertDfgToFuncPass::runOnOperation()
     RewritePatternSet patterns(&getContext());
 
     target.addLegalDialect<BuiltinDialect, func::FuncDialect>();
-    target.addLegalDialect<dfg::DfgDialect>();
-    target.addIllegalOp<dfg::InstantiateOp, dfg::OperatorOp>();
+    target.addLegalDialect<DfgDialect>();
+    target.addIllegalOp<OperatorOp>();
+    target.addDynamicallyLegalOp<InstantiateOp>(
+        [](InstantiateOp op) { return op.getOffloaded(); });
 
     patterns.add<OperatorOpLowering, InstantiateOpLowering>(&getContext());
 
