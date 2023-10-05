@@ -12,7 +12,7 @@ namespace mlir {
 
 //===- Generated includes -------------------------------------------------===//
 
-#define GEN_PASS_DECL_CONVERTDFGTOCIRCT
+#define GEN_PASS_DECL_CONVERTDFGTOFUNC
 #include "dfg-mlir/Conversion/Passes.h.inc"
 
 //===----------------------------------------------------------------------===//
