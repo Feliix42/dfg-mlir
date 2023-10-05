@@ -33,15 +33,19 @@ struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
         OperatorOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        auto loc = op.getLoc();
-        // auto context = rewriter.getContext();
-        auto operatorName = op.getSymName();
-        auto funcTy = op.getFunctionType();
-        // auto ops = op.getOps();
-        // auto moduleOp = op->getParentOfType<ModuleOp>();
+        Location loc = op.getLoc();
+        MLIRContext* context = rewriter.getContext();
+        StringRef operatorName = op.getSymName();
+        FunctionType funcTy = op.getFunctionType();
+        auto old_inputs = funcTy.getInputs();
+        auto old_outputs = funcTy.getResults();
+
+        std::vector<Type> inputs = old_inputs.vec();
+        inputs.insert(inputs.end(), old_outputs.begin(), old_outputs.end());
+        FunctionType newFuncTy = FunctionType::get(context, inputs, {});
 
         auto genFuncOp =
-            rewriter.create<func::FuncOp>(loc, operatorName, funcTy);
+            rewriter.create<func::FuncOp>(loc, operatorName, newFuncTy);
         // TODO(feliix42): Is this check even necessary?
         if (!op.isExternal()) {
             rewriter.inlineRegionBefore(
@@ -50,6 +54,10 @@ struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
                 genFuncOp.end());
 
             // add return op at the bottom of the body
+            rewriter.setInsertionPointToEnd(&genFuncOp.getBody().back());
+            auto returnOp = rewriter.create<func::ReturnOp>(
+                genFuncOp.getBody().back().back().getLoc(),
+                ValueRange());
         }
 
         rewriter.eraseOp(op);
@@ -92,6 +100,13 @@ void ConvertDfgToFuncPass::runOnOperation()
     target.addIllegalOp<dfg::InstantiateOp, dfg::OperatorOp>();
 
     patterns.add<OperatorOpLowering, InstantiateOpLowering>(&getContext());
+
+    if (failed(applyPartialConversion(
+            getOperation(),
+            target,
+            std::move(patterns)))) {
+        signalPassFailure();
+    }
 }
 
 std::unique_ptr<Pass> mlir::createConvertDfgToFuncPass()
