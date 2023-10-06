@@ -1,4 +1,4 @@
-/// Implementation of DfgToAsync pass.
+/// Implementation of the DfgToFunc pass.
 ///
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
@@ -46,7 +46,7 @@ struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
 
         auto genFuncOp =
             rewriter.create<func::FuncOp>(loc, operatorName, newFuncTy);
-        // TODO(feliix42): Is this check even necessary?
+        // NOTE(feliix42): Is this check even necessary?
         if (!op.isExternal()) {
             rewriter.inlineRegionBefore(
                 op.getBody(),
@@ -80,16 +80,61 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
         // don't lower offloaded functions
         if (op.getOffloaded()) return failure();
 
-        // TODO(feiix42): Match for offloaded instantiate and DON'T lower
         rewriter.replaceOpWithNewOp<func::CallOp>(
             op,
             op.getCallee(),
             ArrayRef<Type>(),
             op.getOperands());
 
-        // rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+struct PushOpLowering : public OpConversionPattern<PushOp> {
+    using OpConversionPattern<PushOp>::OpConversionPattern;
+
+    PushOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PushOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        PushOp op,
+        PushOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        std::string funcName = "push_";
+        llvm::raw_string_ostream funcNameStream(funcName);
+        op.getOperand(0).getType().print(funcNameStream);
+
+        SymbolRefAttr pushFuncName =
+            SymbolRefAttr::get(op.getContext(), funcNameStream.str());
+        Type boolReturnVal = rewriter.getI1Type();
+
+        // FIXME(feliix42): Change this to llvm.call!!
+        rewriter.create<func::CallOp>(
+            op.getLoc(),
+            pushFuncName,
+            ArrayRef<Type>(boolReturnVal),
+            op.getOperands());
+        rewriter.eraseOp(op);
 
         return success();
+    }
+};
+
+struct PullOpLowering : public OpConversionPattern<PullOp> {
+    using OpConversionPattern<PullOp>::OpConversionPattern;
+
+    PullOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PullOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        PullOp op,
+        PullOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        // create function name reference
+        // create the struct type that models the result
+        // rewrite the pull operation as llvm.call
     }
 };
 
@@ -100,11 +145,12 @@ void ConvertDfgToFuncPass::runOnOperation()
 
     target.addLegalDialect<BuiltinDialect, func::FuncDialect>();
     target.addLegalDialect<DfgDialect>();
-    target.addIllegalOp<OperatorOp>();
+    target.addIllegalOp<OperatorOp, PushOp>();
     target.addDynamicallyLegalOp<InstantiateOp>(
         [](InstantiateOp op) { return op.getOffloaded(); });
 
-    patterns.add<OperatorOpLowering, InstantiateOpLowering>(&getContext());
+    patterns.add<OperatorOpLowering, InstantiateOpLowering, PushOpLowering>(
+        &getContext());
 
     if (failed(applyPartialConversion(
             getOperation(),
