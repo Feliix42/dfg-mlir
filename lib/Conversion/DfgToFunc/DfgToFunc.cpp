@@ -9,6 +9,9 @@
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/FunctionCallUtils.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/PatternMatch.h"
 
@@ -101,8 +104,10 @@ struct PushOpLowering : public OpConversionPattern<PushOp> {
         PushOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        // create function name for PushOp in LLVM IR
         std::string funcName = "push_";
         llvm::raw_string_ostream funcNameStream(funcName);
+        // FIXME(feliix42): Is the op index correct?
         op.getOperand(0).getType().print(funcNameStream);
 
         SymbolRefAttr pushFuncName =
@@ -132,9 +137,29 @@ struct PullOpLowering : public OpConversionPattern<PullOp> {
         PullOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        // create function name reference
+        // create function name for PullOp in LLVM IR
+        std::string funcName = "pull_";
+        llvm::raw_string_ostream funcNameStream(funcName);
+        op.getOperand().getType().print(funcNameStream);
+
+        SymbolRefAttr pullFuncName =
+            SymbolRefAttr::get(op.getContext(), funcNameStream.str());
+        Type boolReturnVal = rewriter.getI1Type();
+        std::vector<Type> structTypes{op.getType(), boolReturnVal};
+
         // create the struct type that models the result
+        Type returnedStruct =
+            LLVM::LLVMStructType::getLiteral(op.getContext(), structTypes);
+
         // rewrite the pull operation as llvm.call
+        rewriter.create<func::CallOp>(
+            op.getLoc(),
+            pullFuncName,
+            ArrayRef<Type>(returnedStruct),
+            op.getOperand());
+        rewriter.eraseOp(op);
+
+        return success();
     }
 };
 
