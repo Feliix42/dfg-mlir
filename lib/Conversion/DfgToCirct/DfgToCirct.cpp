@@ -311,7 +311,7 @@ fsm::MachineOp insertController(
         auto transInit = builder.create<fsm::TransitionOp>(
             loc,
             (i == ops.size() - 1)
-                ? "INIT"
+                ? (hasLoopOp ? "INIT" : "CLOSE")
                 : "WRITE" + std::to_string(idxStateWrite + 1));
         builder.setInsertionPointToEnd(transInit.ensureGuard(builder));
         transInit.getGuard().front().front().erase();
@@ -373,15 +373,14 @@ fsm::MachineOp insertController(
         idxStateWrite++;
     }
 
-    if (hasLoopOp) {
-        auto stateClose = builder.create<fsm::StateOp>(loc, "CLOSE");
-        builder.setInsertionPointToEnd(&stateClose.getOutput().back());
-        stateClose.getOutput().front().front().erase();
-        std::vector<Value> newOutputs = outputTempVec;
-        newOutputs[numPullChan + 2 * numPushChan] = c_true.getResult();
-        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
-        builder.setInsertionPointToEnd(&machine.getBody().back());
-    }
+    // CLOSE state and its behavior
+    auto stateClose = builder.create<fsm::StateOp>(loc, "CLOSE");
+    builder.setInsertionPointToEnd(&stateClose.getOutput().back());
+    stateClose.getOutput().front().front().erase();
+    std::vector<Value> newOutputs = outputTempVec;
+    newOutputs[numPullChan + 2 * numPushChan] = c_true.getResult();
+    builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
+    builder.setInsertionPointToEnd(&machine.getBody().back());
 
     // int idxCalc = 0;
     // int idxPush = 0;
