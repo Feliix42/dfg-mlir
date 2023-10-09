@@ -266,6 +266,7 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
 // Wrap calc ops in one handshake func
 std::optional<int> getResultIdx(Value value, Operation* op)
 {
+    if (op == nullptr) return std::nullopt;
     for (size_t i = 0; i < op->getNumResults(); i++)
         if (op->getResult(i) == value) return (int)i;
     return std::nullopt;
@@ -516,13 +517,15 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                                         calcOpIndx);
                                 auto idxResult =
                                     getResultIdx(operand, definingOp);
-                                if (idxCalcOp)
-                                    opRegion.setOperand(
-                                        idxOperand++,
-                                        newCalcOps[idxCalcOp.value()]
-                                            ->getResult(idxResult.value()));
-                                else
-                                    continue;
+                                if (idxResult) {
+                                    if (idxCalcOp)
+                                        opRegion.setOperand(
+                                            idxOperand++,
+                                            newCalcOps[idxCalcOp.value()]
+                                                ->getResult(idxResult.value()));
+                                    else
+                                        continue;
+                                }
                             }
                         }
                     }
