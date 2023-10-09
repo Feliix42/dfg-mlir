@@ -337,6 +337,9 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         std::vector<int> pushedValueIdx;
         SmallVector<std::pair<int, Value>> calcResultIdx;
         SmallVector<std::pair<int, Operation*>> calcOpIndx;
+        for (auto &opi : ops)
+            if (auto pushOp = dyn_cast<PushOp>(opi))
+                pushedValueRepeat.push_back(pushOp.getInp());
         for (auto &opi : ops) {
             if (auto pullOp = dyn_cast<PullOp>(opi)) {
                 auto pullValue = pullOp.getOutp();
@@ -349,7 +352,9 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                 numPull++;
             } else if (!isa<PushOp>(opi)) {
                 for (auto result : opi.getResults())
-                    calcResultIdx.push_back(std::make_pair(idxCalc++, result));
+                    if (isInSmallVector<Value>(result, pushedValueRepeat))
+                        calcResultIdx.push_back(
+                            std::make_pair(idxCalc++, result));
                 calcOpIndx.push_back(std::make_pair(numCalc++, &opi));
             } else if (auto pushOp = dyn_cast<PushOp>(opi)) {
                 auto pushValue = pushOp.getInp();
@@ -362,13 +367,15 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                     pushedTypes.push_back(pushChan.getType().getElementType());
                     numResult++;
                 }
-                pushedValueRepeat.push_back(pushValue);
+                // pushedValueRepeat.push_back(pushValue);
                 auto idxChan = pushChan.cast<BlockArgument>().getArgNumber();
                 pushedChanIdx.push_back(idxChan);
                 if (!isPushPulledValue) {
                     auto idx =
                         getNewIndexOrArg<int, Value>(pushValue, calcResultIdx);
                     pushedValueIdx.push_back(idx.value());
+                } else {
+                    pushedValueIdx.push_back(-1);
                 }
                 numPush++;
             }
@@ -426,14 +433,9 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                     newOperator.getBody().getArgument(idxChan));
                 continue;
             }
-            auto posValue = std::find(
-                pushedValueIdx.begin(),
-                pushedValueIdx.end(),
-                pushedValueIdx[i]);
-            auto idxValue = std::distance(pushedValueIdx.begin(), posValue);
             rewriter.create<PushOp>(
                 loc,
-                instanceOp.getResult(idxValue),
+                instanceOp.getResult(pushedValueIdx[i]),
                 newOperator.getBody().getArgument(idxChan));
         }
 
