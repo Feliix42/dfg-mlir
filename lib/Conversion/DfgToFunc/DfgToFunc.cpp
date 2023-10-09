@@ -18,6 +18,44 @@
 using namespace mlir;
 using namespace mlir::dfg;
 
+// ========================================================
+// Helper Functions
+// ========================================================
+
+/// Return a symbol reference to the requested function, inserting it into the
+/// module if necessary.
+static FlatSymbolRefAttr getOrInsertFunc(
+    PatternRewriter &rewriter,
+    ModuleOp module,
+    std::string funcName,
+    Type result,
+    ValueRange arguments)
+{
+    auto* context = module.getContext();
+    if (module.lookupSymbol<LLVM::LLVMFuncOp>(funcName))
+        return SymbolRefAttr::get(context, funcName);
+
+    // convert the OperandRange into a list of types
+    auto argIterator = arguments.getTypes();
+    std::vector<Type> tyVec(argIterator.begin(), argIterator.end());
+
+    // Create a function declaration for the desired function
+    auto llvmFnType = LLVM::LLVMFunctionType::get(
+        result,
+        tyVec,
+        /*isVarArg=*/true);
+
+    // Insert the function into the body of the parent module.
+    PatternRewriter::InsertionGuard insertGuard(rewriter);
+    rewriter.setInsertionPointToStart(module.getBody());
+    rewriter.create<LLVM::LLVMFuncOp>(module.getLoc(), funcName, llvmFnType);
+    return SymbolRefAttr::get(context, funcName);
+}
+
+// ========================================================
+// Lowerings
+// ========================================================
+
 namespace {
 struct ConvertDfgToFuncPass
         : public ConvertDfgToFuncBase<ConvertDfgToFuncPass> {
@@ -107,19 +145,29 @@ struct PushOpLowering : public OpConversionPattern<PushOp> {
         // create function name for PushOp in LLVM IR
         std::string funcName = "push_";
         llvm::raw_string_ostream funcNameStream(funcName);
-        // FIXME(feliix42): Is the op index correct?
+        // 0 is the type of the item sent
         op.getOperand(0).getType().print(funcNameStream);
 
-        SymbolRefAttr pushFuncName =
-            SymbolRefAttr::get(op.getContext(), funcNameStream.str());
+        // return value
         Type boolReturnVal = rewriter.getI1Type();
 
-        // FIXME(feliix42): Change this to llvm.call!!
-        rewriter.create<func::CallOp>(
-            op.getLoc(),
-            pushFuncName,
-            ArrayRef<Type>(boolReturnVal),
+        // fetch or create the FlatSymbolRefAttr for the called function
+        ModuleOp parentModule = op->getParentOfType<ModuleOp>();
+        FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
+            rewriter,
+            parentModule,
+            funcNameStream.str(),
+            boolReturnVal,
             op.getOperands());
+
+        rewriter.create<LLVM::CallOp>(
+            op.getLoc(),
+            ArrayRef<Type>(boolReturnVal),
+            pushFuncName,
+            op.getOperands());
+
+        // TODO: Replace users of the results
+
         rewriter.eraseOp(op);
 
         return success();
@@ -142,23 +190,53 @@ struct PullOpLowering : public OpConversionPattern<PullOp> {
         llvm::raw_string_ostream funcNameStream(funcName);
         op.getOperand().getType().print(funcNameStream);
 
-        SymbolRefAttr pullFuncName =
-            SymbolRefAttr::get(op.getContext(), funcNameStream.str());
+        // create the struct type that models the result
         Type boolReturnVal = rewriter.getI1Type();
         std::vector<Type> structTypes{op.getType(), boolReturnVal};
-
-        // create the struct type that models the result
         Type returnedStruct =
             LLVM::LLVMStructType::getLiteral(op.getContext(), structTypes);
 
-        // rewrite the pull operation as llvm.call
-        rewriter.create<func::CallOp>(
+        // fetch or create the FlatSymbolRefAttr for the called function
+        ModuleOp parentModule = op->getParentOfType<ModuleOp>();
+        FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
+            rewriter,
+            parentModule,
+            funcNameStream.str(),
+            returnedStruct,
+            ValueRange(op.getOperand()));
+
+        rewriter.create<LLVM::CallOp>(
             op.getLoc(),
-            pullFuncName,
             ArrayRef<Type>(returnedStruct),
+            pullFuncName,
             op.getOperand());
+
+        // TODO: Replace users of the results
+
         rewriter.eraseOp(op);
 
+        return success();
+    }
+};
+
+struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
+    using OpConversionPattern<ChannelOp>::OpConversionPattern;
+
+    ChannelOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        ChannelOp op,
+        ChannelOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        // NOTE(feliix42): Conceptually, what I probably want to do, is:
+        // 1. create a new CallOp calling the channel creation function
+        // 2. insert the appropriate definition at the top
+        // 3. replace all channel inputs and outputs with the newly created
+        // result
+        // 4. delete the old op
+        // 5. insert the lowering down there
         return success();
     }
 };
@@ -168,14 +246,20 @@ void ConvertDfgToFuncPass::runOnOperation()
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
-    target.addLegalDialect<BuiltinDialect, func::FuncDialect>();
+    target.addLegalDialect<
+        BuiltinDialect,
+        func::FuncDialect,
+        LLVM::LLVMDialect>();
     target.addLegalDialect<DfgDialect>();
-    target.addIllegalOp<OperatorOp, PushOp>();
+    target.addIllegalOp<OperatorOp, PushOp, PullOp>();
     target.addDynamicallyLegalOp<InstantiateOp>(
         [](InstantiateOp op) { return op.getOffloaded(); });
 
-    patterns.add<OperatorOpLowering, InstantiateOpLowering, PushOpLowering>(
-        &getContext());
+    patterns.add<
+        OperatorOpLowering,
+        InstantiateOpLowering,
+        PushOpLowering,
+        PullOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(
             getOperation(),
