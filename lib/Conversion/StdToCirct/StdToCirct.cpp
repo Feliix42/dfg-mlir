@@ -367,7 +367,6 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                     pushedTypes.push_back(pushChan.getType().getElementType());
                     numResult++;
                 }
-                // pushedValueRepeat.push_back(pushValue);
                 auto idxChan = pushChan.cast<BlockArgument>().getArgNumber();
                 pushedChanIdx.push_back(idxChan);
                 if (!isPushPulledValue) {
@@ -479,7 +478,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                 }
                 newCalcOps.push_back(newCalcOp);
                 rewriter.insert(newCalcOp);
-            } else {
+            } else { // If the op has regions
                 int idxOperand = 0;
                 for (auto operand : newCalcOp->getOperands()) {
                     if (auto idxArg = getNewIndexOrArg<int, Value>(
@@ -500,6 +499,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                                 idxResult.value()));
                     }
                 }
+                // For each region, manage the ops inside
                 for (auto &region : newCalcOp->getRegions()) {
                     for (auto &opRegion : region.getOps()) {
                         int idxOperand = 0;
@@ -526,7 +526,10 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                                             newCalcOps[idxCalcOp.value()]
                                                 ->getResult(idxResult.value()));
                                     else
-                                        continue;
+                                        opRegion.setOperand(
+                                            idxOperand++,
+                                            definingOp->getResult(
+                                                idxResult.value()));
                                 }
                             }
                         }
@@ -536,6 +539,8 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                 rewriter.insert(newCalcOp);
             }
         }
+
+        // Resolve the return values
         SmallVector<Value> returnValues;
         for (int i = 0; i < numResult; i++) {
             auto result = pushedValueNonRepeat[i];
