@@ -5,10 +5,12 @@
 
 #include "dfg-mlir/Conversion/DfgToFunc/DfgToFunc.h"
 
+// TODO(feliix42): Switch to per-pass classes, look into upstream :-)
 #include "../PassDetails.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/LLVMIR/FunctionCallUtils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
@@ -76,8 +78,8 @@ struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
     {
         Location loc = op.getLoc();
         MLIRContext* context = rewriter.getContext();
-        StringRef operatorName = op.getSymName();
-        FunctionType funcTy = op.getFunctionType();
+        StringRef operatorName = adaptor.getSymName();
+        FunctionType funcTy = adaptor.getFunctionType();
         auto old_inputs = funcTy.getInputs();
         auto old_outputs = funcTy.getResults();
 
@@ -90,7 +92,7 @@ struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
         // NOTE(feliix42): Is this check even necessary?
         if (!op.isExternal()) {
             rewriter.inlineRegionBefore(
-                op.getBody(),
+                adaptor.getBody(),
                 genFuncOp.getBody(),
                 genFuncOp.end());
 
@@ -119,13 +121,13 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
         ConversionPatternRewriter &rewriter) const override
     {
         // don't lower offloaded functions
-        if (op.getOffloaded()) return failure();
+        if (adaptor.getOffloaded()) return failure();
 
         rewriter.replaceOpWithNewOp<func::CallOp>(
             op,
-            op.getCallee(),
+            adaptor.getCallee(),
             ArrayRef<Type>(),
-            op.getOperands());
+            adaptor.getOperands());
 
         return success();
     }
@@ -146,7 +148,7 @@ struct PushOpLowering : public OpConversionPattern<PushOp> {
         std::string funcName = "push_";
         llvm::raw_string_ostream funcNameStream(funcName);
         // 0 is the type of the item sent
-        op.getOperand(0).getType().print(funcNameStream);
+        adaptor.getOperands()[0].getType().print(funcNameStream);
 
         // return value
         Type boolReturnVal = rewriter.getI1Type();
@@ -158,13 +160,13 @@ struct PushOpLowering : public OpConversionPattern<PushOp> {
             parentModule,
             funcNameStream.str(),
             boolReturnVal,
-            op.getOperands());
+            adaptor.getOperands());
 
         rewriter.create<LLVM::CallOp>(
             op.getLoc(),
             ArrayRef<Type>(boolReturnVal),
             pushFuncName,
-            op.getOperands());
+            adaptor.getOperands());
 
         // TODO: Replace users of the results
 
@@ -188,13 +190,14 @@ struct PullOpLowering : public OpConversionPattern<PullOp> {
         // create function name for PullOp in LLVM IR
         std::string funcName = "pull_";
         llvm::raw_string_ostream funcNameStream(funcName);
-        op.getOperand().getType().print(funcNameStream);
+        op.getType().print(funcNameStream);
 
         // create the struct type that models the result
         Type boolReturnVal = rewriter.getI1Type();
         std::vector<Type> structTypes{op.getType(), boolReturnVal};
-        Type returnedStruct =
-            LLVM::LLVMStructType::getLiteral(op.getContext(), structTypes);
+        Type returnedStruct = LLVM::LLVMStructType::getLiteral(
+            rewriter.getContext(),
+            structTypes);
 
         // fetch or create the FlatSymbolRefAttr for the called function
         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
@@ -203,13 +206,13 @@ struct PullOpLowering : public OpConversionPattern<PullOp> {
             parentModule,
             funcNameStream.str(),
             returnedStruct,
-            ValueRange(op.getOperand()));
+            adaptor.getOperands());
 
         rewriter.create<LLVM::CallOp>(
             op.getLoc(),
             ArrayRef<Type>(returnedStruct),
             pullFuncName,
-            op.getOperand());
+            adaptor.getChan());
 
         // TODO: Replace users of the results
 
@@ -219,47 +222,81 @@ struct PullOpLowering : public OpConversionPattern<PullOp> {
     }
 };
 
-struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
-    using OpConversionPattern<ChannelOp>::OpConversionPattern;
+// struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
+//     using OpConversionPattern<ChannelOp>::OpConversionPattern;
 
-    ChannelOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+//     ChannelOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+//             : OpConversionPattern<ChannelOp>(typeConverter, context){};
 
-    LogicalResult matchAndRewrite(
-        ChannelOp op,
-        ChannelOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        // NOTE(feliix42): Conceptually, what I probably want to do, is:
-        // 1. create a new CallOp calling the channel creation function
-        // 2. insert the appropriate definition at the top
-        // 3. replace all channel inputs and outputs with the newly created
-        // result
-        // 4. delete the old op
-        // 5. insert the lowering down there
-        return success();
-    }
-};
+//     LogicalResult matchAndRewrite(
+//         ChannelOp op,
+//         ChannelOpAdaptor adaptor,
+//         ConversionPatternRewriter &rewriter) const override
+//     {
+//         // NOTE(feliix42): Conceptually, what I probably want to do, is:
+//         // 1. create a new CallOp calling the channel creation function
+//         // 2. insert the appropriate definition at the top
+//         // 3. replace all channel inputs and outputs with the newly created
+//         // result
+//         // 4. delete the old op
+//         // 5. insert the lowering down there
+//         return success();
+//     }
+// };
+
+void mlir::populateDfgToFuncConversionPatterns(
+    TypeConverter typeConverter,
+    RewritePatternSet &patterns)
+{
+    // dfg.operator -> func.func
+    patterns.add<OperatorOpLowering>(typeConverter, patterns.getContext());
+
+    // dfg.instantiate -> func.call
+    patterns.add<InstantiateOpLowering>(typeConverter, patterns.getContext());
+
+    // dfg.push -> llvm.call + logic
+    patterns.add<PushOpLowering>(typeConverter, patterns.getContext());
+
+    // dfg.pull -> llvm.call + logic
+    patterns.add<PullOpLowering>(typeConverter, patterns.getContext());
+
+    // dfg.channel -> !llvm.ptr
+    // patterns.add<ChannelOp>(typeConverter, patterns.getContext());
+}
 
 void ConvertDfgToFuncPass::runOnOperation()
 {
+    TypeConverter converter;
+
+    // TODO(feliix42): add type conversion here
+    // converter.addConversion([&](Type type) {
+    //     if (isa<IntegerType>(type)) return type;
+    //     return Type();
+    // });
+
+    // TODO:
+    // look at the places where the populate Functions for builtin ops are
+    // defined to copy the dynamic legality constraints and type rewriter
+    // patterns for these ops
+
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
+
+    populateDfgToFuncConversionPatterns(converter, patterns);
+    populateAnyFunctionOpInterfaceTypeConversionPattern(patterns, converter);
+    populateReturnOpTypeConversionPattern(patterns, converter);
+    populateCallOpTypeConversionPattern(patterns, converter);
+    populateBranchOpInterfaceTypeConversionPattern(patterns, converter);
 
     target.addLegalDialect<
         BuiltinDialect,
         func::FuncDialect,
         LLVM::LLVMDialect>();
+
     target.addLegalDialect<DfgDialect>();
     target.addIllegalOp<OperatorOp, PushOp, PullOp>();
     target.addDynamicallyLegalOp<InstantiateOp>(
         [](InstantiateOp op) { return op.getOffloaded(); });
-
-    patterns.add<
-        OperatorOpLowering,
-        InstantiateOpLowering,
-        PushOpLowering,
-        PullOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(
             getOperation(),
@@ -273,3 +310,13 @@ std::unique_ptr<Pass> mlir::createConvertDfgToFuncPass()
 {
     return std::make_unique<ConvertDfgToFuncPass>();
 }
+
+// STEPS
+// - [x] rewrite to use the populate function
+// - [x] use adaptor where possible
+// - [ ] single out OperatorOpLowering and InstantiateOpLowering
+// - [ ] expand OperatorOpLowering to include cf logic already
+// - [ ] modify the pull/push lowerings
+// - [ ] rewrite ChannelOp
+// - [ ] rewrite the LoopOp
+// - [ ] check the type rewriter thingy
