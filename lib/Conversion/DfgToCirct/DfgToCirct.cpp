@@ -111,9 +111,7 @@ fsm::MachineOp insertController(
     }
     SmallVector<Value> calcDataValids;
     if (hasMultiOutputs) {
-        auto idxBias = numPullChan + 2 * numPushChan + (hasLoopOp ? 1 : 0);
-        auto numOutputs = (funcTy.getNumResults() - idxBias) / 2;
-        for (size_t i = 0; i < numOutputs; i++) {
+        for (size_t i = 0; i < numHWInstanceResults; i++) {
             auto validVarOp = builder.create<fsm::VariableOp>(
                 loc,
                 i1Ty,
