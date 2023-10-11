@@ -242,13 +242,3 @@ std::unique_ptr<Pass> mlir::createConvertDfgToLLVMPass()
 {
     return std::make_unique<ConvertDfgToLLVMPass>();
 }
-
-// STEPS
-// - [x] rewrite to use the populate function
-// - [x] use adaptor where possible
-// - [ ] single out OperatorOpLowering and InstantiateOpLowering
-// - [ ] expand OperatorOpLowering to include cf logic already
-// - [ ] modify the pull/push lowerings
-// - [ ] rewrite ChannelOp
-// - [ ] rewrite the LoopOp
-// - [ ] check the type rewriter thingy
