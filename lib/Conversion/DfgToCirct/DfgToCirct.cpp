@@ -24,6 +24,8 @@
 
 #include "llvm/ADT/APInt.h"
 
+#include <iostream>
+
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTDFGTOCIRCT
 #include "dfg-mlir/Conversion/Passes.h.inc"
@@ -70,18 +72,22 @@ fsm::MachineOp insertController(
     SmallVector<Value> pullVars;
     SmallVector<Value> calcResults;
     SmallVector<std::pair<Value, int>> zeroWidth;
+    bool hasHwInstance =
+        (funcTy.getNumResults() > size_t(numPullChan + 2 * numPushChan + 1));
     // int numCalculation = 0;
     // Now assume work pipeline: pull -> calc -> push
     for (size_t i = 0; i < ops.size(); i++) {
         auto op = ops[i];
         if (auto pullOp = dyn_cast<PullOp>(op)) {
             assert(i <= numPull && "must pull every data at beginning");
-            auto validVarOp = builder.create<fsm::VariableOp>(
-                loc,
-                i1Ty,
-                builder.getIntegerAttr(i1Ty, 0),
-                builder.getStringAttr("valid" + std::to_string(numPull)));
-            hwInstanceValids.push_back(validVarOp.getResult());
+            if (hasHwInstance) {
+                auto validVarOp = builder.create<fsm::VariableOp>(
+                    loc,
+                    i1Ty,
+                    builder.getIntegerAttr(i1Ty, 0),
+                    builder.getStringAttr("valid" + std::to_string(numPull)));
+                hwInstanceValids.push_back(validVarOp.getResult());
+            }
             auto valueTy = pullOp.getChan().getType().getElementType();
             auto varOp = builder.create<fsm::VariableOp>(
                 loc,
@@ -147,13 +153,14 @@ fsm::MachineOp insertController(
     auto idxBias = numPullChan + 2 * numPushChan + 1;
     // Init output vector
     std::vector<Value> outputInit = outputAllZero;
-    outputInit[idxBias] = c_true.getResult();
+    if (hasHwInstance) outputInit[idxBias++] = c_true.getResult();
     // Output vectors, need to be modified
     std::vector<Value> outputTempVec = outputAllZero;
-    for (size_t i = 0; i < numPull; i++) {
-        outputTempVec[idxBias + 1 + 2 * i] = hwInstanceValids[i];
-        outputTempVec[idxBias + 1 + 2 * i + 1] = pullVars[i];
-    }
+    if (hasHwInstance)
+        for (size_t i = 0; i < numPull; i++) {
+            outputTempVec[idxBias + 2 * i] = hwInstanceValids[i];
+            outputTempVec[idxBias + 2 * i + 1] = pullVars[i];
+        }
 
     // Create states and transitions
     // INIT
@@ -165,10 +172,11 @@ fsm::MachineOp insertController(
     auto transRead = builder.create<fsm::TransitionOp>(loc, "READ0");
     builder.setInsertionPointToEnd(transRead.ensureAction(builder));
     for (size_t i = 0; i < numPull; i++) {
-        builder.create<fsm::UpdateOp>(
-            loc,
-            hwInstanceValids[i],
-            c_false.getResult());
+        if (hasHwInstance)
+            builder.create<fsm::UpdateOp>(
+                loc,
+                hwInstanceValids[i],
+                c_false.getResult());
         auto pullVarWidth = pullVars[i].getType().getIntOrFloatBitWidth();
         auto zeroValue = getNewIndexOrArg<Value, int>(pullVarWidth, zeroWidth);
         builder.create<fsm::UpdateOp>(loc, pullVars[i], zeroValue.value());
@@ -212,10 +220,11 @@ fsm::MachineOp insertController(
         transCalc.getGuard().front().front().erase();
         builder.create<fsm::ReturnOp>(loc, machine.getArgument(validIdx));
         builder.setInsertionPointToEnd(transCalc.ensureAction(builder));
-        builder.create<fsm::UpdateOp>(
-            loc,
-            hwInstanceValids[i],
-            c_true.getResult());
+        if (hasHwInstance)
+            builder.create<fsm::UpdateOp>(
+                loc,
+                hwInstanceValids[i],
+                c_true.getResult());
         builder.create<fsm::UpdateOp>(
             loc,
             pullVars[i],
@@ -232,58 +241,63 @@ fsm::MachineOp insertController(
         builder.setInsertionPointToEnd(&machine.getBody().back());
     }
 
-    // Wait until HwInstance's op are done
-    auto stateCalc = builder.create<fsm::StateOp>(loc, "CALC");
-    builder.setInsertionPointToEnd(&stateCalc.getOutput().back());
-    stateCalc.getOutput().front().front().erase();
-    builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputTempVec));
-    builder.setInsertionPointToEnd(&stateCalc.getTransitions().back());
-    auto transWrite = builder.create<fsm::TransitionOp>(loc, "WRITE0");
-    builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
-    transWrite.getGuard().front().front().erase();
-    idxBias = loopChanArgIdx.back().second + 1;
-    auto numCalcDataValid = calcDataValids.size();
-    if (hasMultiOutputs) {
-        Value calcDone;
-        for (size_t i = 0; i < numCalcDataValid; i++) {
-            auto validSignal = calcDataValids[i];
-            if (i == 0)
-                calcDone = validSignal;
-            else {
-                auto validAndResult =
-                    builder.create<comb::AndOp>(loc, calcDone, validSignal);
-                calcDone = validAndResult.getResult();
-            }
-        }
-        builder.create<fsm::ReturnOp>(loc, calcDone);
-    } else {
-        builder.create<fsm::ReturnOp>(loc, machine.getArgument(idxBias));
-    }
-    if (!hasMultiOutputs) {
-        builder.setInsertionPointToEnd(transWrite.ensureAction(builder));
-        builder.create<fsm::UpdateOp>(
-            loc,
-            calcResults[0],
-            machine.getArgument(idxBias + 1));
-        builder.setInsertionPointToEnd(&machine.getBody().back());
-    }
-    if (hasMultiOutputs) {
+    if (!isNextPush) {
+        // Wait until HwInstance's op are done
+        auto stateCalc = builder.create<fsm::StateOp>(loc, "CALC");
+        builder.setInsertionPointToEnd(&stateCalc.getOutput().back());
+        stateCalc.getOutput().front().front().erase();
+        builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputTempVec));
         builder.setInsertionPointToEnd(&stateCalc.getTransitions().back());
-        auto transCalcSelf = builder.create<fsm::TransitionOp>(loc, "CALC");
-        builder.setInsertionPointToEnd(transCalcSelf.ensureAction(builder));
-        for (size_t i = 0; i < numCalcDataValid; i++) {
-            auto calcValid = calcDataValids[i];
-            auto newValid = builder.create<comb::OrOp>(
-                loc,
-                calcValid,
-                machine.getArgument(idxBias + 2 * i));
-            builder.create<fsm::UpdateOp>(loc, calcValid, newValid.getResult());
+        auto transWrite = builder.create<fsm::TransitionOp>(loc, "WRITE0");
+        builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
+        transWrite.getGuard().front().front().erase();
+        idxBias = loopChanArgIdx.back().second + 1;
+        auto numCalcDataValid = calcDataValids.size();
+        if (hasMultiOutputs) {
+            Value calcDone;
+            for (size_t i = 0; i < numCalcDataValid; i++) {
+                auto validSignal = calcDataValids[i];
+                if (i == 0)
+                    calcDone = validSignal;
+                else {
+                    auto validAndResult =
+                        builder.create<comb::AndOp>(loc, calcDone, validSignal);
+                    calcDone = validAndResult.getResult();
+                }
+            }
+            builder.create<fsm::ReturnOp>(loc, calcDone);
+        } else {
+            builder.create<fsm::ReturnOp>(loc, machine.getArgument(idxBias));
+        }
+        if (!hasMultiOutputs) {
+            builder.setInsertionPointToEnd(transWrite.ensureAction(builder));
             builder.create<fsm::UpdateOp>(
                 loc,
-                calcResults[i],
-                machine.getArgument(idxBias + 2 * i + 1));
+                calcResults[0],
+                machine.getArgument(idxBias + 1));
+            builder.setInsertionPointToEnd(&machine.getBody().back());
         }
-        builder.setInsertionPointToEnd(&machine.getBody().back());
+        if (hasMultiOutputs) {
+            builder.setInsertionPointToEnd(&stateCalc.getTransitions().back());
+            auto transCalcSelf = builder.create<fsm::TransitionOp>(loc, "CALC");
+            builder.setInsertionPointToEnd(transCalcSelf.ensureAction(builder));
+            for (size_t i = 0; i < numCalcDataValid; i++) {
+                auto calcValid = calcDataValids[i];
+                auto newValid = builder.create<comb::OrOp>(
+                    loc,
+                    calcValid,
+                    machine.getArgument(idxBias + 2 * i));
+                builder.create<fsm::UpdateOp>(
+                    loc,
+                    calcValid,
+                    newValid.getResult());
+                builder.create<fsm::UpdateOp>(
+                    loc,
+                    calcResults[i],
+                    machine.getArgument(idxBias + 2 * i + 1));
+            }
+            builder.setInsertionPointToEnd(&machine.getBody().back());
+        }
     }
 
     // Here should be all push ops
@@ -671,17 +685,20 @@ public:
             fsmInTypesVec.push_back(i1Ty);
             fsmInTypesVec.push_back(type);
         }
+        bool hasHwInstance = hwInstanceInTypes.empty();
         SmallVector<Type> fsmOutTypesVec(hwOutTypes.begin(), hwOutTypes.end());
-        fsmOutTypesVec.push_back(i1Ty);
+        if (!hasHwInstance) fsmOutTypesVec.push_back(i1Ty);
         for (auto type : hwInstanceInTypes) {
-            auto placeholderInstanceData =
-                rewriter.create<hw::ConstantOp>(loc, type, 0);
-            placeholderInstInputs.push_back(
-                placeholderInstanceData.getResult());
-            auto placeholderInstanceValid =
-                rewriter.create<hw::ConstantOp>(loc, i1Ty, 0);
-            placeholderInstInputs.push_back(
-                placeholderInstanceValid.getResult());
+            if (!hasHwInstance) {
+                auto placeholderInstanceData =
+                    rewriter.create<hw::ConstantOp>(loc, type, 0);
+                placeholderInstInputs.push_back(
+                    placeholderInstanceData.getResult());
+                auto placeholderInstanceValid =
+                    rewriter.create<hw::ConstantOp>(loc, i1Ty, 0);
+                placeholderInstInputs.push_back(
+                    placeholderInstanceValid.getResult());
+            }
             fsmOutTypesVec.push_back(i1Ty);
             fsmOutTypesVec.push_back(type);
         }
@@ -725,38 +742,42 @@ public:
             hasLoopOp,
             loopChanArgIdx);
 
-        // Create a hw.instance op and take the results to fsm
-        auto c_true =
-            rewriter.create<hw::ConstantOp>(loc, rewriter.getI1Type(), 1);
         auto hwInstanceOutSize = hwInstanceOutTypes.size();
-        hw::HWModuleExternOp opToInstance = nullptr;
-        module.walk([&](hw::HWModuleExternOp externModuleOp) {
-            auto name = externModuleOp.getSymNameAttr().str();
-            if (name == hwInstanceName) opToInstance = externModuleOp;
-        });
-        assert(opToInstance && "cannot find the module to instantiate");
-        SmallVector<Value> instanceInputs;
-        instanceInputs.append(
-            placeholderInstInputs.begin(),
-            placeholderInstInputs.end());
-        instanceInputs.push_back(hwModule.getBody().getArgument(0));
-        instanceInputs.push_back(placeholderCalcReset.getResult());
-        for (size_t i = 0; i < hwInstanceOutSize; i++)
-            instanceInputs.push_back(c_true.getResult());
-        auto instanceOp = rewriter.create<hw::InstanceOp>(
-            loc,
-            opToInstance,
-            "instance",
-            instanceInputs);
+        hw::InstanceOp instanceOp;
+        if (!hasHwInstance) {
+            // Create a hw.instance op and take the results to fsm
+            auto c_true =
+                rewriter.create<hw::ConstantOp>(loc, rewriter.getI1Type(), 1);
+            hw::HWModuleExternOp opToInstance = nullptr;
+            module.walk([&](hw::HWModuleExternOp externModuleOp) {
+                auto name = externModuleOp.getSymNameAttr().str();
+                if (name == hwInstanceName) opToInstance = externModuleOp;
+            });
+            assert(opToInstance && "cannot find the module to instantiate");
+            SmallVector<Value> instanceInputs;
+            instanceInputs.append(
+                placeholderInstInputs.begin(),
+                placeholderInstInputs.end());
+            instanceInputs.push_back(hwModule.getBody().getArgument(0));
+            instanceInputs.push_back(placeholderCalcReset.getResult());
+            for (size_t i = 0; i < hwInstanceOutSize; i++)
+                instanceInputs.push_back(c_true.getResult());
+            instanceOp = rewriter.create<hw::InstanceOp>(
+                loc,
+                opToInstance,
+                "instance",
+                instanceInputs);
+        }
         // Create a fsm.hw_instance op and take the results to output
         SmallVector<Value> fsmInputs;
         for (size_t i = 2; i < hwInTypes.size(); i++)
             fsmInputs.push_back(hwModule.getBody().getArgument(i));
         auto idxBias = hwInstanceInTypes.size();
-        for (size_t i = 0; i < hwInstanceOutSize; i++) {
-            fsmInputs.push_back(instanceOp.getResult(idxBias + 2 * i + 1));
-            fsmInputs.push_back(instanceOp.getResult(idxBias + 2 * i));
-        }
+        if (!hasHwInstance)
+            for (size_t i = 0; i < hwInstanceOutSize; i++) {
+                fsmInputs.push_back(instanceOp.getResult(idxBias + 2 * i + 1));
+                fsmInputs.push_back(instanceOp.getResult(idxBias + 2 * i));
+            }
         auto outputs = rewriter.create<fsm::HWInstanceOp>(
             loc,
             newMachine.getFunctionType().getResults(),
@@ -772,14 +793,16 @@ public:
             outputVec.push_back(outputs.getResult(i));
         rewriter.create<hw::OutputOp>(loc, outputVec);
 
-        placeholderCalcReset.replaceAllUsesWith(
-            outputs.getResult(resultIdxBias));
-        for (size_t i = 0; i < placeholderInstInputs.size(); i += 2) {
-            auto newBias = resultIdxBias + 1 + i;
-            placeholderInstInputs[i].replaceAllUsesWith(
-                outputs.getResult(newBias + 1));
-            placeholderInstInputs[i + 1].replaceAllUsesWith(
-                outputs.getResult(newBias));
+        if (!hasHwInstance) {
+            placeholderCalcReset.replaceAllUsesWith(
+                outputs.getResult(resultIdxBias));
+            for (size_t i = 0; i < placeholderInstInputs.size(); i += 2) {
+                auto newBias = resultIdxBias + 1 + i;
+                placeholderInstInputs[i].replaceAllUsesWith(
+                    outputs.getResult(newBias + 1));
+                placeholderInstInputs[i + 1].replaceAllUsesWith(
+                    outputs.getResult(newBias));
+            }
         }
 
         // Clean up the placeholders
@@ -1441,6 +1464,11 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                     auto placeholder = getNewIndexOrArg<Value, Value>(
                         channelOp.getOutChan(),
                         placeholderInputs);
+                    if (!placeholder.has_value())
+                        return rewriter.notifyMatchFailure(
+                            channelOp.getLoc(),
+                            "Channel " + std::to_string(queueSuffixNum)
+                                + " is not connected.");
                     inputs.push_back(placeholder.value());
                 }
                 auto queueInstance = rewriter.create<hw::InstanceOp>(
