@@ -8,6 +8,7 @@
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -58,18 +59,26 @@ struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
         auto genFuncOp =
             rewriter.create<func::FuncOp>(loc, operatorName, newFuncTy);
 
-        // NOTE(feliix42): Is this check even necessary?
         if (!op.isExternal()) {
             rewriter.inlineRegionBefore(
                 adaptor.getBody(),
                 genFuncOp.getBody(),
                 genFuncOp.end());
 
-            // add return op at the bottom of the body
-            rewriter.setInsertionPointToEnd(&genFuncOp.getBody().back());
-            rewriter.create<func::ReturnOp>(
-                genFuncOp.getBody().back().back().getLoc(),
-                ValueRange());
+            // add a terminator block to the function
+            Block* terminatorBlock = rewriter.createBlock(
+                &genFuncOp.getBody(),
+                genFuncOp.getBody().end());
+
+            // insert the cf.br operation at the end of the previous block
+            rewriter.setInsertionPointToEnd(&genFuncOp.getBody().front());
+            auto branchOp = rewriter.create<cf::BranchOp>(
+                genFuncOp.getBody().front().back().getLoc(),
+                terminatorBlock);
+
+            // populate the Terminator Block (for now) with a return only
+            rewriter.setInsertionPointToEnd(terminatorBlock);
+            rewriter.create<func::ReturnOp>(branchOp.getLoc());
         }
 
         rewriter.eraseOp(op);
@@ -143,6 +152,7 @@ void ConvertDfgToFuncPass::runOnOperation()
     target.addLegalDialect<
         BuiltinDialect,
         func::FuncDialect,
+        cf::ControlFlowDialect,
         LLVM::LLVMDialect>();
 
     target.addLegalDialect<DfgDialect>();
@@ -167,7 +177,7 @@ std::unique_ptr<Pass> mlir::createConvertDfgToFuncPass()
 // - [x] rewrite to use the populate function
 // - [x] use adaptor where possible
 // - [x] single out OperatorOpLowering and InstantiateOpLowering
-// - [ ] expand OperatorOpLowering to include cf logic already
+// - [x] expand OperatorOpLowering to include cf logic already
 // - [ ] modify the pull/push lowerings to include the necessary logic for
 // breaking
 // - [ ] rewrite ChannelOp
