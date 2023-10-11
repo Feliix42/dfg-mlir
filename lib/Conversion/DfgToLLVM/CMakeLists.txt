@@ -1,5 +1,5 @@
-add_mlir_conversion_library(DfgToFunc
-        DfgToFunc.cpp
+add_mlir_conversion_library(DfgToLLVM
+        DfgToLLVM.cpp
 
     DEPENDS
         ConversionIncGen
@@ -12,5 +12,7 @@ add_mlir_conversion_library(DfgToFunc
         MLIRTransformUtils
         MLIRFuncDialect
         MLIRControlFlowDialect
+        MLIRLLVMCommonConversion
+        MLIRLLVMDialect
         DfgDialect
 )

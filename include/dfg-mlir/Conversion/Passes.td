@@ -54,13 +54,27 @@ def ConvertStdToCirct : Pass<"convert-std-to-circt"> {
     ];
 }
 
-def ConvertDfgToFunc : Pass<"convert-dfg-to-func"> {
-    let summary = "Convert DFG dialect nodes to Func";
+def ConvertDfgToFunc : Pass<"convert-dfg-nodes-to-func"> {
+    let summary = "Convert DFG dialect graph nodes to Func declarations and invocations";
 
     let constructor = "mlir::createConvertDfgToFuncPass()";
 
     let dependentDialects = [
         "func::FuncDialect",
+        "cf::ControlFlowDialect",
+
+        "dfg::DfgDialect"
+    ];
+}
+
+def ConvertDfgToLLVM : Pass<"convert-dfg-edges-to-llvm"> {
+    let summary = "Convert DFG dialect graph edges to channels implemented in LLVM.";
+
+    let constructor = "mlir::createConvertDfgToLLVMPass()";
+
+    let dependentDialects = [
+        "cf::ControlFlowDialect",
+        "LLVM::LLVMDialect",
 
         "dfg::DfgDialect"
     ];
