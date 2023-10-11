@@ -3,7 +3,6 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
-#include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
 #include "circt/Dialect/HW/HWDialect.h"
@@ -26,6 +25,11 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/APInt.h"
+
+namespace mlir {
+#define GEN_PASS_DEF_CONVERTSTDTOCIRCT
+#include "dfg-mlir/Conversion/Passes.h.inc"
+} // namespace mlir
 
 using namespace mlir;
 using namespace mlir::dfg;
@@ -689,8 +693,8 @@ void mlir::populateStdToCirctConversionPatterns(
 
 namespace {
 struct ConvertStdToCirctPass
-        : public ConvertStdToCirctBase<ConvertStdToCirctPass> {
-    void runOnOperation() final;
+        : public impl::ConvertStdToCirctBase<ConvertStdToCirctPass> {
+    void runOnOperation() override;
 };
 } // namespace
 
