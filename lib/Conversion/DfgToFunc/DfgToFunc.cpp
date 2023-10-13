@@ -178,7 +178,7 @@ std::unique_ptr<Pass> mlir::createConvertDfgToFuncPass()
 // - [x] use adaptor where possible
 // - [x] single out OperatorOpLowering and InstantiateOpLowering
 // - [x] expand OperatorOpLowering to include cf logic already
-// - [ ] modify the pull/push lowerings to include the necessary logic for
+// - [x] modify the pull/push lowerings to include the necessary logic for
 // breaking
 // - [ ] insert the logic for closing channels in the break block
 //       - Make all FuncOps with channels in the signature illegal -> alter the

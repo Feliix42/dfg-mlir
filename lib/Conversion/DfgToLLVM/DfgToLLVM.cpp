@@ -390,27 +390,27 @@ LogicalResult rewritePullOp(
 //     }
 // };
 
-// struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
-//     using OpConversionPattern<ChannelOp>::OpConversionPattern;
+struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
+    using OpConversionPattern<ChannelOp>::OpConversionPattern;
 
-//     ChannelOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<ChannelOp>(typeConverter, context){};
+    ChannelOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ChannelOp>(typeConverter, context){};
 
-//     LogicalResult matchAndRewrite(
-//         ChannelOp op,
-//         ChannelOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         // NOTE(feliix42): Conceptually, what I probably want to do, is:
-//         // 1. create a new CallOp calling the channel creation function
-//         // 2. insert the appropriate definition at the top
-//         // 3. replace all channel inputs and outputs with the newly created
-//         // result
-//         // 4. delete the old op
-//         // 5. insert the lowering down there
-//         return success();
-//     }
-// };
+    LogicalResult matchAndRewrite(
+        ChannelOp op,
+        ChannelOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        // NOTE(feliix42): Conceptually, what I probably want to do, is:
+        // 1. create a new CallOp calling the channel creation function
+        // 2. insert the appropriate definition at the top
+        // 3. replace all channel inputs and outputs with the newly created
+        // result
+        // 4. delete the old op
+        // 5. insert the lowering down there
+        return success();
+    }
+};
 
 void mlir::populateDfgToLLVMConversionPatterns(
     TypeConverter typeConverter,
@@ -429,6 +429,58 @@ void mlir::populateDfgToLLVMConversionPatterns(
 void ConvertDfgToLLVMPass::runOnOperation()
 {
     Operation* op = getOperation();
+
+    TypeConverter converter;
+
+    converter.addConversion([](OutputType t) {
+        Type elementPtr = LLVM::LLVMPointerType::get(t.getElementType());
+        Type i64Type = IntegerType::get(t.getContext(), 64);
+        std::vector<Type> structTypes{
+            elementPtr,
+            i64Type,
+            i64Type,
+            i64Type,
+            i64Type,
+            IntegerType::get(t.getContext(), 8)};
+        Type returnedStruct =
+            LLVM::LLVMStructType::getLiteral(t.getContext(), structTypes);
+        return returnedStruct;
+    });
+    converter.addConversion([](InputType t) {
+        Type elementPtr = LLVM::LLVMPointerType::get(t.getElementType());
+        Type i64Type = IntegerType::get(t.getContext(), 64);
+        std::vector<Type> structTypes{
+            elementPtr,
+            i64Type,
+            i64Type,
+            i64Type,
+            i64Type,
+            IntegerType::get(t.getContext(), 8)};
+        Type returnedStruct =
+            LLVM::LLVMStructType::getLiteral(t.getContext(), structTypes);
+        return returnedStruct;
+    });
+    converter.addConversion([](Type t) { return t; });
+
+    // TODO:
+    // look at the places where the populate Functions for builtin ops are
+    // defined to copy the dynamic legality constraints and type rewriter
+    // patterns for these ops
+
+    // =========================================================================================
+    // In the following block, we do multiple things in one go:
+    // 0. create an empty terminator block for any functions with dfg.pull/push
+    // ops.
+    // 1. lower `PushOp` and `PullOp` into their respective `LLVM::CallOp`s
+    // 2. insert the necessary teardown logic for channels
+    //
+    // The reasoning behind doing this with a walk pattern instead of a "normal"
+    // ConversionRewritePattern is the irreducible entangledness between the
+    // three aforementioned tasks. We cannot "just" create an empty termination
+    // block in one pass and find it again later. Canonicalization passes will
+    // immediately remove it. Similarly, it's hard to find a non-empty block
+    // again later without retaining a reference all the time. In the end, it
+    // was easier to solve this problem by doing all three things in one go.
 
     // per func, collect all push/pull ops
     WalkResult res = op->walk([&](func::FuncOp funcOp) -> WalkResult {
@@ -491,21 +543,6 @@ void ConvertDfgToLLVMPass::runOnOperation()
 
     // =======================================================================
 
-    TypeConverter converter;
-
-    converter.addConversion([](Type t) { return t; });
-
-    // TODO(feliix42): add type conversion here
-    // converter.addConversion([&](Type type) {
-    //     if (isa<IntegerType>(type)) return type;
-    //     return Type();
-    // });
-
-    // TODO:
-    // look at the places where the populate Functions for builtin ops are
-    // defined to copy the dynamic legality constraints and type rewriter
-    // patterns for these ops
-
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
@@ -518,17 +555,19 @@ void ConvertDfgToLLVMPass::runOnOperation()
     target.addLegalDialect<
         BuiltinDialect,
         func::FuncDialect,
+        cf::ControlFlowDialect,
         LLVM::LLVMDialect>();
 
     target.addLegalDialect<DfgDialect>();
     // NOTE(feliix42): Keep InstantiateOp and OperatorOp illegal here as they
     // should've been removed in a previous pass.
+    target.addIllegalOp<PushOp, PullOp>();
     // target.addIllegalOp<OperatorOp, PushOp, PullOp>();
     target.addDynamicallyLegalOp<InstantiateOp>(
         [](InstantiateOp op) { return op.getOffloaded(); });
 
-    // if (failed(applyPartialConversion(op, target, std::move(patterns))))
-    //     signalPassFailure();
+    if (failed(applyPartialConversion(op, target, std::move(patterns))))
+        signalPassFailure();
 }
 
 std::unique_ptr<Pass> mlir::createConvertDfgToLLVMPass()
@@ -538,7 +577,6 @@ std::unique_ptr<Pass> mlir::createConvertDfgToLLVMPass()
 
 // TODO:
 // I changed the whole structure of this.
-// - implement the rewritePullOp function
-// - remove the pullOp lowering
 // - fix the typerewrite to remove the channel types
+//     - maybe I need to do it manually and insert unrealized casts?
 // - continue with the TODOs from the other list
