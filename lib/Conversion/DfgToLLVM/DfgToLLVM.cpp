@@ -92,7 +92,7 @@ LogicalResult insertTeardownFunctionFromPush(
         llvmVoid,
         pushOp.getChan());
 
-    LLVM::CallOp pushOperation = rewriter.create<LLVM::CallOp>(
+    rewriter.create<LLVM::CallOp>(
         pushOp.getLoc(),
         ArrayRef<Type>(llvmVoid),
         pushFuncName,
@@ -123,7 +123,7 @@ LogicalResult insertTeardownFunctionFromPull(
         llvmVoid,
         pullOp.getChan());
 
-    LLVM::CallOp pushOperation = rewriter.create<LLVM::CallOp>(
+    rewriter.create<LLVM::CallOp>(
         pullOp.getLoc(),
         ArrayRef<Type>(llvmVoid),
         pushFuncName,
@@ -290,89 +290,105 @@ LogicalResult rewritePullOp(
         pullFuncName,
         op.getChan());
 
-    // ===================================================================
-    // TODO: Replace users of the results
-    // insert into old block: unpacking
-    // split block
-    // block arguments: arguments of this block + result of unpacked value
-    // conditional jump
-    // REPLACE ALL USES
-    // ===================================================================
+    LLVM::ExtractValueOp value = rewriter.create<LLVM::ExtractValueOp>(
+        pullOperation.getLoc(),
+        pullOperation.getResult(),
+        0);
+    LLVM::ExtractValueOp valid = rewriter.create<LLVM::ExtractValueOp>(
+        value.getLoc(),
+        pullOperation.getResult(),
+        1);
+
+    // let's hope this works
+    op.getResult().replaceAllUsesWith(value.getResult());
+
+    // ======================================================================
+    // TODO(feliix42): For better style, I should not copy arguments from the
+    // entry block maybe?
+    // ======================================================================
 
     // this was taken from the pushOp lowering
-    // Block* currentBlock = pullOperation->getBlock();
+    Block* currentBlock = pullOperation->getBlock();
 
-    // // create the new block with the same argument list
-    // Block* newBlock =
-    //     rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
-    // SmallVector<Location> argLocs;
-    // for (auto arg : currentBlock->getArguments())
-    //     argLocs.push_back(arg.getLoc());
-    // newBlock->addArguments(currentBlock->getArgumentTypes(), argLocs);
+    // create the new block with the same argument list
+    Block* newBlock =
+        rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
+    SmallVector<Location> argLocs;
+    // The argument list for the newly created block
+    SmallVector<Value> blockArgs;
+    for (auto arg : currentBlock->getArguments()) {
+        argLocs.push_back(arg.getLoc());
+        blockArgs.push_back(arg);
+    }
+    blockArgs.push_back(value.getResult());
+    newBlock->addArguments(currentBlock->getArgumentTypes(), argLocs);
+    newBlock->addArgument(value.getType(), value.getLoc());
 
-    // // insert conditional jump to the break block
-    // rewriter.setInsertionPointToEnd(currentBlock);
-    // rewriter.create<cf::CondBranchOp>(
-    //     pullOperation.getLoc(),
-    //     pullOperation.getResult(),
-    //     newBlock,
-    //     terminatorBlock,
-    //     currentBlock->getArguments());
+    // insert conditional jump to the break block
+    rewriter.setInsertionPointToEnd(currentBlock);
+    rewriter.create<cf::CondBranchOp>(
+        valid.getLoc(),
+        valid.getResult(),
+        newBlock,
+        blockArgs,
+        terminatorBlock,
+        ArrayRef<Value>());
 
     op->erase();
 
     return success();
 }
 
-struct PullOpLowering : public OpConversionPattern<PullOp> {
-    using OpConversionPattern<PullOp>::OpConversionPattern;
+// struct PullOpLowering : public OpConversionPattern<PullOp> {
+//     using OpConversionPattern<PullOp>::OpConversionPattern;
 
-    PullOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<PullOp>(typeConverter, context){};
+//     PullOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+//             : OpConversionPattern<PullOp>(typeConverter, context){};
 
-    LogicalResult matchAndRewrite(
-        PullOp op,
-        PullOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        // create function name for PullOp in LLVM IR
-        std::string funcName = "pull_";
-        llvm::raw_string_ostream funcNameStream(funcName);
-        op.getType().print(funcNameStream);
+//     LogicalResult matchAndRewrite(
+//         PullOp op,
+//         PullOpAdaptor adaptor,
+//         ConversionPatternRewriter &rewriter) const override
+//     {
+//         // create function name for PullOp in LLVM IR
+//         std::string funcName = "pull_";
+//         llvm::raw_string_ostream funcNameStream(funcName);
+//         op.getType().print(funcNameStream);
 
-        // create the struct type that models the result
-        Type boolReturnVal = rewriter.getI1Type();
-        std::vector<Type> structTypes{op.getType(), boolReturnVal};
-        Type returnedStruct = LLVM::LLVMStructType::getLiteral(
-            rewriter.getContext(),
-            structTypes);
+//         // create the struct type that models the result
+//         Type boolReturnVal = rewriter.getI1Type();
+//         std::vector<Type> structTypes{op.getType(), boolReturnVal};
+//         Type returnedStruct = LLVM::LLVMStructType::getLiteral(
+//             rewriter.getContext(),
+//             structTypes);
 
-        // fetch or create the FlatSymbolRefAttr for the called function
-        ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-        FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
-            rewriter,
-            parentModule,
-            funcNameStream.str(),
-            returnedStruct,
-            adaptor.getOperands());
+//         // fetch or create the FlatSymbolRefAttr for the called function
+//         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
+//         FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
+//             rewriter,
+//             parentModule,
+//             funcNameStream.str(),
+//             returnedStruct,
+//             adaptor.getOperands());
 
-        rewriter.create<LLVM::CallOp>(
-            op.getLoc(),
-            ArrayRef<Type>(returnedStruct),
-            pullFuncName,
-            adaptor.getChan());
+//         rewriter.create<LLVM::CallOp>(
+//             op.getLoc(),
+//             ArrayRef<Type>(returnedStruct),
+//             pullFuncName,
+//             adaptor.getChan());
 
-        // TODO: Replace users of the results
-        // insert into old block: unpacking
-        // split block
-        // block arguments: arguments of this block + result of unpacked value
-        // conditional jump
+//         // TODO: Replace users of the results
+//         // insert into old block: unpacking
+//         // split block
+//         // block arguments: arguments of this block + result of unpacked
+//         value
+//         // conditional jump
 
-        rewriter.eraseOp(op);
+//         rewriter.eraseOp(op);
 
-        return success();
-    }
-};
+//         return success();
+//     }
+// };
 
 // struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
 //     using OpConversionPattern<ChannelOp>::OpConversionPattern;
@@ -404,7 +420,7 @@ void mlir::populateDfgToLLVMConversionPatterns(
     // patterns.add<PushOpLowering>(typeConverter, patterns.getContext());
 
     // dfg.pull -> llvm.call + logic
-    patterns.add<PullOpLowering>(typeConverter, patterns.getContext());
+    // patterns.add<PullOpLowering>(typeConverter, patterns.getContext());
 
     // dfg.channel -> !llvm.ptr
     // patterns.add<ChannelOp>(typeConverter, patterns.getContext());
