@@ -48,6 +48,7 @@
             cmake
             llvmPackages_16.clang
             llvmPackages_16.bintools
+            clang-tools_16
             mlir.packages.x86_64-linux.mlir
             mlir.packages.x86_64-linux.circt
             lit
