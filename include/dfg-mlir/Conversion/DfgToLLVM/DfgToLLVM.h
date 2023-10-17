@@ -8,6 +8,7 @@
 
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 
 namespace mlir {
 
@@ -19,7 +20,7 @@ namespace mlir {
 //===----------------------------------------------------------------------===//
 
 void populateDfgToLLVMConversionPatterns(
-    TypeConverter typeConverter,
+    LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns);
 
 std::unique_ptr<Pass> createConvertDfgToLLVMPass();

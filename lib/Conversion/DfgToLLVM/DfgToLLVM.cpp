@@ -7,6 +7,9 @@
 
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
+#include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
+#include "mlir/Conversion/LLVMCommon/Pattern.h"
+#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -31,7 +34,7 @@ using namespace mlir::dfg;
 
 /// Return a symbol reference to the requested function, inserting it into the
 /// module if necessary.
-static FlatSymbolRefAttr getOrInsertFunc(
+static FlatSymbolRefAttr getOrInsertLLVMFunc(
     PatternRewriter &rewriter,
     ModuleOp module,
     std::string funcName,
@@ -85,7 +88,7 @@ LogicalResult insertTeardownFunctionFromPush(
     auto llvmVoid = LLVM::LLVMVoidType::get(pushOp.getContext());
 
     // fetch or create the FlatSymbolRefAttr for the called function
-    FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
+    FlatSymbolRefAttr pushFuncName = getOrInsertLLVMFunc(
         rewriter,
         parentModule,
         funcName,
@@ -116,7 +119,7 @@ LogicalResult insertTeardownFunctionFromPull(
     auto llvmVoid = LLVM::LLVMVoidType::get(pullOp.getContext());
 
     // fetch or create the FlatSymbolRefAttr for the called function
-    FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
+    FlatSymbolRefAttr pushFuncName = getOrInsertLLVMFunc(
         rewriter,
         parentModule,
         funcName,
@@ -149,7 +152,7 @@ LogicalResult rewritePushOp(
 
     // fetch or create the FlatSymbolRefAttr for the called function
     ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-    FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
+    FlatSymbolRefAttr pushFuncName = getOrInsertLLVMFunc(
         rewriter,
         parentModule,
         funcName,
@@ -214,7 +217,7 @@ LogicalResult rewritePushOp(
 
 //         // fetch or create the FlatSymbolRefAttr for the called function
 //         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-//         FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
+//         FlatSymbolRefAttr pushFuncName = getOrInsertLLVMFunc(
 //             rewriter,
 //             parentModule,
 //             funcName,
@@ -277,7 +280,7 @@ LogicalResult rewritePullOp(
 
     // fetch or create the FlatSymbolRefAttr for the called function
     ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-    FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
+    FlatSymbolRefAttr pullFuncName = getOrInsertLLVMFunc(
         rewriter,
         parentModule,
         funcNameStream.str(),
@@ -364,7 +367,7 @@ LogicalResult rewritePullOp(
 
 //         // fetch or create the FlatSymbolRefAttr for the called function
 //         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-//         FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
+//         FlatSymbolRefAttr pullFuncName = getOrInsertLLVMFunc(
 //             rewriter,
 //             parentModule,
 //             funcNameStream.str(),
@@ -390,11 +393,13 @@ LogicalResult rewritePullOp(
 //     }
 // };
 
-struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
-    using OpConversionPattern<ChannelOp>::OpConversionPattern;
+// struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
+// using OpConversionPattern<ChannelOp>::OpConversionPattern;
 
-    ChannelOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+// ChannelOpLowering(LLVMTypeConverter &typeConverter, MLIRContext* context)
+//: OpConversionPattern<ChannelOp>(typeConverter, context){};
+struct ChannelOpLowering : public ConvertOpToLLVMPattern<ChannelOp> {
+    using ConvertOpToLLVMPattern<ChannelOp>::ConvertOpToLLVMPattern;
 
     LogicalResult matchAndRewrite(
         ChannelOp op,
@@ -408,12 +413,18 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
         // result
         // 4. delete the old op
         // 5. insert the lowering down there
+        std::string funcName = "channel_";
+        llvm::raw_string_ostream funcNameStream(funcName);
+        funcNameStream << op.getEncapsulatedType();
+
+        // Do I need an unrealized cast?
+
         return success();
     }
 };
 
 void mlir::populateDfgToLLVMConversionPatterns(
-    TypeConverter typeConverter,
+    LLVMTypeConverter &typeConverter,
     RewritePatternSet &patterns)
 {
     // dfg.push -> llvm.call + logic
@@ -423,42 +434,35 @@ void mlir::populateDfgToLLVMConversionPatterns(
     // patterns.add<PullOpLowering>(typeConverter, patterns.getContext());
 
     // dfg.channel -> !llvm.ptr
+    patterns.add<ChannelOpLowering>(typeConverter);
     // patterns.add<ChannelOp>(typeConverter, patterns.getContext());
+}
+
+Type getLLVMStructfromChannelType(const Type &elementType, MLIRContext* ctx)
+{
+    Type elementPtr = LLVM::LLVMPointerType::get(elementType);
+    Type i64Type = IntegerType::get(ctx, 64);
+    std::vector<Type> structTypes{
+        elementPtr,
+        i64Type,
+        i64Type,
+        i64Type,
+        i64Type,
+        IntegerType::get(ctx, 8)};
+    return LLVM::LLVMStructType::getLiteral(ctx, structTypes);
 }
 
 void ConvertDfgToLLVMPass::runOnOperation()
 {
     Operation* op = getOperation();
 
-    TypeConverter converter;
+    LLVMTypeConverter converter(&getContext());
 
     converter.addConversion([](OutputType t) {
-        Type elementPtr = LLVM::LLVMPointerType::get(t.getElementType());
-        Type i64Type = IntegerType::get(t.getContext(), 64);
-        std::vector<Type> structTypes{
-            elementPtr,
-            i64Type,
-            i64Type,
-            i64Type,
-            i64Type,
-            IntegerType::get(t.getContext(), 8)};
-        Type returnedStruct =
-            LLVM::LLVMStructType::getLiteral(t.getContext(), structTypes);
-        return returnedStruct;
+        return getLLVMStructfromChannelType(t.getElementType(), t.getContext());
     });
     converter.addConversion([](InputType t) {
-        Type elementPtr = LLVM::LLVMPointerType::get(t.getElementType());
-        Type i64Type = IntegerType::get(t.getContext(), 64);
-        std::vector<Type> structTypes{
-            elementPtr,
-            i64Type,
-            i64Type,
-            i64Type,
-            i64Type,
-            IntegerType::get(t.getContext(), 8)};
-        Type returnedStruct =
-            LLVM::LLVMStructType::getLiteral(t.getContext(), structTypes);
-        return returnedStruct;
+        return getLLVMStructfromChannelType(t.getElementType(), t.getContext());
     });
     converter.addConversion([](Type t) { return t; });
 
@@ -543,7 +547,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
 
     // =======================================================================
 
-    ConversionTarget target(getContext());
+    LLVMConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
     populateDfgToLLVMConversionPatterns(converter, patterns);
@@ -557,6 +561,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
         func::FuncDialect,
         cf::ControlFlowDialect,
         LLVM::LLVMDialect>();
+    target.addLegalOp<UnrealizedConversionCastOp>();
 
     target.addLegalDialect<DfgDialect>();
     // NOTE(feliix42): Keep InstantiateOp and OperatorOp illegal here as they
