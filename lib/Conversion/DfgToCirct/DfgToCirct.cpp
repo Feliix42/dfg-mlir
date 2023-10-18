@@ -178,8 +178,13 @@ fsm::MachineOp insertController(
                 hwInstanceValids[i],
                 c_false.getResult());
         auto pullVarWidth = pullVars[i].getType().getIntOrFloatBitWidth();
-        auto zeroValue = getNewIndexOrArg<Value, int>(pullVarWidth, zeroWidth);
-        builder.create<fsm::UpdateOp>(loc, pullVars[i], zeroValue.value());
+        Value zeroValue;
+        if (pullVarWidth == 1)
+            zeroValue = c_false.getResult();
+        else
+            zeroValue =
+                getNewIndexOrArg<Value, int>(pullVarWidth, zeroWidth).value();
+        builder.create<fsm::UpdateOp>(loc, pullVars[i], zeroValue);
     }
     if (hasMultiOutputs) {
         for (size_t i = 0; i < calcDataValids.size(); i++) {
@@ -302,7 +307,8 @@ fsm::MachineOp insertController(
 
     // Here should be all push ops
     int idxStateWrite = 0;
-    for (size_t i = numPull + 1; i < ops.size(); i++) {
+    size_t startIdx = isNextPush ? numPull : numPull + 1;
+    for (size_t i = startIdx; i < ops.size(); i++) {
         auto pushOp = dyn_cast<PushOp>(ops[i]);
         assert(pushOp && "here shoule be all PushOp");
         auto argIndex =
