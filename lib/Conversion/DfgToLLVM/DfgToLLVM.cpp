@@ -7,7 +7,6 @@
 
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
-#include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
@@ -20,6 +19,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Transforms/DialectConversion.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTDFGTOLLVM
@@ -35,7 +35,7 @@ using namespace mlir::dfg;
 
 /// Return a symbol reference to the requested function, inserting it into the
 /// module if necessary.
-static FlatSymbolRefAttr getOrInsertLLVMFunc(
+static FlatSymbolRefAttr getOrInsertFunc(
     PatternRewriter &rewriter,
     ModuleOp module,
     std::string funcName,
@@ -43,7 +43,7 @@ static FlatSymbolRefAttr getOrInsertLLVMFunc(
     ValueRange arguments)
 {
     auto* context = module.getContext();
-    if (module.lookupSymbol<LLVM::LLVMFuncOp>(funcName))
+    if (module.lookupSymbol<func::FuncOp>(funcName))
         return SymbolRefAttr::get(context, funcName);
 
     // convert the OperandRange into a list of types
@@ -51,15 +51,17 @@ static FlatSymbolRefAttr getOrInsertLLVMFunc(
     std::vector<Type> tyVec(argIterator.begin(), argIterator.end());
 
     // Create a function declaration for the desired function
-    auto llvmFnType = LLVM::LLVMFunctionType::get(
-        result,
-        tyVec,
-        /*isVarArg=*/true);
+    auto fnType = rewriter.getFunctionType(tyVec, result);
+    // auto llvmFnType = LLVM::LLVMFunctionType::get(
+    // result,
+    // tyVec,
+    //[>isVarArg=<]true);
 
     // Insert the function into the body of the parent module.
     PatternRewriter::InsertionGuard insertGuard(rewriter);
     rewriter.setInsertionPointToStart(module.getBody());
-    rewriter.create<LLVM::LLVMFuncOp>(module.getLoc(), funcName, llvmFnType);
+    rewriter.create<func::FuncOp>(module.getLoc(), funcName, fnType)
+        .setPrivate();
     return SymbolRefAttr::get(context, funcName);
 }
 
@@ -89,17 +91,17 @@ LogicalResult insertTeardownFunctionFromPush(
     auto llvmVoid = LLVM::LLVMVoidType::get(pushOp.getContext());
 
     // fetch or create the FlatSymbolRefAttr for the called function
-    FlatSymbolRefAttr pushFuncName = getOrInsertLLVMFunc(
+    FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
         rewriter,
         parentModule,
         funcName,
         llvmVoid,
         pushOp.getChan());
 
-    rewriter.create<LLVM::CallOp>(
+    rewriter.create<func::CallOp>(
         pushOp.getLoc(),
-        ArrayRef<Type>(llvmVoid),
         pushFuncName,
+        ArrayRef<Type>(llvmVoid),
         pushOp.getChan());
 
     return success();
@@ -119,19 +121,26 @@ LogicalResult insertTeardownFunctionFromPull(
 
     auto llvmVoid = LLVM::LLVMVoidType::get(pullOp.getContext());
 
+    // TODO(feliix42): Translate to InputType, insert UnrealizedConversionCastOp
+    UnrealizedConversionCastOp inputType =
+        rewriter.create<UnrealizedConversionCastOp>(
+            pullOp.getLoc(),
+            rewriter.getType<InputType>(pullOp.getType()),
+            pullOp.getChan());
+
     // fetch or create the FlatSymbolRefAttr for the called function
-    FlatSymbolRefAttr pushFuncName = getOrInsertLLVMFunc(
+    FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
         rewriter,
         parentModule,
         funcName,
         llvmVoid,
-        pullOp.getChan());
+        inputType.getResult(0));
 
-    rewriter.create<LLVM::CallOp>(
+    rewriter.create<func::CallOp>(
         pullOp.getLoc(),
-        ArrayRef<Type>(llvmVoid),
         pushFuncName,
-        pullOp.getChan());
+        ArrayRef<Type>(llvmVoid),
+        inputType.getResult(0));
 
     return success();
 }
@@ -153,17 +162,17 @@ LogicalResult rewritePushOp(
 
     // fetch or create the FlatSymbolRefAttr for the called function
     ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-    FlatSymbolRefAttr pushFuncName = getOrInsertLLVMFunc(
+    FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
         rewriter,
         parentModule,
         funcName,
         boolReturnVal,
         op->getOperands());
 
-    LLVM::CallOp pushOperation = rewriter.create<LLVM::CallOp>(
+    func::CallOp pushOperation = rewriter.create<func::CallOp>(
         op->getLoc(),
-        ArrayRef<Type>(boolReturnVal),
         pushFuncName,
+        ArrayRef<Type>(boolReturnVal),
         op->getOperands());
 
     // to handle the result of the push, we must do the following:
@@ -185,11 +194,11 @@ LogicalResult rewritePushOp(
     rewriter.setInsertionPointToEnd(currentBlock);
     rewriter.create<cf::CondBranchOp>(
         pushOperation.getLoc(),
-        pushOperation.getResult(),
+        pushOperation.getResult(0),
         newBlock,
-        /* trueArgs = */currentBlock->getArguments(),
+        /* trueArgs = */ currentBlock->getArguments(),
         terminatorBlock,
-        /* falseArgs = */ArrayRef<Value>());
+        /* falseArgs = */ ArrayRef<Value>());
 
     op->erase();
 
@@ -219,7 +228,7 @@ LogicalResult rewritePushOp(
 
 //         // fetch or create the FlatSymbolRefAttr for the called function
 //         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-//         FlatSymbolRefAttr pushFuncName = getOrInsertLLVMFunc(
+//         FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
 //             rewriter,
 //             parentModule,
 //             funcName,
@@ -282,14 +291,14 @@ LogicalResult rewritePullOp(
 
     // fetch or create the FlatSymbolRefAttr for the called function
     ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-    FlatSymbolRefAttr pullFuncName = getOrInsertLLVMFunc(
+    FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
         rewriter,
         parentModule,
         funcNameStream.str(),
         returnedStruct,
         op.getOperand());
 
-    LLVM::CallOp pullOperation = rewriter.create<LLVM::CallOp>(
+    func::CallOp pullOperation = rewriter.create<func::CallOp>(
         op.getLoc(),
         ArrayRef<Type>(returnedStruct),
         pullFuncName,
@@ -297,11 +306,11 @@ LogicalResult rewritePullOp(
 
     LLVM::ExtractValueOp value = rewriter.create<LLVM::ExtractValueOp>(
         pullOperation.getLoc(),
-        pullOperation.getResult(),
+        pullOperation.getResult(0),
         0);
     LLVM::ExtractValueOp valid = rewriter.create<LLVM::ExtractValueOp>(
         value.getLoc(),
-        pullOperation.getResult(),
+        pullOperation.getResult(0),
         1);
 
     // let's hope this works
@@ -369,7 +378,7 @@ LogicalResult rewritePullOp(
 
 //         // fetch or create the FlatSymbolRefAttr for the called function
 //         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-//         FlatSymbolRefAttr pullFuncName = getOrInsertLLVMFunc(
+//         FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
 //             rewriter,
 //             parentModule,
 //             funcNameStream.str(),
@@ -395,13 +404,13 @@ LogicalResult rewritePullOp(
 //     }
 // };
 
-// struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
-// using OpConversionPattern<ChannelOp>::OpConversionPattern;
+struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
+    using OpConversionPattern<ChannelOp>::OpConversionPattern;
 
-// ChannelOpLowering(LLVMTypeConverter &typeConverter, MLIRContext* context)
-//: OpConversionPattern<ChannelOp>(typeConverter, context){};
-struct ChannelOpLowering : public ConvertOpToLLVMPattern<ChannelOp> {
-    using ConvertOpToLLVMPattern<ChannelOp>::ConvertOpToLLVMPattern;
+    ChannelOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+    // struct ChannelOpLowering : public ConvertOpToLLVMPattern<ChannelOp> {
+    // using ConvertOpToLLVMPattern<ChannelOp>::ConvertOpToLLVMPattern;
 
     LogicalResult matchAndRewrite(
         ChannelOp op,
@@ -426,7 +435,7 @@ struct ChannelOpLowering : public ConvertOpToLLVMPattern<ChannelOp> {
 };
 
 void mlir::populateDfgToLLVMConversionPatterns(
-    LLVMTypeConverter &typeConverter,
+    TypeConverter &typeConverter,
     RewritePatternSet &patterns)
 {
     // dfg.push -> llvm.call + logic
@@ -436,7 +445,7 @@ void mlir::populateDfgToLLVMConversionPatterns(
     // patterns.add<PullOpLowering>(typeConverter, patterns.getContext());
 
     // dfg.channel -> !llvm.ptr
-    patterns.add<ChannelOpLowering>(typeConverter);
+    patterns.add<ChannelOpLowering>(typeConverter, patterns.getContext());
     // patterns.add<ChannelOp>(typeConverter, patterns.getContext());
 }
 
@@ -458,7 +467,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
 {
     Operation* op = getOperation();
 
-    LLVMTypeConverter converter(&getContext());
+    TypeConverter converter;
 
     converter.addConversion([](OutputType t) {
         return getLLVMStructfromChannelType(t.getElementType(), t.getContext());
@@ -516,6 +525,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
         });
 
         // insert Return into terminatorBlock
+        // ConversionPatternRewriter rewriter(funcOp->getContext());
         ConversionPatternRewriter rewriter(funcOp->getContext());
         rewriter.setInsertionPointToEnd(terminatorBlock);
         // insert teardown function calls for push and pull ops
@@ -549,11 +559,13 @@ void ConvertDfgToLLVMPass::runOnOperation()
 
     // =======================================================================
 
-    LLVMConversionTarget target(getContext());
+    ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
     populateDfgToLLVMConversionPatterns(converter, patterns);
-    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, converter);
+    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
+        patterns,
+        converter);
     populateReturnOpTypeConversionPattern(patterns, converter);
     populateCallOpTypeConversionPattern(patterns, converter);
     populateBranchOpInterfaceTypeConversionPattern(patterns, converter);
@@ -565,13 +577,24 @@ void ConvertDfgToLLVMPass::runOnOperation()
         LLVM::LLVMDialect>();
     target.addLegalOp<UnrealizedConversionCastOp>();
 
-    target.addLegalDialect<DfgDialect>();
+    // target.addLegalDialect<DfgDialect>();
+    target.addIllegalDialect<DfgDialect>();
     // NOTE(feliix42): Keep InstantiateOp and OperatorOp illegal here as they
     // should've been removed in a previous pass.
-    target.addIllegalOp<PushOp, PullOp>();
+    target.addLegalOp<ChannelOp>();
     // target.addIllegalOp<OperatorOp, PushOp, PullOp>();
     target.addDynamicallyLegalOp<InstantiateOp>(
         [](InstantiateOp op) { return op.getOffloaded(); });
+    target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp op) {
+        for (auto ty : op.getFunctionType().getInputs())
+            if (ty.isa<InputType>() || ty.isa<OutputType>()) return false;
+        return true;
+    });
+    target.addDynamicallyLegalOp<func::CallOp>([](func::CallOp op) {
+        for (auto opTy : op.getOperandTypes())
+            if (opTy.isa<InputType>() || opTy.isa<OutputType>()) return false;
+        return true;
+    });
 
     if (failed(applyPartialConversion(op, target, std::move(patterns))))
         signalPassFailure();
@@ -582,8 +605,3 @@ std::unique_ptr<Pass> mlir::createConvertDfgToLLVMPass()
     return std::make_unique<ConvertDfgToLLVMPass>();
 }
 
-// TODO:
-// I changed the whole structure of this.
-// - fix the typerewrite to remove the channel types
-//     - maybe I need to do it manually and insert unrealized casts?
-// - continue with the TODOs from the other list

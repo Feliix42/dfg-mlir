@@ -20,7 +20,7 @@ namespace mlir {
 //===----------------------------------------------------------------------===//
 
 void populateDfgToLLVMConversionPatterns(
-    LLVMTypeConverter &typeConverter,
+    TypeConverter &typeConverter,
     RewritePatternSet &patterns);
 
 std::unique_ptr<Pass> createConvertDfgToLLVMPass();
