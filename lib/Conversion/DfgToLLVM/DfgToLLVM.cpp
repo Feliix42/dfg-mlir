@@ -7,6 +7,7 @@
 
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
+#include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
@@ -186,8 +187,9 @@ LogicalResult rewritePushOp(
         pushOperation.getLoc(),
         pushOperation.getResult(),
         newBlock,
+        /* trueArgs = */currentBlock->getArguments(),
         terminatorBlock,
-        currentBlock->getArguments());
+        /* falseArgs = */ArrayRef<Value>());
 
     op->erase();
 
@@ -551,7 +553,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
     RewritePatternSet patterns(&getContext());
 
     populateDfgToLLVMConversionPatterns(converter, patterns);
-    populateAnyFunctionOpInterfaceTypeConversionPattern(patterns, converter);
+    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, converter);
     populateReturnOpTypeConversionPattern(patterns, converter);
     populateCallOpTypeConversionPattern(patterns, converter);
     populateBranchOpInterfaceTypeConversionPattern(patterns, converter);
