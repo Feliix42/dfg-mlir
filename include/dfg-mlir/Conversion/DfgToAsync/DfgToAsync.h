@@ -10,6 +10,13 @@
 
 namespace mlir {
 
+//===- Generated includes -------------------------------------------------===//
+
+#define GEN_PASS_DECL_CONVERTDFGTOASYNC
+#include "dfg-mlir/Conversion/Passes.h.inc"
+
+//===----------------------------------------------------------------------===//
+
 void populateDfgToAsyncConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns);

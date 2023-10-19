@@ -3,7 +3,6 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
-#include "../PassDetails.h"
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
 #include "circt/Dialect/HW/HWDialect.h"
@@ -26,6 +25,11 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/APInt.h"
+
+namespace mlir {
+#define GEN_PASS_DEF_CONVERTSTDTOCIRCT
+#include "dfg-mlir/Conversion/Passes.h.inc"
+} // namespace mlir
 
 using namespace mlir;
 using namespace mlir::dfg;
@@ -266,9 +270,25 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
 // Wrap calc ops in one handshake func
 std::optional<int> getResultIdx(Value value, Operation* op)
 {
+    if (op == nullptr) return std::nullopt;
     for (size_t i = 0; i < op->getNumResults(); i++)
         if (op->getResult(i) == value) return (int)i;
     return std::nullopt;
+}
+void writeFuncToFile(func::FuncOp funcOp, StringRef funcName)
+{
+    std::string filename = funcName.str() + ".mlir";
+    std::error_code error;
+    llvm::raw_fd_ostream outputFile(filename, error);
+
+    if (error) {
+        llvm::errs()
+            << "Could not open output file: " << error.message() << "\n";
+        return;
+    }
+
+    funcOp.print(outputFile);
+    outputFile.close();
 }
 struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
     using OpConversionPattern<OperatorOp>::OpConversionPattern;
@@ -287,6 +307,23 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         auto ops = op.getOps();
         auto moduleOp = op->getParentOfType<ModuleOp>();
 
+        LoopOp loopOp = nullptr;
+        bool hasLoopOp = false;
+        SmallVector<int> loopInChanIdx, loopOutChanIdx;
+        if (auto oldLoop = dyn_cast<LoopOp>(*ops.begin())) {
+            ops = oldLoop.getOps();
+            loopOp = oldLoop;
+            hasLoopOp = true;
+            for (auto inChan : oldLoop.getInChans()) {
+                auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
+                loopInChanIdx.push_back(idxChan);
+            }
+            for (auto outChan : oldLoop.getOutChans()) {
+                auto idxChan = outChan.cast<BlockArgument>().getArgNumber();
+                loopOutChanIdx.push_back(idxChan);
+            }
+        }
+
         int idxPull = 0;
         int numPull = 0;
         int idxCalc = 0;
@@ -304,6 +341,9 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         std::vector<int> pushedValueIdx;
         SmallVector<std::pair<int, Value>> calcResultIdx;
         SmallVector<std::pair<int, Operation*>> calcOpIndx;
+        for (auto &opi : ops)
+            if (auto pushOp = dyn_cast<PushOp>(opi))
+                pushedValueRepeat.push_back(pushOp.getInp());
         for (auto &opi : ops) {
             if (auto pullOp = dyn_cast<PullOp>(opi)) {
                 auto pullValue = pullOp.getOutp();
@@ -316,7 +356,9 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                 numPull++;
             } else if (!isa<PushOp>(opi)) {
                 for (auto result : opi.getResults())
-                    calcResultIdx.push_back(std::make_pair(idxCalc++, result));
+                    if (isInSmallVector<Value>(result, pushedValueRepeat))
+                        calcResultIdx.push_back(
+                            std::make_pair(idxCalc++, result));
                 calcOpIndx.push_back(std::make_pair(numCalc++, &opi));
             } else if (auto pushOp = dyn_cast<PushOp>(opi)) {
                 auto pushValue = pushOp.getInp();
@@ -329,13 +371,14 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                     pushedTypes.push_back(pushChan.getType().getElementType());
                     numResult++;
                 }
-                pushedValueRepeat.push_back(pushValue);
                 auto idxChan = pushChan.cast<BlockArgument>().getArgNumber();
                 pushedChanIdx.push_back(idxChan);
                 if (!isPushPulledValue) {
                     auto idx =
                         getNewIndexOrArg<int, Value>(pushValue, calcResultIdx);
                     pushedValueIdx.push_back(idx.value());
+                } else {
+                    pushedValueIdx.push_back(-1);
                 }
                 numPush++;
             }
@@ -352,6 +395,21 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         SmallVector<Value> newPulledValue;
         auto loc = rewriter.getUnknownLoc();
         rewriter.setInsertionPointToStart(entryBlock);
+        if (hasLoopOp) {
+            SmallVector<Value> loopInChans, loopOutChans;
+            for (auto inChanIdx : loopInChanIdx) {
+                loopInChans.push_back(
+                    newOperator.getBody().getArgument(inChanIdx));
+            }
+            for (auto outChanIdx : loopOutChanIdx) {
+                loopOutChans.push_back(
+                    newOperator.getBody().getArgument(outChanIdx));
+            }
+            auto newLoop =
+                rewriter.create<LoopOp>(loc, loopInChans, loopOutChans);
+            Block* loopEntryBlock = rewriter.createBlock(&newLoop.getBody());
+            rewriter.setInsertionPointToStart(loopEntryBlock);
+        }
         for (int i = 0; i < numPull; i++) {
             auto newPull = rewriter.create<PullOp>(
                 loc,
@@ -359,7 +417,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
             newPulledValue.push_back(newPull.getResult());
         }
 
-        auto name = "handshake_" + operatorName.str() + "_calc";
+        auto name = "hls_" + operatorName.str() + "_calc";
         auto instanceOp = rewriter.create<HWInstanceOp>(
             loc,
             pushedTypes,
@@ -378,14 +436,9 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                     newOperator.getBody().getArgument(idxChan));
                 continue;
             }
-            auto posValue = std::find(
-                pushedValueIdx.begin(),
-                pushedValueIdx.end(),
-                pushedValueIdx[i]);
-            auto idxValue = std::distance(pushedValueIdx.begin(), posValue);
             rewriter.create<PushOp>(
                 loc,
-                instanceOp.getResult(idxValue),
+                instanceOp.getResult(pushedValueIdx[i]),
                 newOperator.getBody().getArgument(idxChan));
         }
 
@@ -429,7 +482,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                 }
                 newCalcOps.push_back(newCalcOp);
                 rewriter.insert(newCalcOp);
-            } else {
+            } else { // If the op has regions
                 int idxOperand = 0;
                 for (auto operand : newCalcOp->getOperands()) {
                     if (auto idxArg = getNewIndexOrArg<int, Value>(
@@ -450,6 +503,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                                 idxResult.value()));
                     }
                 }
+                // For each region, manage the ops inside
                 for (auto &region : newCalcOp->getRegions()) {
                     for (auto &opRegion : region.getOps()) {
                         int idxOperand = 0;
@@ -469,24 +523,28 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                                         calcOpIndx);
                                 auto idxResult =
                                     getResultIdx(operand, definingOp);
-                                if (idxCalcOp)
-                                    opRegion.setOperand(
-                                        idxOperand++,
-                                        newCalcOps[idxCalcOp.value()]
-                                            ->getResult(idxResult.value()));
-                                else
-                                    continue;
+                                if (idxResult) {
+                                    if (idxCalcOp)
+                                        opRegion.setOperand(
+                                            idxOperand++,
+                                            newCalcOps[idxCalcOp.value()]
+                                                ->getResult(idxResult.value()));
+                                    else
+                                        opRegion.setOperand(
+                                            idxOperand++,
+                                            definingOp->getResult(
+                                                idxResult.value()));
+                                }
                             }
                         }
                     }
                 }
                 newCalcOps.push_back(newCalcOp);
                 rewriter.insert(newCalcOp);
-                // return rewriter.notifyMatchFailure(
-                //     newCalcOp->getLoc(),
-                //     "multi-region ops will be supported later");
             }
         }
+
+        // Resolve the return values
         SmallVector<Value> returnValues;
         for (int i = 0; i < numResult; i++) {
             auto result = pushedValueNonRepeat[i];
@@ -499,6 +557,69 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         }
 
         rewriter.create<func::ReturnOp>(loc, returnValues);
+
+        writeFuncToFile(genFuncOp, genFuncOp.getSymName());
+        rewriter.setInsertionPointToStart(&moduleOp.getBodyRegion().front());
+        SmallVector<hw::PortInfo> ports;
+        for (size_t i = 0; i < pulledTypes.size(); i++) {
+            auto type = pulledTypes[i];
+            std::string name;
+            hw::PortInfo in_data;
+            name = "in" + std::to_string(i);
+            in_data.name = rewriter.getStringAttr(name);
+            in_data.dir = hw::ModulePort::Direction::Input;
+            in_data.type = type;
+            ports.push_back(in_data);
+            hw::PortInfo in_valid;
+            name = "in" + std::to_string(i) + "_valid";
+            in_valid.name = rewriter.getStringAttr(name);
+            in_valid.dir = hw::ModulePort::Direction::Input;
+            in_valid.type = rewriter.getI1Type();
+            ports.push_back(in_valid);
+            hw::PortInfo in_ready;
+            name = "in" + std::to_string(i) + "_ready";
+            in_ready.name = rewriter.getStringAttr(name);
+            in_ready.dir = hw::ModulePort::Direction::Output;
+            in_ready.type = rewriter.getI1Type();
+            ports.push_back(in_ready);
+        }
+        hw::PortInfo clock;
+        clock.name = rewriter.getStringAttr("clock");
+        clock.dir = hw::ModulePort::Direction::Input;
+        clock.type = rewriter.getI1Type();
+        ports.push_back(clock);
+        hw::PortInfo reset;
+        reset.name = rewriter.getStringAttr("reset");
+        reset.dir = hw::ModulePort::Direction::Input;
+        reset.type = rewriter.getI1Type();
+        ports.push_back(reset);
+        for (size_t i = 0; i < pushedTypes.size(); i++) {
+            auto type = pushedTypes[i];
+            std::string name;
+            hw::PortInfo out_ready;
+            name = "out" + std::to_string(i) + "_ready";
+            out_ready.name = rewriter.getStringAttr(name);
+            out_ready.dir = hw::ModulePort::Direction::Input;
+            out_ready.type = rewriter.getI1Type();
+            ports.push_back(out_ready);
+            hw::PortInfo out_data;
+            name = "out" + std::to_string(i);
+            out_data.name = rewriter.getStringAttr(name);
+            out_data.dir = hw::ModulePort::Direction::Output;
+            out_data.type = type;
+            ports.push_back(out_data);
+            hw::PortInfo out_valid;
+            name = "out" + std::to_string(i) + "_valid";
+            out_valid.name = rewriter.getStringAttr(name);
+            out_valid.dir = hw::ModulePort::Direction::Output;
+            out_valid.type = rewriter.getI1Type();
+            ports.push_back(out_valid);
+        }
+        rewriter.create<hw::HWModuleExternOp>(
+            loc,
+            rewriter.getStringAttr(name),
+            ports);
+        rewriter.eraseOp(genFuncOp);
 
         rewriter.eraseOp(op);
 
@@ -572,8 +693,8 @@ void mlir::populateStdToCirctConversionPatterns(
 
 namespace {
 struct ConvertStdToCirctPass
-        : public ConvertStdToCirctBase<ConvertStdToCirctPass> {
-    void runOnOperation() final;
+        : public impl::ConvertStdToCirctBase<ConvertStdToCirctPass> {
+    void runOnOperation() override;
 };
 } // namespace
 
@@ -619,7 +740,10 @@ void ConvertStdToCirctPass::runOnOperation()
     });
 
     target.addDynamicallyLegalOp<OperatorOp>([&](OperatorOp op) {
-        for (auto &opi : op.getBody().getOps()) {
+        auto ops = op.getBody().getOps();
+        if (auto loopOp = dyn_cast<LoopOp>(*ops.begin()))
+            ops = loopOp.getBody().getOps();
+        for (auto &opi : ops) {
             if (!isa<PullOp>(opi) && !isa<HWInstanceOp>(opi)
                 && !isa<PushOp>(opi)) {
                 return false;
