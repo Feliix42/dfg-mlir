@@ -995,7 +995,6 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
     placeholderNotEmpty.replaceAllUsesWith(not_empty.getResult());
     auto not_full =
         builder.create<comb::XorOp>(loc, full.getResult(), c_true.getResult());
-    placeholderNotFull.replaceAllUsesWith(not_full.getResult());
     auto not_want_close = builder.create<comb::XorOp>(
         loc,
         want_close_value.getResult(),
@@ -1004,6 +1003,7 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
         loc,
         not_full.getResult(),
         not_want_close.getResult());
+    placeholderNotFull.replaceAllUsesWith(io_enq_ready_value.getResult());
     auto isDone = builder.create<comb::AndOp>(
         loc,
         want_close_value.getResult(),
