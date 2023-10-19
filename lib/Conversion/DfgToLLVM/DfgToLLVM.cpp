@@ -61,6 +61,22 @@ static FlatSymbolRefAttr getOrInsertFunc(
     return SymbolRefAttr::get(context, funcName);
 }
 
+/// Returns the appropriate LLVM struct representation for a given element type
+/// of a channel.
+Type getLLVMStructfromChannelType(const Type &elementType, MLIRContext* ctx)
+{
+    Type elementPtr = LLVM::LLVMPointerType::get(elementType);
+    Type i64Type = IntegerType::get(ctx, 64);
+    std::vector<Type> structTypes{
+        elementPtr,
+        i64Type,
+        i64Type,
+        i64Type,
+        i64Type,
+        IntegerType::get(ctx, 8)};
+    return LLVM::LLVMStructType::getLiteral(ctx, structTypes);
+}
+
 // ========================================================
 // Lowerings
 // ========================================================
@@ -269,26 +285,58 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
 
     ChannelOpLowering(TypeConverter &typeConverter, MLIRContext* context)
             : OpConversionPattern<ChannelOp>(typeConverter, context){};
-    // struct ChannelOpLowering : public ConvertOpToLLVMPattern<ChannelOp> {
-    // using ConvertOpToLLVMPattern<ChannelOp>::ConvertOpToLLVMPattern;
 
     LogicalResult matchAndRewrite(
         ChannelOp op,
         ChannelOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        // NOTE(feliix42): Conceptually, what I probably want to do, is:
         // 1. create a new CallOp calling the channel creation function
-        // 2. insert the appropriate definition at the top
-        // 3. replace all channel inputs and outputs with the newly created
-        // result
-        // 4. delete the old op
-        // 5. insert the lowering down there
+        Type encapsulatedType = adaptor.getEncapsulatedType();
         std::string funcName = "channel_";
         llvm::raw_string_ostream funcNameStream(funcName);
-        funcNameStream << op.getEncapsulatedType();
+        funcNameStream << encapsulatedType;
 
-        // Do I need an unrealized cast?
+        // I want to use the original encapsulated type here
+        Type returnedStruct = getLLVMStructfromChannelType(
+                encapsulatedType,
+            op.getContext());
+
+        ModuleOp parentModule = op->getParentOfType<ModuleOp>();
+        // 2. insert the appropriate definition at the top
+        FlatSymbolRefAttr chanFunctionName = getOrInsertFunc(
+            rewriter,
+            parentModule,
+            funcName,
+            returnedStruct,
+            ArrayRef<Value>());
+
+        func::CallOp channelCreation = rewriter.create<func::CallOp>(
+            op.getLoc(),
+            ArrayRef<Type>{returnedStruct},
+            chanFunctionName,
+            ArrayRef<Value>());
+
+        // 2.1 create 2 UnrealizedConversionCastOps that cast the resulting llvm
+        // struct to an input and an output
+        // 3. replace all channel inputs and outputs with the newly created
+        // results
+        UnrealizedConversionCastOp convertedInput =
+            rewriter.create<UnrealizedConversionCastOp>(
+                op.getLoc(),
+                rewriter.getType<InputType>(encapsulatedType),
+                channelCreation.getResult(0));
+        op.getInChan().replaceAllUsesWith(convertedInput.getResult(0));
+
+        UnrealizedConversionCastOp convertedOutput =
+            rewriter.create<UnrealizedConversionCastOp>(
+                op.getLoc(),
+                rewriter.getType<OutputType>(encapsulatedType),
+                channelCreation.getResult(0));
+        op.getOutChan().replaceAllUsesWith(convertedOutput.getResult(0));
+
+        // 4. delete the old op
+        rewriter.eraseOp(op);
 
         return success();
     }
@@ -300,20 +348,6 @@ void mlir::populateDfgToLLVMConversionPatterns(
 {
     // dfg.channel -> !llvm.ptr
     patterns.add<ChannelOpLowering>(typeConverter, patterns.getContext());
-}
-
-Type getLLVMStructfromChannelType(const Type &elementType, MLIRContext* ctx)
-{
-    Type elementPtr = LLVM::LLVMPointerType::get(elementType);
-    Type i64Type = IntegerType::get(ctx, 64);
-    std::vector<Type> structTypes{
-        elementPtr,
-        i64Type,
-        i64Type,
-        i64Type,
-        i64Type,
-        IntegerType::get(ctx, 8)};
-    return LLVM::LLVMStructType::getLiteral(ctx, structTypes);
 }
 
 void ConvertDfgToLLVMPass::runOnOperation()
@@ -447,8 +481,6 @@ void ConvertDfgToLLVMPass::runOnOperation()
         LLVM::LLVMDialect>();
 
     target.addIllegalDialect<DfgDialect>();
-    // FIXME: Remove this hack
-    target.addLegalOp<ChannelOp>();
     target.addDynamicallyLegalOp<InstantiateOp>(
         [](InstantiateOp op) { return op.getOffloaded(); });
 
