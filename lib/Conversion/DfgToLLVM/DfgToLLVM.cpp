@@ -52,10 +52,6 @@ static FlatSymbolRefAttr getOrInsertFunc(
 
     // Create a function declaration for the desired function
     auto fnType = rewriter.getFunctionType(tyVec, result);
-    // auto llvmFnType = LLVM::LLVMFunctionType::get(
-    // result,
-    // tyVec,
-    //[>isVarArg=<]true);
 
     // Insert the function into the body of the parent module.
     PatternRewriter::InsertionGuard insertGuard(rewriter);
@@ -121,7 +117,7 @@ LogicalResult insertTeardownFunctionFromPull(
 
     auto llvmVoid = LLVM::LLVMVoidType::get(pullOp.getContext());
 
-    // TODO(feliix42): Translate to InputType, insert UnrealizedConversionCastOp
+    // Translate to InputType, insert UnrealizedConversionCastOp
     UnrealizedConversionCastOp inputType =
         rewriter.create<UnrealizedConversionCastOp>(
             pullOp.getLoc(),
@@ -185,10 +181,6 @@ LogicalResult rewritePushOp(
     // create the new block with the same argument list
     Block* newBlock =
         rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
-    //SmallVector<Location> argLocs;
-    //for (auto arg : currentBlock->getArguments())
-        //argLocs.push_back(arg.getLoc());
-    //newBlock->addArguments(currentBlock->getArgumentTypes(), argLocs);
 
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
@@ -197,7 +189,6 @@ LogicalResult rewritePushOp(
         pushOperation.getResult(0),
         newBlock,
         /* trueArgs = */ ArrayRef<Value>(),
-        // /* trueArgs = */ currentBlock->getArguments(),
         terminatorBlock,
         /* falseArgs = */ ArrayRef<Value>());
 
@@ -205,74 +196,6 @@ LogicalResult rewritePushOp(
 
     return success();
 }
-
-// struct PushOpLowering : public OpConversionPattern<PushOp> {
-//     using OpConversionPattern<PushOp>::OpConversionPattern;
-
-//     PushOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<PushOp>(typeConverter, context){};
-
-//     LogicalResult matchAndRewrite(
-//         PushOp op,
-//         PushOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         // create function name for PushOp in LLVM IR
-//         std::string funcName = "push_";
-//         llvm::raw_string_ostream funcNameStream(funcName);
-//         // 0 is the type of the item sent
-//         // TODO(feliix42): Add name mangling here
-//         funcNameStream << adaptor.getOperands()[0].getType();
-
-//         // return value
-//         Type boolReturnVal = rewriter.getI1Type();
-
-//         // fetch or create the FlatSymbolRefAttr for the called function
-//         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-//         FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
-//             rewriter,
-//             parentModule,
-//             funcName,
-//             boolReturnVal,
-//             adaptor.getOperands());
-
-//         LLVM::CallOp pushOperation = rewriter.create<LLVM::CallOp>(
-//             op.getLoc(),
-//             ArrayRef<Type>(boolReturnVal),
-//             pushFuncName,
-//             adaptor.getOperands());
-
-//         // to handle the result of the push, we must do the following:
-//         // - split the current block after this instruction
-//         // - conditionally either continue processing the body or break the
-//         // computation
-
-//         Block* currentBlock = pushOperation->getBlock();
-
-//         // create the new block with the same argument list
-//         Block* newBlock =
-//             rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
-//         SmallVector<Location> argLocs;
-//         for (auto arg : currentBlock->getArguments())
-//             argLocs.push_back(arg.getLoc());
-//         newBlock->addArguments(currentBlock->getArgumentTypes(), argLocs);
-
-//         // insert conditional jump to the break block
-//         Block* terminatorBlock = pushOperation->getSuccessors().back();
-//         rewriter.setInsertionPointToEnd(currentBlock);
-//         rewriter.create<cf::CondBranchOp>(
-//             pushOperation.getLoc(),
-//             pushOperation.getResult(),
-//             newBlock,
-//             terminatorBlock);
-//         // TODO: If the above is not working: Is the way I get the
-//         // terminatorBlock wrong?
-
-//         rewriter.eraseOp(op);
-
-//         return success();
-//     }
-// };
 
 LogicalResult rewritePullOp(
     PullOp op,
@@ -314,30 +237,16 @@ LogicalResult rewritePullOp(
         pullOperation.getResult(0),
         1);
 
-    // let's hope this works
     op.getResult().replaceAllUsesWith(value.getResult());
 
-    // ======================================================================
-    // TODO(feliix42): For better style, I should not copy arguments from the
-    // entry block maybe?
-    // ======================================================================
-
-    // this was taken from the pushOp lowering
     Block* currentBlock = pullOperation->getBlock();
 
-    // create the new block with the same argument list
+    // create the new block with everything following this pull op
     Block* newBlock =
         rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
-    //SmallVector<Location> argLocs;
-    //// The argument list for the newly created block
-    //SmallVector<Value> blockArgs;
-    //for (auto arg : currentBlock->getArguments()) {
-        //argLocs.push_back(arg.getLoc());
-        //blockArgs.push_back(arg);
-    //}
-    //blockArgs.push_back(value.getResult());
-    //newBlock->addArguments(currentBlock->getArgumentTypes(), argLocs);
-    //newBlock->addArgument(value.getType(), value.getLoc());
+    // Originally, I added the Block arguments of the current block to the next
+    // block. But because of the nature of SSA value scoping, that's not
+    // necessary. All values of a block are visible in the successor blocks.
 
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
@@ -346,7 +255,7 @@ LogicalResult rewritePullOp(
         valid.getResult(),
         newBlock,
         ArrayRef<Value>(),
-        //blockArgs,
+        // blockArgs,
         terminatorBlock,
         ArrayRef<Value>());
 
@@ -354,57 +263,6 @@ LogicalResult rewritePullOp(
 
     return success();
 }
-
-// struct PullOpLowering : public OpConversionPattern<PullOp> {
-//     using OpConversionPattern<PullOp>::OpConversionPattern;
-
-//     PullOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-//             : OpConversionPattern<PullOp>(typeConverter, context){};
-
-//     LogicalResult matchAndRewrite(
-//         PullOp op,
-//         PullOpAdaptor adaptor,
-//         ConversionPatternRewriter &rewriter) const override
-//     {
-//         // create function name for PullOp in LLVM IR
-//         std::string funcName = "pull_";
-//         llvm::raw_string_ostream funcNameStream(funcName);
-//         op.getType().print(funcNameStream);
-
-//         // create the struct type that models the result
-//         Type boolReturnVal = rewriter.getI1Type();
-//         std::vector<Type> structTypes{op.getType(), boolReturnVal};
-//         Type returnedStruct = LLVM::LLVMStructType::getLiteral(
-//             rewriter.getContext(),
-//             structTypes);
-
-//         // fetch or create the FlatSymbolRefAttr for the called function
-//         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-//         FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
-//             rewriter,
-//             parentModule,
-//             funcNameStream.str(),
-//             returnedStruct,
-//             adaptor.getOperands());
-
-//         rewriter.create<LLVM::CallOp>(
-//             op.getLoc(),
-//             ArrayRef<Type>(returnedStruct),
-//             pullFuncName,
-//             adaptor.getChan());
-
-//         // TODO: Replace users of the results
-//         // insert into old block: unpacking
-//         // split block
-//         // block arguments: arguments of this block + result of unpacked
-//         value
-//         // conditional jump
-
-//         rewriter.eraseOp(op);
-
-//         return success();
-//     }
-// };
 
 struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
     using OpConversionPattern<ChannelOp>::OpConversionPattern;
@@ -440,12 +298,6 @@ void mlir::populateDfgToLLVMConversionPatterns(
     TypeConverter &typeConverter,
     RewritePatternSet &patterns)
 {
-    // dfg.push -> llvm.call + logic
-    // patterns.add<PushOpLowering>(typeConverter, patterns.getContext());
-
-    // dfg.pull -> llvm.call + logic
-    // patterns.add<PullOpLowering>(typeConverter, patterns.getContext());
-
     // dfg.channel -> !llvm.ptr
     patterns.add<ChannelOpLowering>(typeConverter, patterns.getContext());
 }
@@ -612,7 +464,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
     });
     // Mark BranchOps as illegal when they contain a dfg type
     target.markUnknownOpDynamicallyLegal([&](Operation* op) {
-        return !llvm::isa<BranchOpInterface>(op) || converter.isLegal(op->getOperandTypes());
+        return !llvm::isa<BranchOpInterface>(op)
+               || converter.isLegal(op->getOperandTypes());
     });
 
     if (failed(applyPartialConversion(op, target, std::move(patterns))))
