@@ -185,10 +185,10 @@ LogicalResult rewritePushOp(
     // create the new block with the same argument list
     Block* newBlock =
         rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
-    SmallVector<Location> argLocs;
-    for (auto arg : currentBlock->getArguments())
-        argLocs.push_back(arg.getLoc());
-    newBlock->addArguments(currentBlock->getArgumentTypes(), argLocs);
+    //SmallVector<Location> argLocs;
+    //for (auto arg : currentBlock->getArguments())
+        //argLocs.push_back(arg.getLoc());
+    //newBlock->addArguments(currentBlock->getArgumentTypes(), argLocs);
 
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
@@ -196,7 +196,8 @@ LogicalResult rewritePushOp(
         pushOperation.getLoc(),
         pushOperation.getResult(0),
         newBlock,
-        /* trueArgs = */ currentBlock->getArguments(),
+        /* trueArgs = */ ArrayRef<Value>(),
+        // /* trueArgs = */ currentBlock->getArguments(),
         terminatorBlock,
         /* falseArgs = */ ArrayRef<Value>());
 
@@ -327,16 +328,16 @@ LogicalResult rewritePullOp(
     // create the new block with the same argument list
     Block* newBlock =
         rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
-    SmallVector<Location> argLocs;
-    // The argument list for the newly created block
-    SmallVector<Value> blockArgs;
-    for (auto arg : currentBlock->getArguments()) {
-        argLocs.push_back(arg.getLoc());
-        blockArgs.push_back(arg);
-    }
-    blockArgs.push_back(value.getResult());
-    newBlock->addArguments(currentBlock->getArgumentTypes(), argLocs);
-    newBlock->addArgument(value.getType(), value.getLoc());
+    //SmallVector<Location> argLocs;
+    //// The argument list for the newly created block
+    //SmallVector<Value> blockArgs;
+    //for (auto arg : currentBlock->getArguments()) {
+        //argLocs.push_back(arg.getLoc());
+        //blockArgs.push_back(arg);
+    //}
+    //blockArgs.push_back(value.getResult());
+    //newBlock->addArguments(currentBlock->getArgumentTypes(), argLocs);
+    //newBlock->addArgument(value.getType(), value.getLoc());
 
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
@@ -344,7 +345,8 @@ LogicalResult rewritePullOp(
         valid.getLoc(),
         valid.getResult(),
         newBlock,
-        blockArgs,
+        ArrayRef<Value>(),
+        //blockArgs,
         terminatorBlock,
         ArrayRef<Value>());
 
@@ -604,4 +606,3 @@ std::unique_ptr<Pass> mlir::createConvertDfgToLLVMPass()
 {
     return std::make_unique<ConvertDfgToLLVMPass>();
 }
-
