@@ -448,7 +448,6 @@ void mlir::populateDfgToLLVMConversionPatterns(
 
     // dfg.channel -> !llvm.ptr
     patterns.add<ChannelOpLowering>(typeConverter, patterns.getContext());
-    // patterns.add<ChannelOp>(typeConverter, patterns.getContext());
 }
 
 Type getLLVMStructfromChannelType(const Type &elementType, MLIRContext* ctx)
@@ -471,18 +470,36 @@ void ConvertDfgToLLVMPass::runOnOperation()
 
     TypeConverter converter;
 
+    // this is a stack!! Hence, the most generic conversion lives at the bottom
+    converter.addConversion([](Type t) { return t; });
     converter.addConversion([](OutputType t) {
         return getLLVMStructfromChannelType(t.getElementType(), t.getContext());
     });
     converter.addConversion([](InputType t) {
         return getLLVMStructfromChannelType(t.getElementType(), t.getContext());
     });
-    converter.addConversion([](Type t) { return t; });
+    converter.addSourceMaterialization(
+        [&](OpBuilder &builder,
+            Type resultType,
+            ValueRange inputs,
+            Location loc) -> std::optional<Value> {
+            if (inputs.size() != 1) return std::nullopt;
 
-    // TODO:
-    // look at the places where the populate Functions for builtin ops are
-    // defined to copy the dynamic legality constraints and type rewriter
-    // patterns for these ops
+            return builder
+                .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+                .getResult(0);
+        });
+    converter.addTargetMaterialization(
+        [&](OpBuilder &builder,
+            Type resultType,
+            ValueRange inputs,
+            Location loc) -> std::optional<Value> {
+            if (inputs.size() != 1) return std::nullopt;
+
+            return builder
+                .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+                .getResult(0);
+        });
 
     // =========================================================================================
     // In the following block, we do multiple things in one go:
@@ -527,7 +544,6 @@ void ConvertDfgToLLVMPass::runOnOperation()
         });
 
         // insert Return into terminatorBlock
-        // ConversionPatternRewriter rewriter(funcOp->getContext());
         ConversionPatternRewriter rewriter(funcOp->getContext());
         rewriter.setInsertionPointToEnd(terminatorBlock);
         // insert teardown function calls for push and pull ops
@@ -577,25 +593,26 @@ void ConvertDfgToLLVMPass::runOnOperation()
         func::FuncDialect,
         cf::ControlFlowDialect,
         LLVM::LLVMDialect>();
-    target.addLegalOp<UnrealizedConversionCastOp>();
 
-    // target.addLegalDialect<DfgDialect>();
     target.addIllegalDialect<DfgDialect>();
-    // NOTE(feliix42): Keep InstantiateOp and OperatorOp illegal here as they
-    // should've been removed in a previous pass.
+    // FIXME: Remove this hack
     target.addLegalOp<ChannelOp>();
-    // target.addIllegalOp<OperatorOp, PushOp, PullOp>();
     target.addDynamicallyLegalOp<InstantiateOp>(
         [](InstantiateOp op) { return op.getOffloaded(); });
-    target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp op) {
-        for (auto ty : op.getFunctionType().getInputs())
-            if (ty.isa<InputType>() || ty.isa<OutputType>()) return false;
-        return true;
+
+    // mark func dialect ops as illegal when they contain a dfg type
+    target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
+        return converter.isSignatureLegal(op.getFunctionType());
     });
-    target.addDynamicallyLegalOp<func::CallOp>([](func::CallOp op) {
-        for (auto opTy : op.getOperandTypes())
-            if (opTy.isa<InputType>() || opTy.isa<OutputType>()) return false;
-        return true;
+    target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
+        return converter.isSignatureLegal(op.getCalleeType());
+    });
+    target.addDynamicallyLegalOp<func::ReturnOp>([&](func::ReturnOp op) {
+        return converter.isLegal(op.getOperandTypes());
+    });
+    // Mark BranchOps as illegal when they contain a dfg type
+    target.markUnknownOpDynamicallyLegal([&](Operation* op) {
+        return !llvm::isa<BranchOpInterface>(op) || converter.isLegal(op->getOperandTypes());
     });
 
     if (failed(applyPartialConversion(op, target, std::move(patterns))))
