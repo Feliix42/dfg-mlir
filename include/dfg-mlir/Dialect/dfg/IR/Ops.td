@@ -139,6 +139,8 @@ def Dfg_ChannelOp : Dfg_Op<
     );
 
     let hasCustomAssemblyFormat = 1;
+
+    let hasVerifier = 1;
 }
 
 

@@ -210,6 +210,15 @@ LogicalResult OperatorOp::verify()
             return emitError("The LoopOp must be the first op of Operator");
     }
 
+    // Ensure that all inputs are of type OutputType and all outputs of type InputType
+    FunctionType fnSig = getFunctionType();
+    for (Type in : fnSig.getInputs())
+        if (!llvm::isa<OutputType>(in))
+            return failure();
+    for (Type out : fnSig.getResults())
+        if (!llvm::isa<InputType>(out))
+            return failure();
+
     return success();
 }
 
@@ -373,6 +382,17 @@ void ChannelOp::print(OpAsmPrinter &p)
     p << ") : ";
 
     p.printType(getEncapsulatedType());
+}
+
+LogicalResult ChannelOp::verify() {
+    Type encapsulated = getEncapsulatedType();
+    Type out = getOutChan().getType().getElementType();
+    Type in = getInChan().getType().getElementType();
+
+    if (encapsulated != out || encapsulated != in)
+        return failure();
+
+    return success();
 }
 
 //===----------------------------------------------------------------------===//
