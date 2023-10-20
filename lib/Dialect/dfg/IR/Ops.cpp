@@ -210,14 +210,20 @@ LogicalResult OperatorOp::verify()
             return emitError("The LoopOp must be the first op of Operator");
     }
 
-    // Ensure that all inputs are of type OutputType and all outputs of type InputType
+    // Ensure that all inputs are of type OutputType and all outputs of type
+    // InputType
     FunctionType fnSig = getFunctionType();
     for (Type in : fnSig.getInputs())
         if (!llvm::isa<OutputType>(in))
-            return failure();
+            return ::emitError(
+                getLoc(),
+                "LoopOp inputs must be of type OutputType");
+
     for (Type out : fnSig.getResults())
         if (!llvm::isa<InputType>(out))
-            return failure();
+            return ::emitError(
+                getLoc(),
+                "LoopOp outputs must be of type InputType");
 
     return success();
 }
@@ -384,13 +390,17 @@ void ChannelOp::print(OpAsmPrinter &p)
     p.printType(getEncapsulatedType());
 }
 
-LogicalResult ChannelOp::verify() {
+LogicalResult ChannelOp::verify()
+{
     Type encapsulated = getEncapsulatedType();
     Type out = getOutChan().getType().getElementType();
     Type in = getInChan().getType().getElementType();
 
     if (encapsulated != out || encapsulated != in)
-        return failure();
+        return ::emitError(
+            getLoc(),
+            "The element types of both results and the encapsulated type of "
+            "the function itself must match");
 
     return success();
 }
