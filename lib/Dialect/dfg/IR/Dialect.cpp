@@ -21,9 +21,6 @@ using namespace mlir::dfg;
 
 void DfgDialect::initialize()
 {
-    // TODO(feliix42): Any initialization operations go here (e.g., the
-    // following)
-
     // registerAttributes();
     registerOps();
     registerTypes();

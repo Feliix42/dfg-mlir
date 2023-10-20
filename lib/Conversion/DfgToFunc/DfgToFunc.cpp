@@ -125,29 +125,12 @@ void mlir::populateDfgToFuncConversionPatterns(
 void ConvertDfgToFuncPass::runOnOperation()
 {
     TypeConverter converter;
-
     converter.addConversion([](Type t) { return t; });
-
-    // TODO(feliix42): add type conversion here
-    // converter.addConversion([&](Type type) {
-    //     if (isa<IntegerType>(type)) return type;
-    //     return Type();
-    // });
-
-    // TODO:
-    // look at the places where the populate Functions for builtin ops are
-    // defined to copy the dynamic legality constraints and type rewriter
-    // patterns for these ops
 
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
     populateDfgToFuncConversionPatterns(converter, patterns);
-    // TODO: remove below??
-    // populateAnyFunctionOpInterfaceTypeConversionPattern(patterns, converter);
-    // populateReturnOpTypeConversionPattern(patterns, converter);
-    // populateCallOpTypeConversionPattern(patterns, converter);
-    // populateBranchOpInterfaceTypeConversionPattern(patterns, converter);
 
     target.addLegalDialect<
         BuiltinDialect,
@@ -172,17 +155,3 @@ std::unique_ptr<Pass> mlir::createConvertDfgToFuncPass()
 {
     return std::make_unique<ConvertDfgToFuncPass>();
 }
-
-// STEPS
-// - [x] rewrite to use the populate function
-// - [x] use adaptor where possible
-// - [x] single out OperatorOpLowering and InstantiateOpLowering
-// - [x] expand OperatorOpLowering to include cf logic already
-// - [x] modify the pull/push lowerings to include the necessary logic for
-// breaking
-// - [ ] insert the logic for closing channels in the break block
-//       - Make all FuncOps with channels in the signature illegal -> alter the
-//       type & insert
-// - [ ] rewrite ChannelOp
-// - [ ] rewrite the LoopOp
-// - [ ] check the type rewriter thingy
