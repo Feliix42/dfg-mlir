@@ -770,6 +770,7 @@ public:
             instanceInputs.append(
                 placeholderInstInputs.begin(),
                 placeholderInstInputs.end());
+            instanceInputs.push_back(c_true.getResult());
             instanceInputs.push_back(hwModule.getBody().getArgument(0));
             instanceInputs.push_back(placeholderCalcReset.getResult());
             for (size_t i = 0; i < hwInstanceOutSize; i++)
