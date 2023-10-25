@@ -46,7 +46,10 @@ def Dfg_OperatorOp : Dfg_Op<
     }];
 
     let arguments = (ins SymbolNameAttr: $sym_name,
-                         TypeAttrOf<FunctionType>: $function_type);
+                         TypeAttrOf<FunctionType>: $function_type,
+                         // the multiplicity of the operation, i.e. how many elements from each channel are required for execution
+                         DefaultValuedAttr<DenseI64ArrayAttr, "{}">: $multiplicity);
+                         // OptionalAttr<DenseI32ArrayAttr>: $multiplicity);
                         //  TypeArrayAttr:$inputs,
                         //  TypeArrayAttr:$outputs);
 

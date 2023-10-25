@@ -225,6 +225,14 @@ LogicalResult OperatorOp::verify()
                 getLoc(),
                 "LoopOp outputs must be of type InputType");
 
+    // if a multiplicity is defined, it must cover all arguments!
+    ArrayRef<int64_t> multiplicity = getMultiplicity();
+    size_t fnSigArgCount = fnSig.getNumInputs() + fnSig.getNumResults();
+    if (!multiplicity.empty() && multiplicity.size() != fnSigArgCount)
+        return emitError(
+            "OperatorOp multiplicity must have a multiplicity for each "
+            "channel");
+
     return success();
 }
 
