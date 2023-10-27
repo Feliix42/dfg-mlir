@@ -144,6 +144,7 @@ void OperatorOp::print(OpAsmPrinter &p)
 {
     Operation* op = getOperation();
     Region &body = op->getRegion(0);
+    bool isExternal = body.empty();
 
     // print the operation and function name
     auto funcName =
@@ -161,7 +162,11 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = 0; i < inputTypes.size(); i++) {
             if (i > 0) p << ", ";
 
-            p.printOperand(body.getArgument(i));
+            if (isExternal) {
+                p << "\%arg" << i;
+            } else {
+                p.printOperand(body.getArgument(i));
+            }
             p << " : " << inputTypes[i].cast<OutputType>().getElementType();
         }
         p << ") ";
@@ -173,7 +178,11 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
 
-            p.printOperand(body.getArgument(i));
+            if (isExternal) {
+                p << "\%arg" << i;
+            } else {
+                p.printOperand(body.getArgument(i));
+            }
             p << " : "
               << outputTypes[i - inpSize].cast<InputType>().getElementType();
         }
@@ -187,7 +196,7 @@ void OperatorOp::print(OpAsmPrinter &p)
             /*elidedAttrs=*/{getFunctionTypeAttrName(), getSymNameAttrName()});
 
     // Print the region
-    if (!body.empty()) {
+    if (!isExternal) {
         p << ' ';
         p.printRegion(
             body,
