@@ -74,8 +74,20 @@ def ConvertDfgToLLVM : Pass<"convert-dfg-edges-to-llvm"> {
 
     let dependentDialects = [
         "cf::ControlFlowDialect",
+        "func::FuncDialect",
         "LLVM::LLVMDialect",
 
+        "dfg::DfgDialect"
+    ];
+}
+
+def ConvertDfgToOlympus : Pass<"convert-dfg-to-olympus"> {
+    let summary  = "Convert offloaded DFG nodes to olympus-mlir.";
+
+    let constructor = "mlir::createConvertDfgToOlympusPass()";
+
+    let  dependentDialects = [
+        "func::FuncDialect",
         "dfg::DfgDialect"
     ];
 }

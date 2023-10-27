@@ -3,6 +3,14 @@ llvm.func @malloc(i64) -> !llvm.ptr<i8>
 llvm.func @free(!llvm.ptr<i8>) -> ()
 llvm.mlir.global internal constant @str0("num recvd: %d\0A\00")
 
+// TODO:
+// - [x] Implement channel closing
+// - [ ] Signal channel closure via return
+// - [ ] Implement blocking in channels
+// - [ ] test execution
+// - [ ] Implement loop example
+// - [ ] all lowerings covered?
+
 // ============================================================================
 // -- channel boilerplate
 // ============================================================================

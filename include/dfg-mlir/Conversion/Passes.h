@@ -11,6 +11,7 @@
 #include "dfg-mlir/Conversion/DfgToFunc/DfgToFunc.h"
 #include "dfg-mlir/Conversion/DfgToLLVM/DfgToLLVM.h"
 #include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
+#include "dfg-mlir/Conversion/DfgToOlympus/DfgToOlympus.h"
 
 namespace mlir::dfg {
 
