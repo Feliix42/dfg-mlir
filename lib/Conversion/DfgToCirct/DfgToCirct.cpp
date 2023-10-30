@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
+#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
+
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
 #include "circt/Dialect/FSM/FSMDialect.h"
@@ -13,7 +15,6 @@
 #include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
-#include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -288,6 +289,15 @@ fsm::MachineOp insertController(
             builder.setInsertionPointToEnd(transCalcSelf.ensureAction(builder));
             for (size_t i = 0; i < numCalcDataValid; i++) {
                 auto calcValid = calcDataValids[i];
+                auto newResult = builder.create<comb::MuxOp>(
+                    loc,
+                    calcValid,
+                    calcResults[i],
+                    machine.getArgument(idxBias + 2 * i + 1));
+                builder.create<fsm::UpdateOp>(
+                    loc,
+                    calcResults[i],
+                    newResult.getResult());
                 auto newValid = builder.create<comb::OrOp>(
                     loc,
                     calcValid,
@@ -296,10 +306,6 @@ fsm::MachineOp insertController(
                     loc,
                     calcValid,
                     newValid.getResult());
-                builder.create<fsm::UpdateOp>(
-                    loc,
-                    calcResults[i],
-                    machine.getArgument(idxBias + 2 * i + 1));
             }
             builder.setInsertionPointToEnd(&machine.getBody().back());
         }
@@ -764,6 +770,7 @@ public:
             instanceInputs.append(
                 placeholderInstInputs.begin(),
                 placeholderInstInputs.end());
+            instanceInputs.push_back(c_true.getResult());
             instanceInputs.push_back(hwModule.getBody().getArgument(0));
             instanceInputs.push_back(placeholderCalcReset.getResult());
             for (size_t i = 0; i < hwInstanceOutSize; i++)

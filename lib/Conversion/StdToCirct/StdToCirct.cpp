@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
 
+#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
+
 #include "circt/Dialect/Comb/CombDialect.h"
 #include "circt/Dialect/Comb/CombOps.h"
 #include "circt/Dialect/HW/HWDialect.h"
@@ -12,7 +14,6 @@
 #include "circt/Dialect/Handshake/HandshakeOps.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
-#include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -417,11 +418,11 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
             newPulledValue.push_back(newPull.getResult());
         }
 
-        auto name = "hls_" + operatorName.str() + "_calc";
+        auto nameExtModule = "hls_" + operatorName.str() + "_calc";
         auto instanceOp = rewriter.create<HWInstanceOp>(
             loc,
             pushedTypes,
-            SymbolRefAttr::get(context, name),
+            SymbolRefAttr::get(context, nameExtModule),
             newPulledValue);
 
         for (int i = 0; i < numPush; i++) {
@@ -445,7 +446,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         rewriter.setInsertionPointToStart(&moduleOp.getBodyRegion().front());
         auto genFuncOp = rewriter.create<func::FuncOp>(
             loc,
-            name,
+            nameExtModule,
             rewriter.getFunctionType(pulledTypes, pushedTypes));
         Block* funcEntryBlock = rewriter.createBlock(&genFuncOp.getBody());
         for (int i = 0; i < numPull; i++)
@@ -583,6 +584,12 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
             in_ready.type = rewriter.getI1Type();
             ports.push_back(in_ready);
         }
+        hw::PortInfo ctrl_valid;
+        ctrl_valid.name = rewriter.getStringAttr(
+            "in" + std::to_string(pulledTypes.size()) + "_valid");
+        ctrl_valid.dir = hw::ModulePort::Direction::Input;
+        ctrl_valid.type = rewriter.getI1Type();
+        ports.push_back(ctrl_valid);
         hw::PortInfo clock;
         clock.name = rewriter.getStringAttr("clock");
         clock.dir = hw::ModulePort::Direction::Input;
@@ -617,7 +624,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         }
         rewriter.create<hw::HWModuleExternOp>(
             loc,
-            rewriter.getStringAttr(name),
+            rewriter.getStringAttr(nameExtModule),
             ports);
         rewriter.eraseOp(genFuncOp);
 
