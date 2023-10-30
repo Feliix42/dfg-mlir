@@ -4,3 +4,4 @@ test/debug.mlir
 .cache/
 .ccls-cache/
 out/
+compile_commands.json

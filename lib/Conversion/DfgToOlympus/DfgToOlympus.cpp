@@ -32,11 +32,13 @@ struct ConvertDfgToOlympusPass
 };
 } // namespace
 
-
-struct OffloadedInstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
+struct OffloadedInstantiateOpLowering
+        : public OpConversionPattern<InstantiateOp> {
     using OpConversionPattern<InstantiateOp>::OpConversionPattern;
 
-    OffloadedInstantiateOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+    OffloadedInstantiateOpLowering(
+        TypeConverter &typeConverter,
+        MLIRContext* context)
             : OpConversionPattern<InstantiateOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
@@ -46,33 +48,48 @@ struct OffloadedInstantiateOpLowering : public OpConversionPattern<InstantiateOp
     {
         // don't lower offloaded functions
         if (!adaptor.getOffloaded()) {
-            emitError(op.getLoc(), "This lowering is supposed to run on offloaded instantiations only");
+            emitError(
+                op.getLoc(),
+                "This lowering is supposed to run on offloaded instantiations "
+                "only");
             return failure();
         }
 
         ModuleOp parent = op->getParentOfType<ModuleOp>();
 
         // find associated OperatorOp
-        OperatorOp kernelDefinition = parent.lookupSymbol<OperatorOp>(adaptor.getCallee());
-        // TODO: FIX THIS
-        // if (kernelDefinition->getOperands().size() != op.getOperands().size()) {
-        //     emitError(kernelDefinition.getLoc(), "The kernel declaration that corresponds to this instantiation does not have a matching argument list length");
-        //     return failure();
-        // }
+        OperatorOp kernelDefinition =
+            parent.lookupSymbol<OperatorOp>(adaptor.getCallee());
 
+        // verify that both argument lengths match
+        size_t kernelArgLength =
+            kernelDefinition.getFunctionType().getNumInputs()
+            + kernelDefinition.getFunctionType().getNumResults();
+        if (kernelArgLength != op.getOperands().size()) {
+            emitError(
+                kernelDefinition.getLoc(),
+                "The kernel declaration that corresponds to this instantiation "
+                "does not have a matching argument list length");
+            return failure();
+        }
+
+        // ====================================================================
+        // Olympus wrapper insertion
+        // ====================================================================
         SymbolRefAttr kernel_name = adaptor.getCallee();
         std::string wrapperName = kernel_name.getRootReference().str();
         wrapperName.append("_wrapper");
 
         // construct the function type for the wrapper
-        //auto llvmVoid = LLVM::LLVMVoidType::get(op.getContext());
-        auto fnType =
-            rewriter.getFunctionType(op.getOperands().getTypes(), {});
+        auto fnType = rewriter.getFunctionType(op.getOperands().getTypes(), {});
 
         // TODO(feliix42): Fix the name generation to not error on duplicate
         // names
         if (parent.lookupSymbol<func::FuncOp>(wrapperName)) {
-            emitError(op.getLoc(), "wrapper function name already exists");
+            emitError(
+                op.getLoc(),
+                "Wrapper function name already exists. This is an issue that "
+                "needs to be addressed in the lowering code.");
             return failure();
         }
 
@@ -82,30 +99,42 @@ struct OffloadedInstantiateOpLowering : public OpConversionPattern<InstantiateOp
         Block* entryBlock = olympusWrapper.addEntryBlock();
         rewriter.setInsertionPointToEnd(entryBlock);
 
-
-        // TODO: insert olympus.channels
-        StringAttr olympusDialectName = StringAttr::get(op->getContext(), "olympus");
+        // insert olympus.channels
+        StringAttr olympusDialectName =
+            StringAttr::get(op->getContext(), "olympus");
         llvm::SmallVector<Value> chans;
         int i = 0;
         ArrayRef<int64_t> multiplicities = kernelDefinition.getMultiplicity();
 
+        // verify that the number of arguments matches the defined multiplicity
         if (op.getOperands().size() != multiplicities.size()) {
-            emitError(op.getLoc(), "The multiplicity argument of the kernel definition does not match the number of operands supplied to the instantiation function");
+            emitError(
+                op.getLoc(),
+                "The multiplicity argument of the kernel definition does not "
+                "match the number of operands supplied to the instantiation "
+                "function");
             return failure();
         }
 
         for (auto arg : op.getOperands()) {
             OperationState chanOpState(op.getLoc(), "olympus.channel");
-            chanOpState.addAttribute("depth", rewriter.getI64IntegerAttr(multiplicities[i]));
-            chanOpState.addAttribute("paramType", rewriter.getStringAttr("small"));
+            chanOpState.addAttribute(
+                "depth",
+                rewriter.getI64IntegerAttr(multiplicities[i]));
+            chanOpState.addAttribute(
+                "paramType",
+                rewriter.getStringAttr("small"));
 
             std::string chanTy = "channel<";
             llvm::raw_string_ostream tyStream(chanTy);
             if (isa<OutputType>(arg.getType()))
-                tyStream << cast<OutputType>(arg.getType()).getElementType() << ">";
+                tyStream << cast<OutputType>(arg.getType()).getElementType()
+                         << ">";
             if (isa<InputType>(arg.getType()))
-                tyStream << cast<InputType>(arg.getType()).getElementType() << ">";
-            OpaqueType channelType = OpaqueType::get(olympusDialectName, chanTy);
+                tyStream << cast<InputType>(arg.getType()).getElementType()
+                         << ">";
+            OpaqueType channelType =
+                OpaqueType::get(olympusDialectName, chanTy);
             chanOpState.addTypes({channelType});
 
             Operation* chan = rewriter.create(chanOpState);
@@ -113,14 +142,23 @@ struct OffloadedInstantiateOpLowering : public OpConversionPattern<InstantiateOp
             i++;
         }
 
+        // create the olympus kernel op, supply it with all generated channels
+        // as inputs
         OperationState kernelOpState(op.getLoc(), "olympus.kernel");
-        kernelOpState.addAttribute("callee", adaptor.getCallee().getRootReference());
-        kernelOpState.addAttribute(op.getOperandSegmentSizeAttr(), op->getAttr(op.getOperandSegmentSizesAttrName()));
+        kernelOpState.addAttribute(
+            "callee",
+            adaptor.getCallee().getRootReference());
+        kernelOpState.addAttribute(
+            op.getOperandSegmentSizeAttr(),
+            op->getAttr(op.getOperandSegmentSizesAttrName()));
 
         std::string pathAttrName("evp.path");
         Attribute pathAttr = kernelDefinition->getAttr(pathAttrName);
         if (!pathAttr) {
-            emitError(kernelDefinition.getLoc(), "Kernel declaration must have an `evp.path` argument pointing to the kernel source file");
+            emitError(
+                kernelDefinition.getLoc(),
+                "Kernel declaration must have an `evp.path` argument pointing "
+                "to the kernel source file");
             return failure();
         }
         kernelOpState.addAttribute(pathAttrName, pathAttr);
@@ -132,11 +170,9 @@ struct OffloadedInstantiateOpLowering : public OpConversionPattern<InstantiateOp
         // return
         rewriter.create<func::ReturnOp>(op.getLoc());
 
-        // insert func.func (olympus_wrapper)
-        // make it contain the channels and kernel definitions of the olympus
-        // dialect
-
-        // insert func.call
+        // ====================================================================
+        // Olympus wrapper call
+        // ====================================================================
         rewriter.setInsertionPoint(op);
         rewriter.replaceOpWithNewOp<func::CallOp>(
             op,
@@ -153,7 +189,9 @@ void mlir::populateDfgToOlympusConversionPatterns(
     RewritePatternSet &patterns)
 {
     // dfg.instantiate -> func.call & olympus
-    patterns.add<OffloadedInstantiateOpLowering>(typeConverter, patterns.getContext());
+    patterns.add<OffloadedInstantiateOpLowering>(
+        typeConverter,
+        patterns.getContext());
 }
 
 void ConvertDfgToOlympusPass::runOnOperation()
