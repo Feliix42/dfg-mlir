@@ -5,3 +5,4 @@ test/debug.mlir
 .ccls-cache/
 out/
 compile_commands.json
+.clangd

@@ -39,7 +39,7 @@ static FlatSymbolRefAttr getOrInsertFunc(
     PatternRewriter &rewriter,
     ModuleOp module,
     std::string funcName,
-    Type result,
+    std::optional<Type> result,
     ValueRange arguments)
 {
     auto* context = module.getContext();
@@ -51,7 +51,12 @@ static FlatSymbolRefAttr getOrInsertFunc(
     std::vector<Type> tyVec(argIterator.begin(), argIterator.end());
 
     // Create a function declaration for the desired function
-    auto fnType = rewriter.getFunctionType(tyVec, result);
+    FunctionType fnType;
+    if (result.has_value()) {
+        fnType = rewriter.getFunctionType(tyVec, result.value());
+    } else {
+        fnType = rewriter.getFunctionType(tyVec, {});
+    }
 
     // Insert the function into the body of the parent module.
     PatternRewriter::InsertionGuard insertGuard(rewriter);
@@ -100,20 +105,18 @@ LogicalResult insertTeardownFunctionFromPush(
     // TODO(feliix42): Add name mangling here
     funcNameStream << pushOp.getOperands()[0].getType();
 
-    auto llvmVoid = LLVM::LLVMVoidType::get(pushOp.getContext());
-
     // fetch or create the FlatSymbolRefAttr for the called function
     FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
         rewriter,
         parentModule,
         funcName,
-        llvmVoid,
+        std::nullopt,
         pushOp.getChan());
 
     rewriter.create<func::CallOp>(
         pushOp.getLoc(),
         pushFuncName,
-        ArrayRef<Type>(llvmVoid),
+        ArrayRef<Type>(),
         pushOp.getChan());
 
     return success();
@@ -131,8 +134,6 @@ LogicalResult insertTeardownFunctionFromPull(
     // TODO(feliix42): Add name mangling here
     funcNameStream << pullOp.getType();
 
-    auto llvmVoid = LLVM::LLVMVoidType::get(pullOp.getContext());
-
     // Translate to InputType, insert UnrealizedConversionCastOp
     UnrealizedConversionCastOp inputType =
         rewriter.create<UnrealizedConversionCastOp>(
@@ -145,13 +146,13 @@ LogicalResult insertTeardownFunctionFromPull(
         rewriter,
         parentModule,
         funcName,
-        llvmVoid,
+        std::nullopt,
         inputType.getResult(0));
 
     rewriter.create<func::CallOp>(
         pullOp.getLoc(),
         pushFuncName,
-        ArrayRef<Type>(llvmVoid),
+        ArrayRef<Type>(),
         inputType.getResult(0));
 
     return success();
