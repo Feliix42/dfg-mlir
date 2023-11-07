@@ -1,0 +1,3 @@
+build/bin/dfg-opt --convert-arith-to-llvm --convert-dfg-nodes-to-func --convert-dfg-edges-to-llvm --convert-func-to-llvm --canonicalize --mlir-print-ir-after-failure playground/test.mlir > lowered.mlir
+mlir-translate --mlir-to-llvmir playground/lowered.mlir > lowered.ll
+mlir-translate --mlir-to-llvmir playground/channels.mlir > channels.ll

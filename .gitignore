@@ -6,3 +6,10 @@ test/debug.mlir
 out/
 compile_commands.json
 .clangd
+
+playground/*.o
+playground/*.s
+playground/*.ll
+playground/*.out
+playground/lowered.mlir
+
