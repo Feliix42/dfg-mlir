@@ -21,8 +21,8 @@ struct result {
 
 struct chan* channel_i64() {
     // TODO: null check
-    struct chan* channel = malloc(sizeof(struct chan));
-    chanTy* buffer = malloc(sizeof(chanTy) * 50);
+    struct chan* channel = (struct chan*) malloc(sizeof(struct chan));
+    chanTy* buffer = (chanTy*) malloc(sizeof(chanTy) * 50);
 
     channel->items = buffer;
     channel->head_idx = 0;
