@@ -68,8 +68,9 @@ static FlatSymbolRefAttr getOrInsertFunc(
 
 /// Returns the appropriate LLVM struct representation for a given element type
 /// of a channel.
-Type getLLVMStructfromChannelType(const Type &elementType, MLIRContext* ctx)
+Type getLLVMStructfromChannelType(const Type &elementType)
 {
+    MLIRContext* ctx = elementType.getContext();
     Type elementPtr = LLVM::LLVMPointerType::get(elementType);
     Type i64Type = IntegerType::get(ctx, 64);
     std::vector<Type> structTypes{
@@ -80,6 +81,11 @@ Type getLLVMStructfromChannelType(const Type &elementType, MLIRContext* ctx)
         i64Type,
         IntegerType::get(ctx, 8)};
     return LLVM::LLVMStructType::getLiteral(ctx, structTypes);
+}
+
+Type getLLVMPointerFromChannelType(const Type &elementType)
+{
+    return LLVM::LLVMPointerType::get(getLLVMStructfromChannelType(elementType));
 }
 
 // ========================================================
@@ -175,18 +181,23 @@ LogicalResult rewritePushOp(
 
     // fetch or create the FlatSymbolRefAttr for the called function
     ModuleOp parentModule = op->getParentOfType<ModuleOp>();
+    SmallVector<Value> arguments;
+    arguments.push_back(op.getChan());
+    arguments.push_back(op.getInp());
+
     FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
         rewriter,
         parentModule,
         funcName,
         boolReturnVal,
-        op->getOperands());
+        arguments);
 
     func::CallOp pushOperation = rewriter.create<func::CallOp>(
         op->getLoc(),
         pushFuncName,
         ArrayRef<Type>(boolReturnVal),
-        op->getOperands());
+        arguments);
+        //op->getOperands());
 
     // to handle the result of the push, we must do the following:
     // - split the current block after this instruction
@@ -225,7 +236,7 @@ LogicalResult rewritePullOp(
     op.getType().print(funcNameStream);
 
     // create the struct type that models the result
-    Type boolReturnVal = rewriter.getI1Type();
+    Type boolReturnVal = rewriter.getI8Type();
     std::vector<Type> structTypes{op.getType(), boolReturnVal};
     Type returnedStruct =
         LLVM::LLVMStructType::getLiteral(rewriter.getContext(), structTypes);
@@ -254,6 +265,9 @@ LogicalResult rewritePullOp(
         pullOperation.getResult(0),
         1);
 
+    // truncate the returned i8 to i1
+    LLVM::TruncOp valid_i1 = rewriter.create<LLVM::TruncOp>(valid.getLoc(), rewriter.getI1Type(), valid.getResult());
+
     op.getResult().replaceAllUsesWith(value.getResult());
 
     Block* currentBlock = pullOperation->getBlock();
@@ -268,8 +282,8 @@ LogicalResult rewritePullOp(
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
     rewriter.create<cf::CondBranchOp>(
-        valid.getLoc(),
-        valid.getResult(),
+        valid_i1.getLoc(),
+        valid_i1.getResult(),
         newBlock,
         ArrayRef<Value>(),
         // blockArgs,
@@ -299,8 +313,8 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
         funcNameStream << encapsulatedType;
 
         // I want to use the original encapsulated type here
-        Type returnedStruct =
-            getLLVMStructfromChannelType(encapsulatedType, op.getContext());
+        Type returnedPtr =
+            getLLVMPointerFromChannelType(encapsulatedType);
 
         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
         // 2. insert the appropriate definition at the top
@@ -308,12 +322,12 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
             rewriter,
             parentModule,
             funcName,
-            returnedStruct,
+            returnedPtr,
             ArrayRef<Value>());
 
         func::CallOp channelCreation = rewriter.create<func::CallOp>(
             op.getLoc(),
-            ArrayRef<Type>{returnedStruct},
+            ArrayRef<Type>{returnedPtr},
             chanFunctionName,
             ArrayRef<Value>());
 
@@ -359,10 +373,10 @@ void ConvertDfgToLLVMPass::runOnOperation()
     // this is a stack!! Hence, the most generic conversion lives at the bottom
     converter.addConversion([](Type t) { return t; });
     converter.addConversion([](OutputType t) {
-        return getLLVMStructfromChannelType(t.getElementType(), t.getContext());
+        return getLLVMPointerFromChannelType(t.getElementType());
     });
     converter.addConversion([](InputType t) {
-        return getLLVMStructfromChannelType(t.getElementType(), t.getContext());
+        return getLLVMPointerFromChannelType(t.getElementType());
     });
     converter.addSourceMaterialization(
         [&](OpBuilder &builder,
