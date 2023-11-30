@@ -1,48 +1,52 @@
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdatomic.h>
 #include <omp.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
-typedef int64_t chanTy;
+/*#include <stdio.h>*/
+
 struct chan {
-    chanTy* items;
-    int64_t head_idx;
-    int64_t tail_idx;
-    int64_t capacity;
-    _Atomic int64_t occupancy;
+    char* items;
+    uint64_t head_idx;
+    uint64_t tail_idx;
+    uint64_t bytewidth;
+    uint64_t capacity;
+    _Atomic uint64_t occupancy;
     _Atomic bool connected;
 };
 
-struct result {
-    chanTy result;
-    bool success;
-};
-
-struct chan* channel_i64() {
+struct chan* channel(uint64_t bytewidth)
+{
+    /*printf("byte width: %ld\n", bytewidth);*/
     // TODO: null check
-    struct chan* channel = (struct chan*) malloc(sizeof(struct chan));
-    chanTy* buffer = (chanTy*) malloc(sizeof(chanTy) * 50);
+    struct chan* channel = (struct chan*)malloc(sizeof(struct chan));
+    char* buffer = (char*)malloc(bytewidth * 50);
 
     channel->items = buffer;
     channel->head_idx = 0;
     channel->tail_idx = 0;
+    channel->bytewidth = bytewidth;
     channel->capacity = 50;
-    /*channel->occupancy = 0;*/
-    /*channel->connected = 1;*/
     atomic_init(&(channel->occupancy), 0);
     atomic_init(&(channel->connected), true);
     return channel;
 }
 
-bool push_i64(struct chan* sender, chanTy to_send) {
+bool push(struct chan* sender, char* to_send)
+{
+    /*printf("Beginning Send\n");*/
     while (true) {
         if (!atomic_load_explicit(&(sender->connected), memory_order_relaxed))
             return false;
 
-        int64_t occupancy = atomic_load(&(sender->occupancy));
+        uint64_t occupancy = atomic_load(&(sender->occupancy));
         if (occupancy < sender->capacity) {
-            sender->items[sender->tail_idx] = to_send;
+            memcpy(
+                (sender->items + (sender->tail_idx * sender->bytewidth)),
+                to_send,
+                sender->bytewidth);
             sender->tail_idx = (sender->tail_idx + 1) % sender->capacity;
 
             // atomic +1 size
@@ -50,68 +54,49 @@ bool push_i64(struct chan* sender, chanTy to_send) {
 
             return true;
         } else {
-#pragma omp taskyield
+/*#pragma omp taskyield*/
             continue;
         }
     }
 }
 
-struct result pull_i64(struct chan* sender) {
+bool pull(struct chan* recv, char* result)
+{
+    /*printf("Beginning pull\n");*/
     while (true) {
-        if (atomic_load(&(sender->occupancy)) == 0) {
+        if (atomic_load(&(recv->occupancy)) == 0) {
             // empty queue -> still active?
-            if (!atomic_load_explicit(&(sender->connected), memory_order_relaxed)) {
-                struct result failure;
-                failure.success = false;
-                return failure;
-            }
+            if (!atomic_load_explicit(&(recv->connected), memory_order_relaxed))
+                return false;
 
-            // if the queue is not dead, just wait
-#pragma omp taskyield
+                // if the queue is not dead, just wait
+/*#pragma omp taskyield*/
             continue;
         } else {
             // non-empty
-            chanTy elem = sender->items[sender->head_idx];
-            sender->head_idx = (sender->head_idx + 1) % sender->capacity;
+            memcpy(
+                result,
+                (recv->items + (recv->head_idx * recv->bytewidth)),
+                recv->bytewidth);
+            recv->head_idx = (recv->head_idx + 1) % recv->capacity;
 
-            atomic_fetch_sub(&(sender->occupancy), 1); 
-            
-            struct result out = {elem, true};
-            return out;
+            atomic_fetch_sub(&(recv->occupancy), 1);
+
+            return true;
         }
     }
 }
 
-void close_i64(struct chan* sender) {
+void close_channel(struct chan* sender)
+{
+    /*printf("be gone\n");*/
     bool expected = true;
     // deallocate if this is the last remaining reference
-    if (!atomic_compare_exchange_strong(&sender->connected, &expected, false)) {
+    if (!atomic_compare_exchange_strong(&(sender->connected), &expected, false)) {
+        /*printf("de-alloc shimashou!\n");*/
         free(sender->items);
         free(sender);
     }
 
     return;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -32,6 +32,8 @@ struct ConvertDfgToOlympusPass
 };
 } // namespace
 
+/// This lowering creates an olympus wrapper for each offloaded node instantiation.
+/// It creates a new FuncOp which contains all relevant Olympus operations
 struct OffloadedInstantiateOpLowering
         : public OpConversionPattern<InstantiateOp> {
     using OpConversionPattern<InstantiateOp>::OpConversionPattern;

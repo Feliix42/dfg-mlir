@@ -68,6 +68,9 @@ struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
             // populate the Terminator Block (for now) with a return only
             rewriter.setInsertionPointToEnd(&genFuncOp.getRegion().back());
             rewriter.create<func::ReturnOp>(op.getLoc());
+        } else {
+            // set the function private for linking
+            genFuncOp.setPrivate();
         }
 
         rewriter.eraseOp(op);
