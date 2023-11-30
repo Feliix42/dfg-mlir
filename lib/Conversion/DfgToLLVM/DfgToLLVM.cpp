@@ -52,11 +52,10 @@ static FlatSymbolRefAttr getOrInsertFunc(
 
     // Create a function declaration for the desired function
     FunctionType fnType;
-    if (result.has_value()) {
+    if (result.has_value())
         fnType = rewriter.getFunctionType(tyVec, result.value());
-    } else {
+    else
         fnType = rewriter.getFunctionType(tyVec, {});
-    }
 
     // Insert the function into the body of the parent module.
     PatternRewriter::InsertionGuard insertGuard(rewriter);
@@ -72,20 +71,26 @@ Type getLLVMStructfromChannelType(const Type &elementType)
 {
     MLIRContext* ctx = elementType.getContext();
     Type elementPtr = LLVM::LLVMPointerType::get(elementType);
-    Type i64Type = IntegerType::get(ctx, 64);
+    Type ui64Type = IntegerType::get(ctx, 64, IntegerType::Unsigned);
     std::vector<Type> structTypes{
         elementPtr,
-        i64Type,
-        i64Type,
-        i64Type,
-        i64Type,
+        ui64Type,
+        ui64Type,
+        ui64Type,
+        ui64Type,
+        ui64Type,
         IntegerType::get(ctx, 8)};
     return LLVM::LLVMStructType::getLiteral(ctx, structTypes);
 }
 
+// FIXME: This whole thing with the Struct etc is NOT necessary anymore now
+// that I have a library! an opaque pointer is fine!
+
 Type getLLVMPointerFromChannelType(const Type &elementType)
 {
-    return LLVM::LLVMPointerType::get(getLLVMStructfromChannelType(elementType));
+    // return LLVM::LLVMPointerType::get(
+    //     getLLVMStructfromChannelType(elementType));
+    return LLVM::LLVMPointerType::get(elementType.getContext());
 }
 
 // ========================================================
@@ -105,11 +110,7 @@ LogicalResult insertTeardownFunctionFromPush(
     ConversionPatternRewriter &rewriter)
 {
     // create function name for PushOp in LLVM IR
-    std::string funcName = "close_";
-    llvm::raw_string_ostream funcNameStream(funcName);
-    // 0 is the type of the item sent
-    // TODO(feliix42): Add name mangling here
-    funcNameStream << pushOp.getOperands()[0].getType();
+    std::string funcName = "close_channel";
 
     // fetch or create the FlatSymbolRefAttr for the called function
     FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
@@ -134,11 +135,7 @@ LogicalResult insertTeardownFunctionFromPull(
     ConversionPatternRewriter &rewriter)
 {
     // create function name for PushOp in LLVM IR
-    std::string funcName = "close_";
-    llvm::raw_string_ostream funcNameStream(funcName);
-    // 0 is the type of the item sent
-    // TODO(feliix42): Add name mangling here
-    funcNameStream << pullOp.getType();
+    std::string funcName = "close_channel";
 
     // Translate to InputType, insert UnrealizedConversionCastOp
     UnrealizedConversionCastOp inputType =
@@ -170,20 +167,32 @@ LogicalResult rewritePushOp(
     ConversionPatternRewriter &rewriter)
 {
     // create function name for PushOp in LLVM IR
-    std::string funcName = "push_";
-    llvm::raw_string_ostream funcNameStream(funcName);
-    // 0 is the type of the item sent
-    // TODO(feliix42): Add name mangling here
-    funcNameStream << op->getOperands()[0].getType();
+    std::string funcName = "push";
+
+    Location loc = op.getLoc();
+    // create a stack allocated data segment, write the data into it and call
+    // the channel send function with this pointer
+    auto one = rewriter.create<LLVM::ConstantOp>(
+        loc,
+        rewriter.getI64Type(),
+        rewriter.getI64IntegerAttr(1));
+    auto ptrType = LLVM::LLVMPointerType::get(op.getInp().getType());
+    auto allocated =
+        rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{one});
+    rewriter.create<LLVM::StoreOp>(loc, op.getInp(), allocated);
 
     // return value
     Type boolReturnVal = rewriter.getI1Type();
+
+    // TODO: The function declaration can be static: 2 pointers. Hence, this can
+    // be simplified, here and elsewhere
 
     // fetch or create the FlatSymbolRefAttr for the called function
     ModuleOp parentModule = op->getParentOfType<ModuleOp>();
     SmallVector<Value> arguments;
     arguments.push_back(op.getChan());
-    arguments.push_back(op.getInp());
+    arguments.push_back(op.getChan());
+    //arguments.push_back(allocated.getResult());
 
     FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
         rewriter,
@@ -192,12 +201,17 @@ LogicalResult rewritePushOp(
         boolReturnVal,
         arguments);
 
+    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(op.getLoc(), LLVM::LLVMPointerType::get(op.getContext()), allocated);
+
+    SmallVector<Value> args2;
+    args2.push_back(op.getChan());
+    args2.push_back(casted);
+
     func::CallOp pushOperation = rewriter.create<func::CallOp>(
-        op->getLoc(),
+        loc,
         pushFuncName,
         ArrayRef<Type>(boolReturnVal),
-        arguments);
-        //op->getOperands());
+        args2);
 
     // to handle the result of the push, we must do the following:
     // - split the current block after this instruction
@@ -231,46 +245,53 @@ LogicalResult rewritePullOp(
     ConversionPatternRewriter &rewriter)
 {
     // create function name for PullOp in LLVM IR
-    std::string funcName = "pull_";
-    llvm::raw_string_ostream funcNameStream(funcName);
-    op.getType().print(funcNameStream);
+    std::string funcName = "pull";
+
+    Location loc = op.getLoc();
+    // create a stack allocated data segment, write the data into it and call
+    // the channel send function with this pointer
+    auto one = rewriter.create<LLVM::ConstantOp>(
+        loc,
+        rewriter.getI64Type(),
+        rewriter.getI64IntegerAttr(1));
+    auto ptrType = LLVM::LLVMPointerType::get(op.getType());
+    auto allocated =
+        rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{one});
 
     // create the struct type that models the result
-    Type boolReturnVal = rewriter.getI8Type();
-    std::vector<Type> structTypes{op.getType(), boolReturnVal};
-    Type returnedStruct =
-        LLVM::LLVMStructType::getLiteral(rewriter.getContext(), structTypes);
+    Type boolReturnVal = rewriter.getI1Type();
+
+    SmallVector<Value> arguments;
+    arguments.push_back(op.getChan());
+    //arguments.push_back(allocated);
+    arguments.push_back(op.getChan());
 
     // fetch or create the FlatSymbolRefAttr for the called function
     ModuleOp parentModule = op->getParentOfType<ModuleOp>();
     FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
         rewriter,
         parentModule,
-        funcNameStream.str(),
-        returnedStruct,
-        op.getOperand());
+        funcName,
+        boolReturnVal,
+        arguments);
 
-    func::CallOp pullOperation = rewriter.create<func::CallOp>(
-        op.getLoc(),
-        ArrayRef<Type>(returnedStruct),
+    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(op.getLoc(), LLVM::LLVMPointerType::get(op.getContext()), allocated);
+
+    SmallVector<Value> args2;
+    args2.push_back(op.getChan());
+    args2.push_back(casted);
+
+    func::CallOp valid = rewriter.create<func::CallOp>(
+        loc,
+        ArrayRef<Type>(boolReturnVal),
         pullFuncName,
-        op.getChan());
+        args2);
 
-    LLVM::ExtractValueOp value = rewriter.create<LLVM::ExtractValueOp>(
-        pullOperation.getLoc(),
-        pullOperation.getResult(0),
-        0);
-    LLVM::ExtractValueOp valid = rewriter.create<LLVM::ExtractValueOp>(
-        value.getLoc(),
-        pullOperation.getResult(0),
-        1);
-
-    // truncate the returned i8 to i1
-    LLVM::TruncOp valid_i1 = rewriter.create<LLVM::TruncOp>(valid.getLoc(), rewriter.getI1Type(), valid.getResult());
+    LLVM::LoadOp value = rewriter.create<LLVM::LoadOp>(loc, allocated);
 
     op.getResult().replaceAllUsesWith(value.getResult());
 
-    Block* currentBlock = pullOperation->getBlock();
+    Block* currentBlock = value->getBlock();
 
     // create the new block with everything following this pull op
     Block* newBlock =
@@ -282,8 +303,8 @@ LogicalResult rewritePullOp(
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
     rewriter.create<cf::CondBranchOp>(
-        valid_i1.getLoc(),
-        valid_i1.getResult(),
+        valid.getLoc(),
+        valid.getResult(0),
         newBlock,
         ArrayRef<Value>(),
         // blockArgs,
@@ -308,13 +329,26 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
     {
         // 1. create a new CallOp calling the channel creation function
         Type encapsulatedType = adaptor.getEncapsulatedType();
-        std::string funcName = "channel_";
-        llvm::raw_string_ostream funcNameStream(funcName);
-        funcNameStream << encapsulatedType;
+        std::string funcName = "channel";
+
+        // Compute the byte width of the channel
+        LLVM::LLVMPointerType nullPtrTy =
+            LLVM::LLVMPointerType::get(encapsulatedType);
+
+        LLVM::NullOp nullOp =
+            rewriter.create<LLVM::NullOp>(op.getLoc(), nullPtrTy);
+        LLVM::GEPOp gepResult = rewriter.create<LLVM::GEPOp>(
+            op.getLoc(),
+            nullPtrTy,
+            nullOp.getResult(),
+            ArrayRef<LLVM::GEPArg>{1});
+        LLVM::PtrToIntOp bytewidthOp = rewriter.create<LLVM::PtrToIntOp>(
+            op.getLoc(),
+            rewriter.getI64Type(),
+            gepResult.getResult());
 
         // I want to use the original encapsulated type here
-        Type returnedPtr =
-            getLLVMPointerFromChannelType(encapsulatedType);
+        Type returnedPtr = getLLVMPointerFromChannelType(encapsulatedType);
 
         ModuleOp parentModule = op->getParentOfType<ModuleOp>();
         // 2. insert the appropriate definition at the top
@@ -323,13 +357,13 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
             parentModule,
             funcName,
             returnedPtr,
-            ArrayRef<Value>());
+            ArrayRef<Value>(bytewidthOp.getResult()));
 
         func::CallOp channelCreation = rewriter.create<func::CallOp>(
             op.getLoc(),
             ArrayRef<Type>{returnedPtr},
             chanFunctionName,
-            ArrayRef<Value>());
+            ArrayRef<Value>(bytewidthOp.getResult()));
 
         // 2.1 create 2 UnrealizedConversionCastOps that cast the resulting llvm
         // struct to an input and an output

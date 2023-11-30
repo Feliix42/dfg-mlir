@@ -74,7 +74,7 @@ def Dfg_OperatorOp : Dfg_Op<
 
 // TODO:
 // , RegionBranchOpInterface]>
-def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator, AttrSizedOperandSegments]>
+def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator, AttrSizedOperandSegments, RecursiveMemoryEffects]>
 {
     let summary = "Defines a list of input/output ports maybe closed";
 
