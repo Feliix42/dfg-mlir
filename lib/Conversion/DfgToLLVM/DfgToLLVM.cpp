@@ -65,27 +65,7 @@ static FlatSymbolRefAttr getOrInsertFunc(
     return SymbolRefAttr::get(context, funcName);
 }
 
-/// Returns the appropriate LLVM struct representation for a given element type
-/// of a channel.
-Type getLLVMStructfromChannelType(const Type &elementType)
-{
-    MLIRContext* ctx = elementType.getContext();
-    Type elementPtr = LLVM::LLVMPointerType::get(elementType);
-    Type ui64Type = IntegerType::get(ctx, 64, IntegerType::Unsigned);
-    std::vector<Type> structTypes{
-        elementPtr,
-        ui64Type,
-        ui64Type,
-        ui64Type,
-        ui64Type,
-        ui64Type,
-        IntegerType::get(ctx, 8)};
-    return LLVM::LLVMStructType::getLiteral(ctx, structTypes);
-}
-
-// FIXME: This whole thing with the Struct etc is NOT necessary anymore now
-// that I have a library! an opaque pointer is fine!
-
+/// Returns the appropriate LLVM pointer representation for a channel.
 Type getLLVMPointerFromChannelType(const Type &elementType)
 {
     // return LLVM::LLVMPointerType::get(
