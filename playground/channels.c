@@ -89,6 +89,8 @@ bool pull(struct chan* recv, char* result)
 
 void close_channel(struct chan* sender)
 {
+    if (!sender)
+        return;
     /*printf("be gone\n");*/
     bool expected = true;
     // deallocate if this is the last remaining reference
