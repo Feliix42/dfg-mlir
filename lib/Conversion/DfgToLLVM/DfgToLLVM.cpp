@@ -224,15 +224,25 @@ LogicalResult rewritePushOp(
     Block* newBlock =
         rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
 
+
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
+
+    // if the terminator block has arguments, insert poison values
+    SmallVector<Value> terminatorArgs;
+    if (terminatorBlock->getNumArguments() > 0) {
+        for (auto ty: terminatorBlock->getArgumentTypes()) {
+            LLVM::PoisonOp poison = rewriter.create<LLVM::PoisonOp>(loc, ty);
+            terminatorArgs.push_back(poison);
+        }
+    }
     rewriter.create<cf::CondBranchOp>(
         pushOperation.getLoc(),
         pushOperation.getResult(0),
         newBlock,
         /* trueArgs = */ ArrayRef<Value>(),
         terminatorBlock,
-        /* falseArgs = */ ArrayRef<Value>());
+        /* falseArgs = */ terminatorArgs);
 
     op->erase();
 
@@ -302,6 +312,15 @@ LogicalResult rewritePullOp(
 
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
+
+    // if the terminator block has arguments, insert poison values
+    SmallVector<Value> terminatorArgs;
+    if (terminatorBlock->getNumArguments() > 0) {
+        for (auto ty: terminatorBlock->getArgumentTypes()) {
+            LLVM::PoisonOp poison = rewriter.create<LLVM::PoisonOp>(loc, ty);
+            terminatorArgs.push_back(poison);
+        }
+    }
     rewriter.create<cf::CondBranchOp>(
         valid.getLoc(),
         valid.getResult(0),
@@ -309,7 +328,7 @@ LogicalResult rewritePullOp(
         ArrayRef<Value>(),
         // blockArgs,
         terminatorBlock,
-        ArrayRef<Value>());
+        terminatorArgs);
 
     op->erase();
 
@@ -467,13 +486,22 @@ void ConvertDfgToLLVMPass::runOnOperation()
         // if (pushOps.empty()) return WalkResult::advance();
 
         Block* terminatorBlock = funcOp.addBlock();
+        if (funcOp.getNumResults() > 0) {
+            SmallVector<Location> locs;
+            for (unsigned i = 0; i < funcOp.getNumResults(); i++) {
+                locs.push_back(funcOp.getLoc());
+            }
+            terminatorBlock->addArguments(funcOp.getResultTypes(), locs);
+        }
 
         // search all returns, forward to TerminatorBlock
         funcOp->walk([&](func::ReturnOp ret) {
             ConversionPatternRewriter localRewriter(ret->getContext());
             localRewriter.setInsertionPoint(ret);
+
             // NOTE(feliix42): replaceWithNewOp does *not* work here!
-            localRewriter.create<cf::BranchOp>(ret->getLoc(), terminatorBlock);
+            // localRewriter.create<cf::BranchOp>(ret->getLoc(), terminatorBlock);
+            localRewriter.create<cf::BranchOp>(ret->getLoc(), ret.getOperands(), terminatorBlock);
             ret->erase();
         });
 
@@ -488,7 +516,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
         for (PullOp pull : pullOps)
             if (failed(insertTeardownFunctionFromPull(parent, pull, rewriter)))
                 return WalkResult::interrupt();
-        rewriter.create<func::ReturnOp>(funcOp->getLoc());
+        rewriter.create<func::ReturnOp>(funcOp->getLoc(), terminatorBlock->getArguments());
 
         for (PushOp replace : pushOps) {
             ConversionPatternRewriter pushRewriter(replace->getContext());
