@@ -68,8 +68,6 @@ static FlatSymbolRefAttr getOrInsertFunc(
 /// Returns the appropriate LLVM pointer representation for a channel.
 Type getLLVMPointerFromChannelType(const Type &elementType)
 {
-    // return LLVM::LLVMPointerType::get(
-    //     getLLVMStructfromChannelType(elementType));
     return LLVM::LLVMPointerType::get(elementType.getContext());
 }
 
@@ -490,12 +488,25 @@ void ConvertDfgToLLVMPass::runOnOperation()
         rewriter.setInsertionPointToEnd(terminatorBlock);
         // insert teardown function calls for push and pull ops
         ModuleOp parent = funcOp->getParentOfType<ModuleOp>();
-        for (PushOp push : pushOps)
-            if (failed(insertTeardownFunctionFromPush(parent, push, rewriter)))
-                return WalkResult::interrupt();
-        for (PullOp pull : pullOps)
-            if (failed(insertTeardownFunctionFromPull(parent, pull, rewriter)))
-                return WalkResult::interrupt();
+
+        SmallPtrSet<Value, 16> inpSet;
+        for (PushOp push : pushOps) {
+            Value in = push.getChan();
+            if (!inpSet.contains(in)) {
+                inpSet.insert(in);
+                if (failed(insertTeardownFunctionFromPush(parent, push, rewriter)))
+                    return WalkResult::interrupt();
+            }
+        }
+        SmallPtrSet<Value, 16> outSet;
+        for (PullOp pull : pullOps) {
+            Value out = pull.getChan();
+            if (!outSet.contains(out)) {
+                outSet.insert(out);
+                if (failed(insertTeardownFunctionFromPull(parent, pull, rewriter)))
+                    return WalkResult::interrupt();
+            }
+        }
         rewriter.create<func::ReturnOp>(funcOp->getLoc(), terminatorBlock->getArguments());
 
         for (PushOp replace : pushOps) {
