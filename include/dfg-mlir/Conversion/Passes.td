@@ -62,6 +62,8 @@ def ConvertDfgToFunc : Pass<"convert-dfg-nodes-to-func"> {
     let dependentDialects = [
         "func::FuncDialect",
         "cf::ControlFlowDialect",
+        "omp::OpenMPDialect",
+        "arith::ArithDialect",
 
         "dfg::DfgDialect"
     ];
