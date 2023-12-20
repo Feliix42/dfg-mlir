@@ -7,11 +7,13 @@
 
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/OpenMP/OpenMPDialect.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/PatternMatch.h"
 
@@ -93,11 +95,19 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
         // don't lower offloaded functions
         if (adaptor.getOffloaded()) return failure();
 
-        rewriter.replaceOpWithNewOp<func::CallOp>(
-            op,
+        omp::SectionOp sec = rewriter.create<omp::SectionOp>(op.getLoc());
+        Region &sectionRegion = sec.getRegion();
+        Block* secBlock = rewriter.createBlock(&sectionRegion);
+
+        rewriter.setInsertionPointToStart(secBlock);
+        rewriter.create<func::CallOp>(
+            op.getLoc(),
             adaptor.getCallee(),
             ArrayRef<Type>(),
             adaptor.getOperands());
+        rewriter.create<omp::TerminatorOp>(op.getLoc());
+
+        rewriter.eraseOp(op);
 
         return success();
     }
@@ -165,8 +175,9 @@ struct LoopOpLowering : public OpConversionPattern<LoopOp> {
                 ArrayRef<Value>());
         }
 
-        // 3.5 insert the back-jump at the end of the loop (while I still can find it)
-        Region& loopRegion = op.getRegion();
+        // 3.5 insert the back-jump at the end of the loop (while I still can
+        // find it)
+        Region &loopRegion = op.getRegion();
         Block* loopEntry = &loopRegion.front();
         rewriter.setInsertionPointToEnd(&loopRegion.back());
         rewriter.create<cf::BranchOp>(op.getLoc(), &loopRegion.front());
@@ -199,10 +210,95 @@ void mlir::populateDfgToFuncConversionPatterns(
     patterns.add<LoopOpLowering>(typeConverter, patterns.getContext());
 }
 
+#include <iostream>
+
 void ConvertDfgToFuncPass::runOnOperation()
 {
     TypeConverter converter;
     converter.addConversion([](Type t) { return t; });
+
+    // insert omp::SectionsOp and omp::ParallelOp in the code
+    // do so by counting the number of successive instantiations and wrapping
+    // them
+
+    Operation* op = getOperation();
+
+    SmallVector<SmallVector<InstantiateOp>> rewriteGroups;
+
+    // whether an open group is being filled
+    bool openGroup = false;
+    WalkResult res = op->walk([&](InstantiateOp instantiation) -> WalkResult {
+        if (!openGroup) {
+            // create a new rewrite group
+            SmallVector<InstantiateOp> group;
+            rewriteGroups.push_back(group);
+            openGroup = true;
+        }
+
+        SmallVector<InstantiateOp> &group = rewriteGroups.back();
+        group.push_back(instantiation);
+
+        if (!isa<InstantiateOp>(instantiation->getNextNode())) {
+            // the next node is NOT an instantiation, so break here
+            openGroup = false;
+        }
+
+        return WalkResult::advance();
+    });
+
+    // TODO: go through all groups and rewrite them.
+    for (auto group : rewriteGroups) {
+        size_t groupSize = group.size();
+        std::cout << "group size is " << groupSize << std::endl;
+
+        Location loc = group[0]->getLoc();
+
+        ConversionPatternRewriter localRewriter(group[0]->getContext());
+        localRewriter.setInsertionPoint(group[0]);
+
+        arith::ConstantOp threadCount = localRewriter.create<arith::ConstantOp>(
+            loc,
+            localRewriter.getI32Type(),
+            localRewriter.getI32IntegerAttr(groupSize));
+
+        omp::ParallelOp par = localRewriter.create<omp::ParallelOp>(
+            loc,
+            nullptr,
+            threadCount,
+            ValueRange(),
+            ValueRange(),
+            ValueRange(),
+            nullptr,
+            nullptr);
+        Block* parBlock = localRewriter.createBlock(&par.getRegion());
+
+        omp::SectionsOp sections = localRewriter.create<omp::SectionsOp>(
+            loc,
+            ArrayRef<Type>(),
+            ValueRange());
+        sections.setNowait(true);
+        Block* sectionsBlock = localRewriter.createBlock(&sections.getRegion());
+
+        // move instantiates here
+        for (auto op : group) {
+            localRewriter.create<InstantiateOp>(
+                op->getLoc(),
+                op.getCallee(),
+                op.getInputs(),
+                op.getOutputs(),
+                op.getOffloadedAttr());
+            // localRewriter.eraseOp(op);
+            op->erase();
+        }
+
+        localRewriter.setInsertionPointToEnd(sectionsBlock);
+        localRewriter.create<omp::TerminatorOp>(loc);
+
+        localRewriter.setInsertionPointToEnd(parBlock);
+        localRewriter.create<omp::TerminatorOp>(loc);
+    }
+
+    if (res.wasInterrupted()) signalPassFailure();
 
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
@@ -213,6 +309,7 @@ void ConvertDfgToFuncPass::runOnOperation()
         BuiltinDialect,
         func::FuncDialect,
         cf::ControlFlowDialect,
+        omp::OpenMPDialect,
         LLVM::LLVMDialect>();
 
     target.addLegalDialect<DfgDialect>();
