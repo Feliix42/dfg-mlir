@@ -60,6 +60,17 @@ bool push(struct chan* sender, char* to_send)
     }
 }
 
+bool push_n(struct chan* sender, char* to_send, uint64_t item_count)
+{
+    for (uint64_t i = 0; i < item_count; i++)
+    {
+        if (!push(sender, (to_send + (i * sender->bytewidth))))
+            return false;
+    }
+
+    return true;
+}
+
 bool pull(struct chan* recv, char* result)
 {
     /*printf("Beginning pull\n");*/
@@ -86,6 +97,16 @@ bool pull(struct chan* recv, char* result)
         }
     }
 }
+
+bool pull_n(struct chan* recv, char* result, uint64_t item_count)
+{
+    for (uint64_t i = 0; i < item_count; i++)
+    {
+        if (!pull(recv, (result + (i * recv->bytewidth))))
+            return false;
+    }
+}
+
 
 void close_channel(struct chan* sender)
 {

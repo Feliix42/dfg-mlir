@@ -94,4 +94,15 @@ def ConvertDfgToOlympus : Pass<"convert-dfg-to-olympus"> {
     ];
 }
 
+def ConvertDfgInsertOlympusWrapper : Pass<"insert-olympus-wrappers"> {
+    let summary  = "Convert offloaded DFG nodes to olympus wrappers.";
+
+    let constructor = "mlir::createConvertDfgInsertOlympusWrapperPass()";
+
+    let  dependentDialects = [
+        "func::FuncDialect",
+        "dfg::DfgDialect"
+    ];
+}
+
 #endif // DFG_MLIR_CONVERSION_PASSES

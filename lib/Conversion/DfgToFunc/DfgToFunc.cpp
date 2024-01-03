@@ -93,7 +93,14 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
         ConversionPatternRewriter &rewriter) const override
     {
         // don't lower offloaded functions
-        if (adaptor.getOffloaded()) return failure();
+        if (adaptor.getOffloaded()) {
+            emitWarning(
+                op.getLoc(),
+                "This lowering does not handle the conversion of offloaded "
+                "operators. Please use a different conversion pattern "
+                "beforehand to translate these operations into legal inputs.");
+            return failure();
+        }
 
         omp::SectionOp sec = rewriter.create<omp::SectionOp>(op.getLoc());
         Region &sectionRegion = sec.getRegion();
@@ -210,8 +217,6 @@ void mlir::populateDfgToFuncConversionPatterns(
     patterns.add<LoopOpLowering>(typeConverter, patterns.getContext());
 }
 
-#include <iostream>
-
 void ConvertDfgToFuncPass::runOnOperation()
 {
     TypeConverter converter;
@@ -246,10 +251,8 @@ void ConvertDfgToFuncPass::runOnOperation()
         return WalkResult::advance();
     });
 
-    // TODO: go through all groups and rewrite them.
     for (auto group : rewriteGroups) {
         size_t groupSize = group.size();
-        std::cout << "group size is " << groupSize << std::endl;
 
         Location loc = group[0]->getLoc();
 
@@ -313,9 +316,11 @@ void ConvertDfgToFuncPass::runOnOperation()
         LLVM::LLVMDialect>();
 
     target.addLegalDialect<DfgDialect>();
-    target.addIllegalOp<OperatorOp, LoopOp>();
-    target.addDynamicallyLegalOp<InstantiateOp>(
-        [](InstantiateOp op) { return op.getOffloaded(); });
+    // NOTE(feliix42): Offloaded InstantiateOp operations are *not* covered by
+    // this lowering but are illegal.
+    target.addIllegalOp<OperatorOp, LoopOp, InstantiateOp>();
+    // target.addDynamicallyLegalOp<InstantiateOp>(
+    //     [](InstantiateOp op) { return op.getOffloaded(); });
 
     if (failed(applyPartialConversion(
             getOperation(),
