@@ -548,8 +548,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
         LLVM::LLVMDialect>();
 
     target.addIllegalDialect<DfgDialect>();
-    target.addDynamicallyLegalOp<InstantiateOp>(
-        [](InstantiateOp op) { return op.getOffloaded(); });
+    // target.addDynamicallyLegalOp<InstantiateOp>(
+    //     [](InstantiateOp op) { return op.getOffloaded(); });
 
     // mark func dialect ops as illegal when they contain a dfg type
     target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
