@@ -105,6 +105,8 @@ bool pull_n(struct chan* recv, char* result, uint64_t item_count)
         if (!pull(recv, (result + (i * recv->bytewidth))))
             return false;
     }
+
+    return true;
 }
 
 
