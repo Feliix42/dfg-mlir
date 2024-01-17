@@ -35,7 +35,7 @@
       # A Nixpkgs overlay.
       overlay = final: prev: {
 
-        dfg_dialect = with final; final.callPackage ({ inShell ? false }: llvmPackages_16.stdenv.mkDerivation rec {
+        dfg_dialect = with final; final.callPackage ({ inShell ? false }: llvmPackages_17.stdenv.mkDerivation rec {
           pname = "dfg-mlir";
           inherit version;
 
@@ -46,10 +46,10 @@
             python3
             ninja
             cmake
-            llvmPackages_16.clang
-            llvmPackages_16.bintools
-            llvmPackages_16.openmp
-            clang-tools_16
+            llvmPackages_17.clang
+            llvmPackages_17.bintools
+            llvmPackages_17.openmp
+            clang-tools_17
             mlir.packages.x86_64-linux.mlir
             mlir.packages.x86_64-linux.circt
             lit
