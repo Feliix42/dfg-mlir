@@ -26,8 +26,8 @@ using namespace mlir::dfg;
 // Constants
 // ========================================================
 std::string alveoHostWrapperName = "createAlveoHostObjectWrapper";
-std::string alveoHostFunctionName = "getAlveoHostObject";
-std::string alveoHostCall = "run_disss";
+std::string alveoHostFunctionName = "createAlveoHost";
+std::string alveoHostCall = "olympus_wrapper";
 
 // ========================================================
 // Helper Functions
@@ -472,13 +472,13 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
         // TODO: Figure out what to do with return value
     }
 
+    ioChans.insert(ioChans.begin(), hostObject.getOutp());
+
     //   call host
-    FlatSymbolRefAttr alveoHostFunc = getOrInsertFunc(rewriter, module, alveoHostCall, std::nullopt, ioChans);
-    rewriter.create<func::CallOp>(
-        loc,
-        ArrayRef<Type>(),
-        alveoHostFunc,
-        ioChans);
+    FlatSymbolRefAttr alveoHostFunc =
+        getOrInsertFunc(rewriter, module, alveoHostCall, std::nullopt, ioChans);
+    rewriter
+        .create<func::CallOp>(loc, ArrayRef<Type>(), alveoHostFunc, ioChans);
 
     //   retrieve results
     for (size_t i = 0; i < instantiation.getOutputs().size(); i++) {
@@ -496,7 +496,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
             rewriter.create<UnrealizedConversionCastOp>(
                 loc,
                 llvmChannelPointer,
-                entryBlock->getArgument(j+1));
+                entryBlock->getArgument(j + 1));
 
         SmallVector<Value> callValues;
         callValues.push_back(inputType.getResult(0));
@@ -658,27 +658,29 @@ void ConvertDfgInsertOlympusWrapperPass::runOnOperation()
 
     if (res.wasInterrupted()) signalPassFailure();
 
-    topLevel = instantiations[0]->getParentOfType<func::FuncOp>();
+    if (instantiations.size() > 0) {
+        topLevel = instantiations[0]->getParentOfType<func::FuncOp>();
 
-    // 2. Insert the creation of the AlveoHost object
-    if (failed(createAlveoHostObject(instantiations))) signalPassFailure();
+        // 2. Insert the creation of the AlveoHost object
+        if (failed(createAlveoHostObject(instantiations))) signalPassFailure();
 
-    // 3. Insert an OperatorOp for each offloaded instantiate
-    // TODO -> re-use the olympus lowering
-    SmallVector<OperatorOp> newOps;
-    for (InstantiateOp instantiation : instantiations)
-        newOps.push_back(insertOlympusWrapperOp(instantiation));
-    assert(newOps.size() == instantiations.size());
+        // 3. Insert an OperatorOp for each offloaded instantiate
+        // TODO -> re-use the olympus lowering
+        SmallVector<OperatorOp> newOps;
+        for (InstantiateOp instantiation : instantiations)
+            newOps.push_back(insertOlympusWrapperOp(instantiation));
+        assert(newOps.size() == instantiations.size());
 
-    // 4. Insert new channels (one per offloaded instantiate)
-    SmallVector<ChannelOp> newChans =
-        createAlveoHostChannels(topLevel, newOps.size());
-    assert(newOps.size() == newChans.size());
+        // 4. Insert new channels (one per offloaded instantiate)
+        SmallVector<ChannelOp> newChans =
+            createAlveoHostChannels(topLevel, newOps.size());
+        assert(newOps.size() == newChans.size());
 
-    // 5. Replace the existing instantiations & add AlveoInstantiate
-    if (failed(replaceInstantiations(instantiations, newOps, newChans)))
-        signalPassFailure();
-    // NOTE(feliix42): Do we want to return the op name from 2 and use here?
+        // 5. Replace the existing instantiations & add AlveoInstantiate
+        if (failed(replaceInstantiations(instantiations, newOps, newChans)))
+            signalPassFailure();
+        // NOTE(feliix42): Do we want to return the op name from 2 and use here?
+    }
 
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
