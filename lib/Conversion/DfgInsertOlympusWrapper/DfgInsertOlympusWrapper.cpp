@@ -29,6 +29,8 @@ std::string alveoHostWrapperName = "createAlveoHostObjectWrapper";
 std::string alveoHostFunctionName = "createAlveoHost";
 std::string alveoHostCall = "olympus_wrapper";
 
+uint64_t dataWidth = 80;
+
 // ========================================================
 // Helper Functions
 // ========================================================
@@ -103,6 +105,7 @@ struct OffloadedInstantiateOpLowering
             return failure();
         }
 
+        //
         ModuleOp parent = op->getParentOfType<ModuleOp>();
 
         // find associated OperatorOp
@@ -396,7 +399,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
     SmallVector<Value> ioChans;
     for (size_t i = 0; i < multiplicities.size(); i++) {
         // TODO: #iterations will go here!!
-        int64_t m = multiplicities[i];
+        int64_t m = multiplicities[i] * dataWidth;
         LLVM::ConstantOp bufSize = rewriter.create<LLVM::ConstantOp>(
             loc,
             rewriter.getI64Type(),
@@ -439,10 +442,11 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
 
     //   accumulate items
     for (size_t i = 0; i < instantiation.getInputs().size(); i++) {
-        LLVM::ConstantOp depth = rewriter.create<LLVM::ConstantOp>(
+        int64_t m = multiplicities[i] * dataWidth;
+        LLVM::ConstantOp numData = rewriter.create<LLVM::ConstantOp>(
             loc,
             rewriter.getI64Type(),
-            rewriter.getI64IntegerAttr(multiplicities[i]));
+            rewriter.getI64IntegerAttr(m));
         LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
             loc,
             LLVM::LLVMPointerType::get(instantiation.getContext()),
@@ -456,7 +460,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
         SmallVector<Value> callValues;
         callValues.push_back(inputType.getResult(0));
         callValues.push_back(casted);
-        callValues.push_back(depth);
+        callValues.push_back(numData);
         FlatSymbolRefAttr pullNFunc = getOrInsertFunc(
             rewriter,
             module,
@@ -483,15 +487,16 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
     //   retrieve results
     for (size_t i = 0; i < instantiation.getOutputs().size(); i++) {
         size_t j = instantiation.getInputs().size() + i;
+        int64_t m = multiplicities[j] * dataWidth;
 
-        LLVM::ConstantOp depth = rewriter.create<LLVM::ConstantOp>(
+        LLVM::ConstantOp numData = rewriter.create<LLVM::ConstantOp>(
             loc,
             rewriter.getI64Type(),
-            rewriter.getI64IntegerAttr(multiplicities[j]));
+            rewriter.getI64IntegerAttr(m));
         LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
             loc,
             LLVM::LLVMPointerType::get(instantiation.getContext()),
-            ioChans[j]);
+            ioChans[j+1]);
         UnrealizedConversionCastOp inputType =
             rewriter.create<UnrealizedConversionCastOp>(
                 loc,
@@ -501,7 +506,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
         SmallVector<Value> callValues;
         callValues.push_back(inputType.getResult(0));
         callValues.push_back(casted);
-        callValues.push_back(depth);
+        callValues.push_back(numData);
         FlatSymbolRefAttr pushNFunc = getOrInsertFunc(
             rewriter,
             module,
