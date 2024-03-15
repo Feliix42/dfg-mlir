@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1704792935,
-        "narHash": "sha256-/Z2tNg0JnBRFnxdnommPZRsh7RHUi2t8JKLHboJjJsU=",
+        "lastModified": 1706542027,
+        "narHash": "sha256-kunu519u5RI6ZQZ3tDoDpoFeGjY/93cBTbbFi1iiRCI=",
         "owner": "Feliix42",
         "repo": "mlir.nix",
-        "rev": "2e409d0b84b24070c5bfe3383c05e6bf8ad571b2",
+        "rev": "7845731a3091da638be59cce1ca62554ce7faea3",
         "type": "github"
       },
       "original": {
@@ -23,16 +23,16 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1704420045,
-        "narHash": "sha256-C36QmoJd5tdQ5R9MC1jM7fBkZW9zBUqbUCsgwS6j4QU=",
+        "lastModified": 1709479366,
+        "narHash": "sha256-n6F0n8UV6lnTZbYPl1A9q1BS0p4hduAv1mGAP17CVd0=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "c1be43e8e837b8dbee2b3665a007e761680f0c3d",
+        "rev": "b8697e57f10292a6165a20f03d2f42920dfaf973",
         "type": "github"
       },
       "original": {
         "id": "nixpkgs",
-        "ref": "nixos-23.11",
+        "ref": "nixos-unstable",
         "type": "indirect"
       }
     },

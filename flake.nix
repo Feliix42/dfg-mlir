@@ -2,7 +2,7 @@
   description = "An over-engineered Hello World in C";
 
   inputs = {
-    nixpkgs.url = "nixpkgs/nixos-23.11";
+    nixpkgs.url = "nixpkgs/nixos-unstable";
     mlir = {
       #url = "github:Feliix42/mlir.nix/main";
       url = "github:Feliix42/mlir.nix/circt";
