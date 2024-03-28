@@ -50,3 +50,12 @@ The following CMake variables can be configured:
 | `CIRCT_DIR` | `STRING` | Path to the CMake directory of an **CIRCT** installation. <br/> *e.g. `~/tools/circt/lib/cmake/circt`* |
 
 Notice that the llvm version should be the same as the `CIRCT` is using.
+
+## Acknowledgements
+
+`dfg-mlir` has been supported throughout its history by the following projects.
+
+European Union projects:
+
+- Grant agreement ID 957269 **EVEREST** – dEsign enVironmEnt foR Extreme-Scale big data analytics on heterogeneous platforms
+
