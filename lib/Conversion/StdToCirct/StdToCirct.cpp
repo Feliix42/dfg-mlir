@@ -48,7 +48,7 @@ struct OneToOneConversion : public OpConversionPattern<From> {
 
     LogicalResult matchAndRewrite(
         From op,
-        From::Adaptor adaptor,
+        typename From::Adaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         rewriter.replaceOpWithNewOp<To>(

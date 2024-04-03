@@ -15,6 +15,9 @@
 #include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "circt/Dialect/SV/SVOps.h"
+#include "circt/Dialect/Seq/SeqDialect.h"
+#include "circt/Dialect/Seq/SeqOps.h"
+#include "circt/Dialect/Seq/SeqTypes.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -683,13 +686,16 @@ public:
             }
             ops.push_back(&opi);
         }
-        auto hwFuncTy = hwModule.getFunctionType();
-        auto hwInTypes = hwFuncTy.getInputs();
-        auto hwOutTypes = hwFuncTy.getResults();
+        auto hwFuncTy = hwModule.getModuleType();
+        auto hwInTypes = hwFuncTy.getInputTypes();
+        auto hwOutTypes = hwFuncTy.getOutputTypes();
         // The machine inputs don't contain clock and reset
         rewriter.setInsertionPointToStart(&hwModule.getBody().front());
         auto loc = rewriter.getUnknownLoc();
         auto i1Ty = rewriter.getI1Type();
+        auto clock_seq = rewriter.create<seq::ToClockOp>(
+            loc,
+            hwModule.getBody().getArgument(0));
         SmallVector<Value> placeholderInstInputs;
         ArrayRef<Type> fsmInTypes(hwInTypes.data() + 2, hwInTypes.size() - 2);
         SmallVector<Type> fsmInTypesVec(fsmInTypes.begin(), fsmInTypes.end());
@@ -797,7 +803,7 @@ public:
             rewriter.getStringAttr("controller"),
             newMachine.getSymNameAttr(),
             fsmInputs,
-            hwModule.getBody().getArgument(0),
+            clock_seq.getResult(),
             hwModule.getBody().getArgument(1));
 
         size_t resultIdxBias = numInputs + numOutputs * 2 + 1;
@@ -829,15 +835,23 @@ public:
     }
 };
 
-std::map<std::string, hw::HWModuleOp> queueList;
-hw::HWModuleOp
-insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
+hw::HWModuleOp paramQueueModule = nullptr;
+hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc)
 {
-    auto suffix = std::to_string(size) + "x" + "i" + std::to_string(portBit);
-    auto name = "queue_" + suffix;
-    auto isExist = queueList.find(name);
-    if (isExist != queueList.end()) return isExist->second;
+    if (paramQueueModule != nullptr) return paramQueueModule;
     auto i1Ty = builder.getI1Type();
+    auto i32Ty = builder.getI32Type();
+    auto name = "queue";
+    SmallVector<Attribute> params;
+    params.push_back(hw::ParamDeclAttr::get("bitwidth", builder.getI32Type()));
+    params.push_back(hw::ParamDeclAttr::get("size", builder.getI32Type()));
+    auto dataParamAttr = hw::ParamDeclRefAttr::get(
+        builder.getStringAttr("bitwidth"),
+        builder.getI32Type());
+    auto dataParamTy = hw::IntType::get(dataParamAttr);
+    auto sizeParamAttr = hw::ParamDeclRefAttr::get(
+        builder.getStringAttr("size"),
+        builder.getI32Type());
 
     SmallVector<hw::PortInfo> ports;
     // Add clock port.
@@ -868,7 +882,7 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
     hw::PortInfo io_enq_bits;
     io_enq_bits.name = builder.getStringAttr("io_enq_bits");
     io_enq_bits.dir = hw::ModulePort::Direction::Input;
-    io_enq_bits.type = builder.getIntegerType(portBit);
+    io_enq_bits.type = dataParamTy;
     ports.push_back(io_enq_bits);
     // Add io_deq_ready
     hw::PortInfo io_deq_ready;
@@ -892,7 +906,7 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
     hw::PortInfo io_deq_bits;
     io_deq_bits.name = builder.getStringAttr("io_deq_bits");
     io_deq_bits.dir = hw::ModulePort::Direction::Output;
-    io_deq_bits.type = builder.getIntegerType(portBit);
+    io_deq_bits.type = dataParamTy;
     ports.push_back(io_deq_bits);
     // Add done signal
     hw::PortInfo done;
@@ -905,7 +919,7 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
         loc,
         builder.getStringAttr(name),
         hw::ModulePortInfo(ports),
-        ArrayAttr{},
+        ArrayAttr::get(builder.getContext(), params),
         ArrayRef<NamedAttribute>{},
         StringAttr{},
         false);
@@ -920,23 +934,27 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
     // Constants
     auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1);
     auto c_false = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
-    unsigned bitDepth = std::ceil(std::log2(size));
-    auto ptrTy = builder.getIntegerType(bitDepth);
-    auto isTwoPower = size > 0 && (size & (size - 1)) == 0;
-    auto c_widthZero = builder.create<hw::ConstantOp>(loc, ptrTy, 0);
-    auto c_widthOne = builder.create<hw::ConstantOp>(loc, ptrTy, 1);
-    hw::ConstantOp c_sizeMax;
-    if (!isTwoPower)
-        c_sizeMax = builder.create<hw::ConstantOp>(loc, ptrTy, size - 1);
+    auto c_zero = builder.create<hw::ConstantOp>(loc, i32Ty, 0);
+    auto c_one = builder.create<hw::ConstantOp>(loc, i32Ty, 1);
+    auto sizeValue =
+        builder.create<hw::ParamValueOp>(loc, i32Ty, dataParamAttr);
+    auto sizeMaxIdx = builder.create<comb::SubOp>(
+        loc,
+        sizeValue.getResult(),
+        c_one.getResult());
 
-    // RAM
+    // Close behavior
     auto want_close = builder.create<sv::RegOp>(loc, i1Ty);
     auto want_close_value =
         builder.create<sv::ReadInOutOp>(loc, want_close.getResult());
+    // RAM
     auto ram = builder.create<sv::RegOp>(
         loc,
-        hw::UnpackedArrayType::get(builder.getIntegerType(portBit), size));
-    auto placeholderReadIndex = builder.create<hw::ConstantOp>(loc, ptrTy, 0);
+        hw::UnpackedArrayType::get(
+            builder.getContext(),
+            dataParamTy,
+            sizeParamAttr));
+    auto placeholderReadIndex = builder.create<hw::ConstantOp>(loc, i32Ty, 0);
     auto ram_read = builder.create<sv::ArrayIndexInOutOp>(
         loc,
         ram.getResult(),
@@ -945,10 +963,10 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
         builder.create<sv::ReadInOutOp>(loc, ram_read.getResult());
 
     // Pointers
-    auto ptr_write = builder.create<sv::RegOp>(loc, ptrTy);
+    auto ptr_write = builder.create<sv::RegOp>(loc, i32Ty);
     auto ptr_write_value =
         builder.create<sv::ReadInOutOp>(loc, ptr_write.getResult());
-    auto ptr_read = builder.create<sv::RegOp>(loc, ptrTy);
+    auto ptr_read = builder.create<sv::RegOp>(loc, i32Ty);
     auto ptr_read_value =
         builder.create<sv::ReadInOutOp>(loc, ptr_read.getResult());
     placeholderReadIndex.replaceAllUsesWith(ptr_read_value.getResult());
@@ -987,11 +1005,11 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
     auto next_write = builder.create<comb::AddOp>(
         loc,
         ptr_write_value.getResult(),
-        c_widthOne.getResult());
+        c_one.getResult());
     auto next_read = builder.create<comb::AddOp>(
         loc,
         ptr_read_value.getResult(),
-        c_widthOne.getResult());
+        c_one.getResult());
     auto notSameEnqDeq = builder.create<comb::ICmpOp>(
         loc,
         comb::ICmpPredicate::ne,
@@ -1025,11 +1043,11 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
                 builder.create<sv::PAssignOp>(
                     loc,
                     ptr_write.getResult(),
-                    c_widthZero.getResult());
+                    c_zero.getResult());
                 builder.create<sv::PAssignOp>(
                     loc,
                     ptr_read.getResult(),
-                    c_widthZero.getResult());
+                    c_zero.getResult());
                 builder.create<sv::PAssignOp>(
                     loc,
                     maybe_full.getResult(),
@@ -1049,62 +1067,48 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
                         loc,
                         ram_write.getResult(),
                         in_bits);
-                    if (isTwoPower) {
-                        builder.create<sv::PAssignOp>(
-                            loc,
-                            ptr_write.getResult(),
-                            next_write.getResult());
-                    } else {
-                        auto isSizeMax = builder.create<comb::ICmpOp>(
-                            loc,
-                            comb::ICmpPredicate::eq,
-                            ptr_write_value.getResult(),
-                            c_sizeMax.getResult());
-                        builder.create<sv::IfOp>(
-                            loc,
-                            isSizeMax.getResult(),
-                            [&] {
-                                builder.create<sv::PAssignOp>(
-                                    loc,
-                                    ptr_write.getResult(),
-                                    c_widthZero.getResult());
-                            },
-                            [&] {
-                                builder.create<sv::PAssignOp>(
-                                    loc,
-                                    ptr_write.getResult(),
-                                    next_write.getResult());
-                            });
-                    }
+                    auto isSizeMax = builder.create<comb::ICmpOp>(
+                        loc,
+                        comb::ICmpPredicate::eq,
+                        ptr_write_value.getResult(),
+                        sizeMaxIdx.getResult());
+                    builder.create<sv::IfOp>(
+                        loc,
+                        isSizeMax.getResult(),
+                        [&] {
+                            builder.create<sv::PAssignOp>(
+                                loc,
+                                ptr_write.getResult(),
+                                c_zero.getResult());
+                        },
+                        [&] {
+                            builder.create<sv::PAssignOp>(
+                                loc,
+                                ptr_write.getResult(),
+                                next_write.getResult());
+                        });
                 });
                 builder.create<sv::IfOp>(loc, do_deq.getResult(), [&] {
-                    if (isTwoPower) {
-                        builder.create<sv::PAssignOp>(
-                            loc,
-                            ptr_read.getResult(),
-                            next_read.getResult());
-                    } else {
-                        auto isSizeMax = builder.create<comb::ICmpOp>(
-                            loc,
-                            comb::ICmpPredicate::eq,
-                            ptr_read_value.getResult(),
-                            c_sizeMax.getResult());
-                        builder.create<sv::IfOp>(
-                            loc,
-                            isSizeMax.getResult(),
-                            [&] {
-                                builder.create<sv::PAssignOp>(
-                                    loc,
-                                    ptr_read.getResult(),
-                                    c_widthZero.getResult());
-                            },
-                            [&] {
-                                builder.create<sv::PAssignOp>(
-                                    loc,
-                                    ptr_read.getResult(),
-                                    next_read.getResult());
-                            });
-                    }
+                    auto isSizeMax = builder.create<comb::ICmpOp>(
+                        loc,
+                        comb::ICmpPredicate::eq,
+                        ptr_read_value.getResult(),
+                        sizeMaxIdx.getResult());
+                    builder.create<sv::IfOp>(
+                        loc,
+                        isSizeMax.getResult(),
+                        [&] {
+                            builder.create<sv::PAssignOp>(
+                                loc,
+                                ptr_read.getResult(),
+                                c_zero.getResult());
+                        },
+                        [&] {
+                            builder.create<sv::PAssignOp>(
+                                loc,
+                                ptr_read.getResult(),
+                                next_read.getResult());
+                        });
                 });
                 builder.create<sv::IfOp>(loc, notSameEnqDeq.getResult(), [&] {
                     builder.create<sv::PAssignOp>(
@@ -1133,7 +1137,7 @@ insertQueue(OpBuilder &builder, Location loc, unsigned portBit, unsigned size)
     outputs.push_back(ram_read_data.getResult());
     outputs.push_back(isDone.getResult());
     builder.create<hw::OutputOp>(loc, outputs);
-    queueList.emplace(name, hwModule);
+    paramQueueModule = hwModule;
     return hwModule;
 }
 
@@ -1209,9 +1213,9 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             }
         });
 
-        auto funcTy = op.getFunctionType();
+        auto funcTy = op.getModuleType();
         auto numInputs = funcTy.getNumInputs();
-        auto numOutputs = funcTy.getNumResults();
+        auto numOutputs = funcTy.getNumOutputs();
 
         SmallVector<hw::PortInfo> ports;
         int in_num = 1;
@@ -1232,7 +1236,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
         ports.push_back(reset);
 
         for (size_t i = 0; i < numInputs; i++) {
-            auto type = funcTy.getInput(i);
+            auto type = funcTy.getInputType(i);
             std::string name;
             auto inTy = dyn_cast<InputType>(type);
             auto elemTy = dyn_cast<IntegerType>(inTy.getElementType());
@@ -1275,7 +1279,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             in_num++;
         }
         for (size_t i = 0; i < numOutputs; i++) {
-            auto type = funcTy.getResult(i);
+            auto type = funcTy.getOutputType(i);
             std::string name;
             auto outTy = dyn_cast<OutputType>(type);
             auto elemTy = dyn_cast<IntegerType>(outTy.getElementType());
@@ -1420,11 +1424,8 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                 OpBuilder builder(context);
                 builder.setInsertionPointToStart(
                     &moduleOp.getBodyRegion().front());
-                auto queueModule = insertQueue(
-                    builder,
-                    builder.getUnknownLoc(),
-                    portBit,
-                    size);
+                auto queueModule =
+                    insertQueue(builder, builder.getUnknownLoc());
                 auto newModuleArg = getNewIndexOrArg<Value, Value>(
                     channelOp.getInChan(),
                     newConnections);
@@ -1484,11 +1485,19 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                                 + " is not connected.");
                     inputs.push_back(placeholder.value());
                 }
+                SmallVector<Attribute> params;
+                params.push_back(hw::ParamDeclAttr::get(
+                    "bitwidth",
+                    rewriter.getI32IntegerAttr(portBit)));
+                params.push_back(hw::ParamDeclAttr::get(
+                    "size",
+                    rewriter.getI32IntegerAttr(size)));
                 auto queueInstance = rewriter.create<hw::InstanceOp>(
                     loc,
                     queueModule,
                     "queue" + std::to_string(queueSuffixNum++),
-                    inputs);
+                    inputs,
+                    ArrayAttr::get(rewriter.getContext(), params));
                 auto in_ready = queueInstance.getResult(0);
                 auto in_valid = queueInstance.getResult(1);
                 auto in_bits = queueInstance.getResult(2);
@@ -1633,13 +1642,14 @@ void ConvertDfgToCirctPass::runOnOperation()
         comb::CombDialect,
         fsm::FSMDialect,
         hw::HWDialect,
+        seq::SeqDialect,
         sv::SVDialect>();
     target.addIllegalDialect<dfg::DfgDialect>();
     target.addDynamicallyLegalOp<hw::HWModuleOp>([&](hw::HWModuleOp op) {
-        auto funcTy = op.getFunctionType();
-        for (const auto inTy : funcTy.getInputs())
+        auto funcTy = op.getModuleType();
+        for (const auto inTy : funcTy.getInputTypes())
             if (dyn_cast<InputType>(inTy)) return false;
-        for (const auto outTy : funcTy.getResults())
+        for (const auto outTy : funcTy.getOutputTypes())
             if (dyn_cast<OutputType>(outTy)) return false;
         return true;
     });

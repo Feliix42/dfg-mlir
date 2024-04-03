@@ -32,11 +32,14 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTCalyxToFSM
     CIRCTCalyxTransforms
     CIRCTComb
+    CIRCTCombToSMT
     CIRCTCombTransforms
     CIRCTConvertToArcs
     CIRCTDC
     CIRCTDCToHW
     CIRCTDCTransforms
+    CIRCTDebug
+    CIRCTEmit
     CIRCTESI
     CIRCTExportChiselInterface
     CIRCTExportVerilog
@@ -50,6 +53,7 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTHandshakeToDC
     CIRCTHandshakeToHW
     CIRCTHandshakeTransforms
+    CIRCTLECTransforms
     CIRCTLLHD
     CIRCTLLHDToLLVM
     CIRCTHWToLLVM
@@ -63,10 +67,12 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTHW
     CIRCTHWArith
     CIRCTHWArithToHW
+    CIRCTHWToBTOR2
     CIRCTIbis
     CIRCTIbisTransforms
     CIRCTInteropDialect
     CIRCTHWToLLHD
+    CIRCTHWToSMT
     CIRCTHWToSystemC
     CIRCTHWToSV
     CIRCTHWTransforms
@@ -78,6 +84,7 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTSeq
     CIRCTSeqToSV
     CIRCTSeqTransforms
+    CIRCTSimToSV
     CIRCTSSP
     CIRCTSSPTransforms
     CIRCTCFToHandshake
@@ -86,6 +93,7 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTPipelineOps
     CIRCTPipelineToHW
     CIRCTPipelineTransforms
+    CIRCTSMT
     CIRCTSV
     CIRCTSVTransforms
     CIRCTHWArith
@@ -93,5 +101,6 @@ target_link_libraries(${PROJECT_NAME}
     CIRCTSystemCTransforms
     CIRCTTransforms
     CIRCTVerif
+    CIRCTVerifToSMT
     CIRCTVerifToSV
 )
