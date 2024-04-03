@@ -256,7 +256,8 @@ void ConvertDfgToFuncPass::runOnOperation()
 
         Location loc = group[0]->getLoc();
 
-        ConversionPatternRewriter localRewriter(group[0]->getContext());
+        // ConversionPatternRewriter localRewriter(group[0]->getContext());
+        OpBuilder localRewriter(group[0]->getContext());
         localRewriter.setInsertionPoint(group[0]);
 
         arith::ConstantOp threadCount = localRewriter.create<arith::ConstantOp>(
@@ -266,12 +267,14 @@ void ConvertDfgToFuncPass::runOnOperation()
 
         omp::ParallelOp par = localRewriter.create<omp::ParallelOp>(
             loc,
-            nullptr,
-            threadCount,
+            Value{},
+            threadCount.getResult(),
             ValueRange(),
             ValueRange(),
             ValueRange(),
-            nullptr,
+            ArrayAttr{},
+            omp::ClauseProcBindKindAttr{},
+            ValueRange(),
             nullptr);
         Block* parBlock = localRewriter.createBlock(&par.getRegion());
 

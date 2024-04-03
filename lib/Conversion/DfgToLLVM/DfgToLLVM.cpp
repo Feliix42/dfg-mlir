@@ -36,7 +36,7 @@ using namespace mlir::dfg;
 /// Return a symbol reference to the requested function, inserting it into the
 /// module if necessary.
 static FlatSymbolRefAttr getOrInsertFunc(
-    PatternRewriter &rewriter,
+    OpBuilder &rewriter,
     ModuleOp module,
     std::string funcName,
     std::optional<Type> result,
@@ -85,7 +85,7 @@ struct ConvertDfgToLLVMPass
 LogicalResult insertTeardownFunctionFromPush(
     ModuleOp parentModule,
     PushOp pushOp,
-    ConversionPatternRewriter &rewriter)
+    OpBuilder &rewriter)
 {
     // create function name for PushOp in LLVM IR
     std::string funcName = "close_channel";
@@ -110,7 +110,7 @@ LogicalResult insertTeardownFunctionFromPush(
 LogicalResult insertTeardownFunctionFromPull(
     ModuleOp parentModule,
     PullOp pullOp,
-    ConversionPatternRewriter &rewriter)
+    OpBuilder &rewriter)
 {
     // create function name for PushOp in LLVM IR
     std::string funcName = "close_channel";
@@ -139,10 +139,8 @@ LogicalResult insertTeardownFunctionFromPull(
     return success();
 }
 
-LogicalResult rewritePushOp(
-    PushOp op,
-    Block* terminatorBlock,
-    ConversionPatternRewriter &rewriter)
+LogicalResult
+rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter)
 {
     // create function name for PushOp in LLVM IR
     std::string funcName = "push";
@@ -154,7 +152,8 @@ LogicalResult rewritePushOp(
         loc,
         rewriter.getI64Type(),
         rewriter.getI64IntegerAttr(1));
-    auto ptrType = LLVM::LLVMPointerType::get(op.getInp().getType());
+    auto ptrType =
+        LLVM::LLVMPointerType::get(op.getInp().getType().getContext());
     auto allocated =
         rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{one});
     rewriter.create<LLVM::StoreOp>(loc, op.getInp(), allocated);
@@ -170,7 +169,7 @@ LogicalResult rewritePushOp(
     SmallVector<Value> arguments;
     arguments.push_back(op.getChan());
     arguments.push_back(op.getChan());
-    //arguments.push_back(allocated.getResult());
+    // arguments.push_back(allocated.getResult());
 
     FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
         rewriter,
@@ -179,7 +178,10 @@ LogicalResult rewritePushOp(
         boolReturnVal,
         arguments);
 
-    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(op.getLoc(), LLVM::LLVMPointerType::get(op.getContext()), allocated);
+    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
+        op.getLoc(),
+        LLVM::LLVMPointerType::get(op.getContext()),
+        allocated);
 
     SmallVector<Value> args2;
     args2.push_back(op.getChan());
@@ -202,14 +204,13 @@ LogicalResult rewritePushOp(
     Block* newBlock =
         rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
 
-
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
 
     // if the terminator block has arguments, insert poison values
     SmallVector<Value> terminatorArgs;
     if (terminatorBlock->getNumArguments() > 0) {
-        for (auto ty: terminatorBlock->getArgumentTypes()) {
+        for (auto ty : terminatorBlock->getArgumentTypes()) {
             LLVM::PoisonOp poison = rewriter.create<LLVM::PoisonOp>(loc, ty);
             terminatorArgs.push_back(poison);
         }
@@ -227,10 +228,8 @@ LogicalResult rewritePushOp(
     return success();
 }
 
-LogicalResult rewritePullOp(
-    PullOp op,
-    Block* terminatorBlock,
-    ConversionPatternRewriter &rewriter)
+LogicalResult
+rewritePullOp(PullOp op, Block* terminatorBlock, IRRewriter &rewriter)
 {
     // create function name for PullOp in LLVM IR
     std::string funcName = "pull";
@@ -242,7 +241,7 @@ LogicalResult rewritePullOp(
         loc,
         rewriter.getI64Type(),
         rewriter.getI64IntegerAttr(1));
-    auto ptrType = LLVM::LLVMPointerType::get(op.getType());
+    auto ptrType = LLVM::LLVMPointerType::get(op.getType().getContext());
     auto allocated =
         rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{one});
 
@@ -251,7 +250,7 @@ LogicalResult rewritePullOp(
 
     SmallVector<Value> arguments;
     arguments.push_back(op.getChan());
-    //arguments.push_back(allocated);
+    // arguments.push_back(allocated);
     arguments.push_back(op.getChan());
 
     // fetch or create the FlatSymbolRefAttr for the called function
@@ -263,7 +262,10 @@ LogicalResult rewritePullOp(
         boolReturnVal,
         arguments);
 
-    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(op.getLoc(), LLVM::LLVMPointerType::get(op.getContext()), allocated);
+    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
+        op.getLoc(),
+        LLVM::LLVMPointerType::get(op.getContext()),
+        allocated);
 
     SmallVector<Value> args2;
     args2.push_back(op.getChan());
@@ -275,7 +277,8 @@ LogicalResult rewritePullOp(
         pullFuncName,
         args2);
 
-    LLVM::LoadOp value = rewriter.create<LLVM::LoadOp>(loc, allocated);
+    LLVM::LoadOp value =
+        rewriter.create<LLVM::LoadOp>(loc, rewriter.getI64Type(), allocated);
 
     op.getResult().replaceAllUsesWith(value.getResult());
 
@@ -294,7 +297,7 @@ LogicalResult rewritePullOp(
     // if the terminator block has arguments, insert poison values
     SmallVector<Value> terminatorArgs;
     if (terminatorBlock->getNumArguments() > 0) {
-        for (auto ty: terminatorBlock->getArgumentTypes()) {
+        for (auto ty : terminatorBlock->getArgumentTypes()) {
             LLVM::PoisonOp poison = rewriter.create<LLVM::PoisonOp>(loc, ty);
             terminatorArgs.push_back(poison);
         }
@@ -330,12 +333,13 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
 
         // Compute the byte width of the channel
         LLVM::LLVMPointerType nullPtrTy =
-            LLVM::LLVMPointerType::get(encapsulatedType);
+            LLVM::LLVMPointerType::get(encapsulatedType.getContext());
 
-        LLVM::NullOp nullOp =
-            rewriter.create<LLVM::NullOp>(op.getLoc(), nullPtrTy);
+        LLVM::ZeroOp nullOp =
+            rewriter.create<LLVM::ZeroOp>(op.getLoc(), nullPtrTy);
         LLVM::GEPOp gepResult = rewriter.create<LLVM::GEPOp>(
             op.getLoc(),
+            nullPtrTy,
             nullPtrTy,
             nullOp.getResult(),
             ArrayRef<LLVM::GEPArg>{1});
@@ -466,25 +470,30 @@ void ConvertDfgToLLVMPass::runOnOperation()
         Block* terminatorBlock = funcOp.addBlock();
         if (funcOp.getNumResults() > 0) {
             SmallVector<Location> locs;
-            for (unsigned i = 0; i < funcOp.getNumResults(); i++) {
+            for (unsigned i = 0; i < funcOp.getNumResults(); i++)
                 locs.push_back(funcOp.getLoc());
-            }
             terminatorBlock->addArguments(funcOp.getResultTypes(), locs);
         }
 
         // search all returns, forward to TerminatorBlock
         funcOp->walk([&](func::ReturnOp ret) {
-            ConversionPatternRewriter localRewriter(ret->getContext());
+            // ConversionPatternRewriter localRewriter(ret->getContext());
+            OpBuilder localRewriter(ret->getContext());
             localRewriter.setInsertionPoint(ret);
 
             // NOTE(feliix42): replaceWithNewOp does *not* work here!
-            // localRewriter.create<cf::BranchOp>(ret->getLoc(), terminatorBlock);
-            localRewriter.create<cf::BranchOp>(ret->getLoc(), ret.getOperands(), terminatorBlock);
+            // localRewriter.create<cf::BranchOp>(ret->getLoc(),
+            // terminatorBlock);
+            localRewriter.create<cf::BranchOp>(
+                ret->getLoc(),
+                ret.getOperands(),
+                terminatorBlock);
             ret->erase();
         });
 
         // insert Return into terminatorBlock
-        ConversionPatternRewriter rewriter(funcOp->getContext());
+        // ConversionPatternRewriter rewriter(funcOp->getContext());
+        OpBuilder rewriter(funcOp->getContext());
         rewriter.setInsertionPointToEnd(terminatorBlock);
         // insert teardown function calls for push and pull ops
         ModuleOp parent = funcOp->getParentOfType<ModuleOp>();
@@ -494,7 +503,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
             Value in = push.getChan();
             if (!inpSet.contains(in)) {
                 inpSet.insert(in);
-                if (failed(insertTeardownFunctionFromPush(parent, push, rewriter)))
+                if (failed(
+                        insertTeardownFunctionFromPush(parent, push, rewriter)))
                     return WalkResult::interrupt();
             }
         }
@@ -503,21 +513,26 @@ void ConvertDfgToLLVMPass::runOnOperation()
             Value out = pull.getChan();
             if (!outSet.contains(out)) {
                 outSet.insert(out);
-                if (failed(insertTeardownFunctionFromPull(parent, pull, rewriter)))
+                if (failed(
+                        insertTeardownFunctionFromPull(parent, pull, rewriter)))
                     return WalkResult::interrupt();
             }
         }
-        rewriter.create<func::ReturnOp>(funcOp->getLoc(), terminatorBlock->getArguments());
+        rewriter.create<func::ReturnOp>(
+            funcOp->getLoc(),
+            terminatorBlock->getArguments());
 
         for (PushOp replace : pushOps) {
-            ConversionPatternRewriter pushRewriter(replace->getContext());
+            // ConversionPatternRewriter pushRewriter(replace->getContext());
+            IRRewriter pushRewriter(replace->getContext());
             pushRewriter.setInsertionPointAfter(replace);
             if (failed(rewritePushOp(replace, terminatorBlock, pushRewriter)))
                 return WalkResult::interrupt();
         }
 
         for (PullOp replace : pullOps) {
-            ConversionPatternRewriter pullRewriter(replace->getContext());
+            // ConversionPatternRewriter pullRewriter(replace->getContext());
+            IRRewriter pullRewriter(replace->getContext());
             pullRewriter.setInsertionPointAfter(replace);
             if (failed(rewritePullOp(replace, terminatorBlock, pullRewriter)))
                 return WalkResult::interrupt();

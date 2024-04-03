@@ -38,7 +38,7 @@ uint64_t dataWidth = 80;
 /// Return a symbol reference to the requested function, inserting it into the
 /// module if necessary.
 static FlatSymbolRefAttr getOrInsertFunc(
-    PatternRewriter &rewriter,
+    OpBuilder &rewriter,
     ModuleOp module,
     std::string funcName,
     std::optional<Type> result,
@@ -245,7 +245,8 @@ LogicalResult createAlveoHostObject(SmallVector<InstantiateOp> &instantiations)
     // get module
     ModuleOp module = instantiations[0]->getParentOfType<ModuleOp>();
     MLIRContext* moduleCtx = module->getContext();
-    ConversionPatternRewriter rewriter(moduleCtx);
+    // ConversionPatternRewriter rewriter(moduleCtx);
+    OpBuilder rewriter(moduleCtx);
     rewriter.setInsertionPointToStart(module.getBody());
 
     Type alveoHostObjectType = LLVM::LLVMPointerType::get(module->getContext());
@@ -314,7 +315,8 @@ LogicalResult createAlveoHostObject(SmallVector<InstantiateOp> &instantiations)
 OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
 {
     ModuleOp module = instantiation->getParentOfType<ModuleOp>();
-    ConversionPatternRewriter rewriter(module.getContext());
+    // ConversionPatternRewriter rewriter(module.getContext());
+    OpBuilder rewriter(module.getContext());
     rewriter.setInsertionPointToStart(module.getBody());
 
     std::string wrapperOpName =
@@ -418,7 +420,8 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
                     .getElementType();
         }
 
-        LLVM::LLVMPointerType ptrType = LLVM::LLVMPointerType::get(elementType);
+        LLVM::LLVMPointerType ptrType =
+            LLVM::LLVMPointerType::get(elementType.getContext());
         LLVM::AllocaOp allocated =
             rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{bufSize});
 
@@ -496,7 +499,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
         LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
             loc,
             LLVM::LLVMPointerType::get(instantiation.getContext()),
-            ioChans[j+1]);
+            ioChans[j + 1]);
         UnrealizedConversionCastOp inputType =
             rewriter.create<UnrealizedConversionCastOp>(
                 loc,
@@ -528,7 +531,8 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
 SmallVector<ChannelOp>
 createAlveoHostChannels(func::FuncOp topLevel, size_t numChannels)
 {
-    ConversionPatternRewriter rewriter(topLevel.getContext());
+    // ConversionPatternRewriter rewriter(topLevel.getContext());
+    OpBuilder rewriter(topLevel.getContext());
     rewriter.setInsertionPointToStart(&topLevel.getBody().front());
 
     Type alveoHostObjectType =
@@ -556,7 +560,8 @@ LogicalResult replaceInstantiations(
 {
     ModuleOp module = instantiations[0]->getParentOfType<ModuleOp>();
     MLIRContext* moduleCtx = module->getContext();
-    ConversionPatternRewriter rewriter(moduleCtx);
+    // ConversionPatternRewriter rewriter(moduleCtx);
+    OpBuilder rewriter(moduleCtx);
 
     SmallVector<Value> alveoInputs, alveoOutputs;
     for (ChannelOp chanPair : newChans) {
