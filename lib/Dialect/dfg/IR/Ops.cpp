@@ -10,11 +10,11 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/FunctionImplementation.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #define DEBUG_TYPE "dfg-ops"
 
@@ -162,11 +162,10 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = 0; i < inputTypes.size(); i++) {
             if (i > 0) p << ", ";
 
-            if (isExternal) {
+            if (isExternal)
                 p << "\%arg" << i;
-            } else {
+            else
                 p.printOperand(body.getArgument(i));
-            }
             p << " : " << inputTypes[i].cast<OutputType>().getElementType();
         }
         p << ") ";
@@ -178,11 +177,10 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
 
-            if (isExternal) {
+            if (isExternal)
                 p << "\%arg" << i;
-            } else {
+            else
                 p.printOperand(body.getArgument(i));
-            }
             p << " : "
               << outputTypes[i - inpSize].cast<InputType>().getElementType();
         }
