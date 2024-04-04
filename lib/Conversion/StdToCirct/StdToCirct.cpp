@@ -291,6 +291,60 @@ void writeFuncToFile(func::FuncOp funcOp, StringRef funcName)
     funcOp.print(outputFile);
     outputFile.close();
 }
+void processNestedRegions(
+    bool isCalcOp,
+    Operation* newCalcOp,
+    SmallVector<Operation*> &newCalcOps,
+    SmallVector<std::pair<int, Value>> &pulledValueIdx,
+    SmallVector<std::pair<int, Operation*>> &calcOpIdx,
+    func::FuncOp &genFuncOp,
+    PatternRewriter &rewriter)
+{
+    int idxOperand = 0;
+    for (auto operand : newCalcOp->getOperands()) {
+        if (auto idxArg =
+                getNewIndexOrArg<int, Value>(operand, pulledValueIdx)) {
+            newCalcOp->setOperand(
+                idxOperand++,
+                genFuncOp.getBody().getArgument(idxArg.value()));
+        } else {
+            auto definingOp = operand.getDefiningOp();
+            auto idxCalcOp =
+                getNewIndexOrArg<int, Operation*>(definingOp, calcOpIdx);
+            auto idxResult = getResultIdx(operand, definingOp);
+            if (idxResult) {
+                if (idxCalcOp)
+                    newCalcOp->setOperand(
+                        idxOperand++,
+                        newCalcOps[idxCalcOp.value()]->getResult(
+                            idxResult.value()));
+                else
+                    newCalcOp->setOperand(
+                        idxOperand++,
+                        definingOp->getResult(idxResult.value()));
+            }
+        }
+    }
+    if (newCalcOp->getRegions().size() != 0) {
+        for (auto &region : newCalcOp->getRegions()) {
+            for (auto &opRegion : region.getOps()) {
+                processNestedRegions(
+                    0,
+                    &opRegion,
+                    newCalcOps,
+                    pulledValueIdx,
+                    calcOpIdx,
+                    genFuncOp,
+                    rewriter);
+            }
+        }
+    }
+
+    if (isCalcOp) {
+        newCalcOps.push_back(newCalcOp);
+        rewriter.insert(newCalcOp);
+    }
+}
 struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
     using OpConversionPattern<OperatorOp>::OpConversionPattern;
 
@@ -341,7 +395,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         SmallVector<int> pushedChanIdx;
         std::vector<int> pushedValueIdx;
         SmallVector<std::pair<int, Value>> calcResultIdx;
-        SmallVector<std::pair<int, Operation*>> calcOpIndx;
+        SmallVector<std::pair<int, Operation*>> calcOpIdx;
         for (auto &opi : ops)
             if (auto pushOp = dyn_cast<PushOp>(opi))
                 pushedValueRepeat.push_back(pushOp.getInp());
@@ -360,7 +414,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                     if (isInSmallVector<Value>(result, pushedValueRepeat))
                         calcResultIdx.push_back(
                             std::make_pair(idxCalc++, result));
-                calcOpIndx.push_back(std::make_pair(numCalc++, &opi));
+                calcOpIdx.push_back(std::make_pair(numCalc++, &opi));
             } else if (auto pushOp = dyn_cast<PushOp>(opi)) {
                 auto pushValue = pushOp.getInp();
                 auto pushChan = pushOp.getChan();
@@ -460,89 +514,14 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
             std::advance(it, numPull + i);
             auto oldCalcOp = &*it;
             auto newCalcOp = oldCalcOp->clone();
-            if (newCalcOp->getRegions().size() == 0) {
-                int idxOperand = 0;
-                for (auto operand : newCalcOp->getOperands()) {
-                    if (auto idxArg = getNewIndexOrArg<int, Value>(
-                            operand,
-                            pulledValueIdx)) {
-                        newCalcOp->setOperand(
-                            idxOperand++,
-                            genFuncOp.getBody().getArgument(idxArg.value()));
-                    } else {
-                        auto definingOp = operand.getDefiningOp();
-                        auto idxCalcOp = getNewIndexOrArg<int, Operation*>(
-                            definingOp,
-                            calcOpIndx);
-                        auto idxResult = getResultIdx(operand, definingOp);
-                        newCalcOp->setOperand(
-                            idxOperand++,
-                            newCalcOps[idxCalcOp.value()]->getResult(
-                                idxResult.value()));
-                    }
-                }
-                newCalcOps.push_back(newCalcOp);
-                rewriter.insert(newCalcOp);
-            } else { // If the op has regions
-                int idxOperand = 0;
-                for (auto operand : newCalcOp->getOperands()) {
-                    if (auto idxArg = getNewIndexOrArg<int, Value>(
-                            operand,
-                            pulledValueIdx)) {
-                        newCalcOp->setOperand(
-                            idxOperand++,
-                            genFuncOp.getBody().getArgument(idxArg.value()));
-                    } else {
-                        auto definingOp = operand.getDefiningOp();
-                        auto idxCalcOp = getNewIndexOrArg<int, Operation*>(
-                            definingOp,
-                            calcOpIndx);
-                        auto idxResult = getResultIdx(operand, definingOp);
-                        newCalcOp->setOperand(
-                            idxOperand++,
-                            newCalcOps[idxCalcOp.value()]->getResult(
-                                idxResult.value()));
-                    }
-                }
-                // For each region, manage the ops inside
-                for (auto &region : newCalcOp->getRegions()) {
-                    for (auto &opRegion : region.getOps()) {
-                        int idxOperand = 0;
-                        for (auto operand : opRegion.getOperands()) {
-                            if (auto idxArg = getNewIndexOrArg<int, Value>(
-                                    operand,
-                                    pulledValueIdx)) {
-                                opRegion.setOperand(
-                                    idxOperand++,
-                                    genFuncOp.getBody().getArgument(
-                                        idxArg.value()));
-                            } else {
-                                auto definingOp = operand.getDefiningOp();
-                                auto idxCalcOp =
-                                    getNewIndexOrArg<int, Operation*>(
-                                        definingOp,
-                                        calcOpIndx);
-                                auto idxResult =
-                                    getResultIdx(operand, definingOp);
-                                if (idxResult) {
-                                    if (idxCalcOp)
-                                        opRegion.setOperand(
-                                            idxOperand++,
-                                            newCalcOps[idxCalcOp.value()]
-                                                ->getResult(idxResult.value()));
-                                    else
-                                        opRegion.setOperand(
-                                            idxOperand++,
-                                            definingOp->getResult(
-                                                idxResult.value()));
-                                }
-                            }
-                        }
-                    }
-                }
-                newCalcOps.push_back(newCalcOp);
-                rewriter.insert(newCalcOp);
-            }
+            processNestedRegions(
+                true,
+                newCalcOp,
+                newCalcOps,
+                pulledValueIdx,
+                calcOpIdx,
+                genFuncOp,
+                rewriter);
         }
 
         // Resolve the return values
@@ -551,7 +530,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
             auto result = pushedValueNonRepeat[i];
             auto definingOp = result.getDefiningOp();
             auto idxCalcOp =
-                getNewIndexOrArg<int, Operation*>(definingOp, calcOpIndx);
+                getNewIndexOrArg<int, Operation*>(definingOp, calcOpIdx);
             auto idxResult = getResultIdx(result, definingOp);
             returnValues.push_back(
                 newCalcOps[idxCalcOp.value()]->getResult(idxResult.value()));
