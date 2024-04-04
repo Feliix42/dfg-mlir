@@ -292,7 +292,6 @@ void writeFuncToFile(func::FuncOp funcOp, StringRef funcName)
     outputFile.close();
 }
 void processNestedRegions(
-    bool isCalcOp,
     Operation* newCalcOp,
     SmallVector<Operation*> &newCalcOps,
     SmallVector<std::pair<int, Value>> &pulledValueIdx,
@@ -329,7 +328,6 @@ void processNestedRegions(
         for (auto &region : newCalcOp->getRegions()) {
             for (auto &opRegion : region.getOps()) {
                 processNestedRegions(
-                    0,
                     &opRegion,
                     newCalcOps,
                     pulledValueIdx,
@@ -338,11 +336,6 @@ void processNestedRegions(
                     rewriter);
             }
         }
-    }
-
-    if (isCalcOp) {
-        newCalcOps.push_back(newCalcOp);
-        rewriter.insert(newCalcOp);
     }
 }
 struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
@@ -505,7 +498,6 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         Block* funcEntryBlock = rewriter.createBlock(&genFuncOp.getBody());
         for (int i = 0; i < numPull; i++)
             funcEntryBlock->addArgument(pulledTypes[i], genFuncOp.getLoc());
-        // if (!genFuncOp.isExternal()) genFuncOp.resolveArgAndResNames();
         rewriter.setInsertionPointToStart(funcEntryBlock);
 
         SmallVector<Operation*> newCalcOps;
@@ -515,13 +507,14 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
             auto oldCalcOp = &*it;
             auto newCalcOp = oldCalcOp->clone();
             processNestedRegions(
-                true,
                 newCalcOp,
                 newCalcOps,
                 pulledValueIdx,
                 calcOpIdx,
                 genFuncOp,
                 rewriter);
+            newCalcOps.push_back(newCalcOp);
+            rewriter.insert(newCalcOp);
         }
 
         // Resolve the return values
