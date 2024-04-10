@@ -32,14 +32,14 @@ using namespace mlir::dfg;
 constexpr char kOperandSegmentSizesAttr[] = "operandSegmentSizes";
 
 //===----------------------------------------------------------------------===//
-// OperatorOp
+// ProcessOp
 //===----------------------------------------------------------------------===//
 
 /// @brief  Returns whether the operator is externally defined, i.e., has no
 /// body.
 /// @return `true` if there is no body attached, `false` the operator has a
 /// body.
-bool OperatorOp::isExternal()
+bool ProcessOp::isExternal()
 {
     Region &body = getRegion();
     return body.empty();
@@ -72,7 +72,7 @@ static ParseResult parseChannelArgumentList(
         });
 }
 
-ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
+ParseResult ProcessOp::parse(OpAsmParser &parser, OperationState &result)
 {
     auto &builder = parser.getBuilder();
 
@@ -140,7 +140,7 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
     return success();
 }
 
-void OperatorOp::print(OpAsmPrinter &p)
+void ProcessOp::print(OpAsmPrinter &p)
 {
     Operation* op = getOperation();
     Region &body = op->getRegion(0);
@@ -203,18 +203,18 @@ void OperatorOp::print(OpAsmPrinter &p)
     }
 }
 
-LogicalResult OperatorOp::verify()
+LogicalResult ProcessOp::verify()
 {
-    // If there is a LoopOp, it must be the first op in the body
+    // If there is a MonitorOp, it must be the first op in the body
     if (!getBody().empty()) {
         auto ops = getBody().getOps();
         bool isFirstLoop, hasLoop = false;
         for (const auto &op : ops)
-            if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
-        if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
+            if (auto loopOp = dyn_cast<MonitorOp>(op)) hasLoop = true;
+        if (auto loopOp = dyn_cast<MonitorOp>(&getBody().front().front()))
             isFirstLoop = true;
         if (hasLoop && !isFirstLoop)
-            return emitError("The LoopOp must be the first op of Operator");
+            return emitError("The MonitorOp must be the first op of Operator");
     }
 
     // Ensure that all inputs are of type OutputType and all outputs of type
@@ -224,30 +224,30 @@ LogicalResult OperatorOp::verify()
         if (!llvm::isa<OutputType>(in))
             return ::emitError(
                 getLoc(),
-                "LoopOp inputs must be of type OutputType");
+                "MonitorOp inputs must be of type OutputType");
 
     for (Type out : fnSig.getResults())
         if (!llvm::isa<InputType>(out))
             return ::emitError(
                 getLoc(),
-                "LoopOp outputs must be of type InputType");
+                "MonitorOp outputs must be of type InputType");
 
     // if a multiplicity is defined, it must cover all arguments!
     ArrayRef<int64_t> multiplicity = getMultiplicity();
     size_t fnSigArgCount = fnSig.getNumInputs() + fnSig.getNumResults();
     if (!multiplicity.empty() && multiplicity.size() != fnSigArgCount)
         return emitError(
-            "OperatorOp multiplicity must have a multiplicity for each "
+            "ProcessOp multiplicity must have a multiplicity for each "
             "channel");
 
     return success();
 }
 
 //===----------------------------------------------------------------------===//
-// LoopOp
+// MonitorOp
 //===----------------------------------------------------------------------===//
 
-ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
+ParseResult MonitorOp::parse(OpAsmParser &parser, OperationState &result)
 {
     // parse inputs/outputs
     SmallVector<OpAsmParser::Argument> inVals, outVals;
@@ -306,7 +306,7 @@ ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
     return success();
 }
 
-void LoopOp::print(OpAsmPrinter &p)
+void MonitorOp::print(OpAsmPrinter &p)
 {
     assert(!getOperands().empty());
 

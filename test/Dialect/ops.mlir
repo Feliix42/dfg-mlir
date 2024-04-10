@@ -1,8 +1,8 @@
-dfg.operator @sum
+dfg.process @sum
     inputs (%op_a: ui32, %op_b: ui32)
     outputs (%a: ui32)
 {
-    dfg.loop inputs(%op_a: ui32) {
+    dfg.monitor inputs(%op_a: ui32) {
         %inp1 = dfg.pull %op_a : ui32
         %inp2 = dfg.pull %op_b : ui32
 
@@ -23,11 +23,11 @@ func.func @return_a_value() -> ui32
     return %1 : ui32
 }
 
-// dfg.operator @some_foreign_kernel
+// dfg.process @some_foreign_kernel
 //     inputs(%foo: i32, %bar: i32)
 //     outputs(%baz: i64)
 
-dfg.operator @get_op
+dfg.process @get_op
     inputs()
     outputs(%op_b: ui32)
 {
@@ -40,7 +40,7 @@ func.func @do_computations(%some_input: memref<32xi32>) -> memref<32xi32>
     return %some_input : memref<32xi32>
 }
 
-dfg.operator @op_with_attributes
+dfg.process @op_with_attributes
     inputs(%something: memref<32xi32>)
     outputs(%some_result: memref<32xi32>)
     attributes { dfg.location = "src/somefile.cpp" }

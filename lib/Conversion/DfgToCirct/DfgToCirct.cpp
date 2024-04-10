@@ -54,7 +54,7 @@ fsm::MachineOp insertController(
     FunctionType funcTy,
     SmallVector<Operation*> ops,
     bool hasMultiOutputs,
-    bool hasLoopOp = false,
+    bool hasMonitorOp = false,
     SmallVector<std::pair<bool, int>> loopChanArgIdx = {})
 {
     auto context = module.getContext();
@@ -342,11 +342,11 @@ fsm::MachineOp insertController(
         auto transInit = builder.create<fsm::TransitionOp>(
             loc,
             (i == ops.size() - 1)
-                ? (hasLoopOp ? "INIT" : "CLOSE")
+                ? (hasMonitorOp ? "INIT" : "CLOSE")
                 : "WRITE" + std::to_string(idxStateWrite + 1));
         builder.setInsertionPointToEnd(transInit.ensureGuard(builder));
         transInit.getGuard().front().front().erase();
-        if (hasLoopOp && i == ops.size() - 1) {
+        if (hasMonitorOp && i == ops.size() - 1) {
             Value closeQueue;
             for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
                 auto chanIdx = loopChanArgIdx[i];
@@ -376,7 +376,7 @@ fsm::MachineOp insertController(
         } else {
             builder.create<fsm::ReturnOp>(loc, machine.getArgument(readyIdx));
         }
-        if (hasLoopOp && i == ops.size() - 1) {
+        if (hasMonitorOp && i == ops.size() - 1) {
             builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
             auto transClose = builder.create<fsm::TransitionOp>(loc, "CLOSE");
             builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
@@ -497,16 +497,16 @@ fsm::MachineOp insertController(
 
 SmallVector<std::pair<bool, std::string>> operatorHasLoop;
 SmallVector<std::pair<SmallVector<int>, std::string>> operatorPortIdx;
-struct ConvertOperator : OpConversionPattern<OperatorOp> {
+struct ConvertOperator : OpConversionPattern<ProcessOp> {
 public:
-    using OpConversionPattern<OperatorOp>::OpConversionPattern;
+    using OpConversionPattern<ProcessOp>::OpConversionPattern;
 
     ConvertOperator(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<OperatorOp>(typeConverter, context){};
+            : OpConversionPattern<ProcessOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
-        OperatorOp op,
-        OperatorOpAdaptor adaptor,
+        ProcessOp op,
+        ProcessOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto opName = op.getSymName().str();
@@ -518,25 +518,25 @@ public:
         auto types = op.getBody().getArgumentTypes();
         size_t size = types.size();
 
-        // If there is a LoopOp, get ops inside and log the index of channel
+        // If there is a MonitorOp, get ops inside and log the index of channel
         auto opsInBody = op.getBody().getOps();
-        bool hasLoopOp = false;
+        bool hasMonitorOp = false;
         SmallVector<int> loopChanIdx;
-        if (auto loopOp = dyn_cast<LoopOp>(*opsInBody.begin())) {
+        if (auto loopOp = dyn_cast<MonitorOp>(*opsInBody.begin())) {
             if (!loopOp.getOutChans().empty())
                 return rewriter.notifyMatchFailure(
                     loopOp.getLoc(),
                     "Not supported closing on output ports yet!");
             opsInBody = loopOp.getBody().getOps();
             if (!loopOp.getInChans().empty()) {
-                hasLoopOp = true;
+                hasMonitorOp = true;
                 for (auto inChan : loopOp.getInChans()) {
                     auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
                     loopChanIdx.push_back(idxChan);
                 }
             }
         }
-        operatorHasLoop.push_back(std::make_pair(hasLoopOp, opName));
+        operatorHasLoop.push_back(std::make_pair(hasMonitorOp, opName));
         operatorPortIdx.push_back(std::make_pair(loopChanIdx, opName));
 
         SmallVector<hw::PortInfo> ports;
@@ -562,7 +562,7 @@ public:
             std::string name;
 
             bool isMonitored = false;
-            if (hasLoopOp) {
+            if (hasMonitorOp) {
                 if (llvm::find(loopChanIdx, i) != loopChanIdx.end())
                     isMonitored = true;
             }
@@ -757,7 +757,7 @@ public:
                 fsmOutTypesVec),
             ops,
             hwInstanceOutTypes.size() > 1,
-            hasLoopOp,
+            hasMonitorOp,
             loopChanArgIdx);
 
         auto hwInstanceOutSize = hwInstanceOutTypes.size();

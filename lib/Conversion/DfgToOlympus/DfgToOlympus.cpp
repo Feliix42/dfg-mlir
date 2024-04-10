@@ -32,8 +32,9 @@ struct ConvertDfgToOlympusPass
 };
 } // namespace
 
-/// This lowering creates an olympus wrapper for each offloaded node instantiation.
-/// It creates a new FuncOp which contains all relevant Olympus operations
+/// This lowering creates an olympus wrapper for each offloaded node
+/// instantiation. It creates a new FuncOp which contains all relevant Olympus
+/// operations
 struct OffloadedInstantiateOpLowering
         : public OpConversionPattern<InstantiateOp> {
     using OpConversionPattern<InstantiateOp>::OpConversionPattern;
@@ -59,9 +60,9 @@ struct OffloadedInstantiateOpLowering
 
         ModuleOp parent = op->getParentOfType<ModuleOp>();
 
-        // find associated OperatorOp
-        OperatorOp kernelDefinition =
-            parent.lookupSymbol<OperatorOp>(adaptor.getCallee());
+        // find associated ProcessOp
+        ProcessOp kernelDefinition =
+            parent.lookupSymbol<ProcessOp>(adaptor.getCallee());
 
         // verify that both argument lengths match
         size_t kernelArgLength =

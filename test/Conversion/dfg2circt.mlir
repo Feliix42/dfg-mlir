@@ -1,4 +1,4 @@
-dfg.operator @adder
+dfg.process @adder
     inputs(%in1: i32, %in2: i32)
     outputs(%out: i32)
 {
@@ -8,7 +8,7 @@ dfg.operator @adder
     dfg.push(%0) %out : i32
 }
 
-dfg.operator @multiplier
+dfg.process @multiplier
     inputs(%in1: i32, %in2: i32)
     outputs(%out: i32)
 {

@@ -17,8 +17,8 @@ include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
 
 
-def Dfg_OperatorOp : Dfg_Op<
-        "operator",
+def Dfg_ProcessOp : Dfg_Op<
+        "process",
         [
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
@@ -28,8 +28,8 @@ def Dfg_OperatorOp : Dfg_Op<
         ]> {
     let summary = "Defines a node in the Dataflow Graph";
     let description = [{
-        The `operator` operation produces a dataflow node which is linked to other
-        operators by hooking up their input and output ports.
+        The `process` operation produces a dataflow node which is linked to other
+        processes by hooking up their input and output ports.
         This is done using the `instantiate` function.
 
         Syntax:
@@ -53,11 +53,11 @@ def Dfg_OperatorOp : Dfg_Op<
                         //  TypeArrayAttr:$inputs,
                         //  TypeArrayAttr:$outputs);
 
-    // The FunctionOpInterface requires zero or one region attached to the operator
+    // The FunctionOpInterface requires zero or one region attached to the process
     let regions = (region AnyRegion: $body);
 
     let extraClassDeclaration = [{
-        /// Returns whether the operator is externally defined
+        /// Returns whether the process is externally defined
         bool isExternal();
 
         //===------------------------------------------------------------------===//
@@ -74,21 +74,21 @@ def Dfg_OperatorOp : Dfg_Op<
 
 // TODO:
 // , RegionBranchOpInterface]>
-def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator, AttrSizedOperandSegments, RecursiveMemoryEffects]>
+def Dfg_MonitorOp : Dfg_Op<"monitor", [HasParent<"ProcessOp">, NoTerminator, AttrSizedOperandSegments, RecursiveMemoryEffects]>
 {
     let summary = "Defines a list of input/output ports maybe closed";
 
     let description = [{
-        The `loop` operation defines a list of input or output ports
+        The `monitor` operation defines a list of input or output ports
         that will be closed later. The close behavior will terminate
-        the operator and populate to other operators so that the whole
+        the process and populate to other processes so that the whole
         dataflow graph will be shut down.
 
         Example:
         ```
-        dfg.operator @add inputs(%a: type) outputs(%b: type)
+        dfg.process @add inputs(%a: type) outputs(%b: type)
         {
-            dfg.loop inputs(%a: type) outputs(%b: type) {
+            dfg.monitor inputs(%a: type) outputs(%b: type) {
                 ops ...
             }
         }
@@ -112,7 +112,7 @@ def Dfg_ChannelOp : Dfg_Op<
     let summary = "Defines a channel with one input and one output port";
     let description = [{
         The `channel` operation produces a typed channel (i.e., an edge in the
-        dataflow graph) that links two operators (i.e., nodes) in the dataflow
+        dataflow graph) that links two processes (i.e., nodes) in the dataflow
         graph.
 
         Syntax:
@@ -152,9 +152,9 @@ def Dfg_InstantiateOp : Dfg_Op<
     [
         AttrSizedOperandSegments
     ]> {
-    let summary = "Instantiates an operator with the given inputs, forming (part of) a data flow graph.";
+    let summary = "Instantiates an process with the given inputs, forming (part of) a data flow graph.";
     let description = [{
-        The `instantiate` operation instantiates a data flow graph operator with
+        The `instantiate` operation instantiates a data flow graph process with
         a concrete set of inputs and outputs. This instanciation creates a node
         in the data flow graph. The data flow is derived from the arguments to
         the instanciation as well as the results and their uses/origin.
@@ -194,9 +194,9 @@ def Dfg_PushOp : Dfg_Op<
                        "$_self.dyn_cast<InputType>().getElementType()">
     ]
 > {
-    let summary = "Pushes a value into a channel input to send it to the next operator.";
+    let summary = "Pushes a value into a channel input to send it to the next process.";
     let description = [{
-        The `push` operation transfers a value to another operator by using a
+        The `push` operation transfers a value to another process by using a
         channel supplied as argument. Since all channels are typed, the input
         type must match the channel type.
 
@@ -232,7 +232,7 @@ def Dfg_PullOp : Dfg_Op<
 > {
     let summary = "Pulls a value from a channel.";
     let description = [{
-        The `pull` operation retrieves a value from another operator by using a
+        The `pull` operation retrieves a value from another process by using a
         channel supplied as argument. Since all channels are typed, the output
         type must match the channel type.
 

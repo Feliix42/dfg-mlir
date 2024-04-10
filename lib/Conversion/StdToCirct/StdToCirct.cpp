@@ -338,15 +338,15 @@ void processNestedRegions(
         }
     }
 }
-struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
-    using OpConversionPattern<OperatorOp>::OpConversionPattern;
+struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
+    using OpConversionPattern<ProcessOp>::OpConversionPattern;
 
-    WrapOperatorOps(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<OperatorOp>(typeConverter, context){};
+    WrapProcessOps(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ProcessOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
-        OperatorOp op,
-        OperatorOpAdaptor adaptor,
+        ProcessOp op,
+        ProcessOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto context = rewriter.getContext();
@@ -355,13 +355,13 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         auto ops = op.getOps();
         auto moduleOp = op->getParentOfType<ModuleOp>();
 
-        LoopOp loopOp = nullptr;
-        bool hasLoopOp = false;
+        MonitorOp loopOp = nullptr;
+        bool hasMonitorOp = false;
         SmallVector<int> loopInChanIdx, loopOutChanIdx;
-        if (auto oldLoop = dyn_cast<LoopOp>(*ops.begin())) {
+        if (auto oldLoop = dyn_cast<MonitorOp>(*ops.begin())) {
             ops = oldLoop.getOps();
             loopOp = oldLoop;
-            hasLoopOp = true;
+            hasMonitorOp = true;
             for (auto inChan : oldLoop.getInChans()) {
                 auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
                 loopInChanIdx.push_back(idxChan);
@@ -433,7 +433,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         }
 
         auto newOperator =
-            rewriter.create<OperatorOp>(op.getLoc(), op.getSymName(), funcTy);
+            rewriter.create<ProcessOp>(op.getLoc(), op.getSymName(), funcTy);
         Block* entryBlock = rewriter.createBlock(&newOperator.getBody());
         for (auto inTy : funcTy.getInputs())
             entryBlock->addArgument(inTy, newOperator.getLoc());
@@ -443,7 +443,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
         SmallVector<Value> newPulledValue;
         auto loc = rewriter.getUnknownLoc();
         rewriter.setInsertionPointToStart(entryBlock);
-        if (hasLoopOp) {
+        if (hasMonitorOp) {
             SmallVector<Value> loopInChans, loopOutChans;
             for (auto inChanIdx : loopInChanIdx) {
                 loopInChans.push_back(
@@ -454,7 +454,7 @@ struct WrapOperatorOps : public OpConversionPattern<OperatorOp> {
                     newOperator.getBody().getArgument(outChanIdx));
             }
             auto newLoop =
-                rewriter.create<LoopOp>(loc, loopInChans, loopOutChans);
+                rewriter.create<MonitorOp>(loc, loopInChans, loopOutChans);
             Block* loopEntryBlock = rewriter.createBlock(&newLoop.getBody());
             rewriter.setInsertionPointToStart(loopEntryBlock);
         }
@@ -667,7 +667,7 @@ void mlir::populateStdToCirctConversionPatterns(
     patterns.add<FuncConversion>(typeConverter, patterns.getContext());
 
     // operator calc ops -> handshake.func
-    patterns.add<WrapOperatorOps>(typeConverter, patterns.getContext());
+    patterns.add<WrapProcessOps>(typeConverter, patterns.getContext());
 }
 
 namespace {
@@ -718,9 +718,9 @@ void ConvertStdToCirctPass::runOnOperation()
         return funcOp != lastFunc;
     });
 
-    target.addDynamicallyLegalOp<OperatorOp>([&](OperatorOp op) {
+    target.addDynamicallyLegalOp<ProcessOp>([&](ProcessOp op) {
         auto ops = op.getBody().getOps();
-        if (auto loopOp = dyn_cast<LoopOp>(*ops.begin()))
+        if (auto loopOp = dyn_cast<MonitorOp>(*ops.begin()))
             ops = loopOp.getBody().getOps();
         for (auto &opi : ops) {
             if (!isa<PullOp>(opi) && !isa<HWInstanceOp>(opi)

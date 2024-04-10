@@ -54,15 +54,15 @@ func.func private @Magic() -> i32
 // BEGIN OHUA OUTPUT
 //
 
-dfg.operator @get_map outputs(%mapcells_0_0_2_tx: !VecMapCell) {
+dfg.process @get_map outputs(%mapcells_0_0_2_tx: !VecMapCell) {
   %mapcells_0_0_2 = func.call @read_map() : () -> !VecMapCell
   dfg.push(%mapcells_0_0_2) %mapcells_0_0_2_tx : !VecMapCell
 }
 
 
-dfg.operator @mapcells_ctrl inputs(%mapcells_0_0_2_rx: !VecMapCell, %ctrl_0_6_rx: tuple<i1, i32>)
+dfg.process @mapcells_ctrl inputs(%mapcells_0_0_2_rx: !VecMapCell, %ctrl_0_6_rx: tuple<i1, i32>)
                             outputs(%mapcells0_0_0_0_tx: !VecMapCell) {
-  dfg.loop inputs(%mapcells_0_0_2_rx: !VecMapCell, %ctrl_0_6_rx: tuple<i1, i32>) outputs(%mapcells0_0_0_0_tx: !VecMapCell) {
+  dfg.monitor inputs(%mapcells_0_0_2_rx: !VecMapCell, %ctrl_0_6_rx: tuple<i1, i32>) outputs(%mapcells0_0_0_0_tx: !VecMapCell) {
     %init_renew = arith.constant 0 : i1
     %mapcells_0_0_2_0 = dfg.pull %mapcells_0_0_2_rx : !VecMapCell
 
@@ -95,9 +95,9 @@ dfg.operator @mapcells_ctrl inputs(%mapcells_0_0_2_rx: !VecMapCell, %ctrl_0_6_rx
   }
 }
 
-dfg.operator @fcdproc_ctrl inputs(%fcdproc_0_0_1_rx: !FCDPROC, %ctrl_0_1_rx: tuple<i1, i32>)
+dfg.process @fcdproc_ctrl inputs(%fcdproc_0_0_1_rx: !FCDPROC, %ctrl_0_1_rx: tuple<i1, i32>)
                            outputs(%gv_0_0_2_tx: !GpsVector) {
-  dfg.loop inputs(%fcdproc_0_0_1_rx: !FCDPROC, %ctrl_0_1_rx: tuple<i1, i32>) outputs(%gv_0_0_2_tx: !GpsVector) {
+  dfg.monitor inputs(%fcdproc_0_0_1_rx: !FCDPROC, %ctrl_0_1_rx: tuple<i1, i32>) outputs(%gv_0_0_2_tx: !GpsVector) {
     %init_renew = arith.constant 0 : i1
     %fcdproc_0_0_1_0 = dfg.pull %fcdproc_0_0_1_rx : !FCDPROC
 
@@ -130,9 +130,9 @@ dfg.operator @fcdproc_ctrl inputs(%fcdproc_0_0_1_rx: !FCDPROC, %ctrl_0_1_rx: tup
   }
 }
 
-dfg.operator @counter_incr inputs(%counter_0_0_1_rx: i32, %ctrl_0_0_rx: tuple<i1, i32>, %something_0_0_0_rx: i8)
+dfg.process @counter_incr inputs(%counter_0_0_1_rx: i32, %ctrl_0_0_rx: tuple<i1, i32>, %something_0_0_0_rx: i8)
                            outputs(%counter_0_1_0_tx: i32) {
-  dfg.loop inputs(%counter_0_0_1_rx: i32, %ctrl_0_0_rx: tuple<i1, i32>, %something_0_0_0_rx: i8) outputs(%counter_0_1_0_tx: i32) {
+  dfg.monitor inputs(%counter_0_0_1_rx: i32, %ctrl_0_0_rx: tuple<i1, i32>, %something_0_0_0_rx: i8) outputs(%counter_0_1_0_tx: i32) {
     %init_renew = arith.constant 0 : i1
     %counter_0_0_1_0 = dfg.pull %counter_0_0_1_rx : i32
 
@@ -168,7 +168,7 @@ dfg.operator @counter_incr inputs(%counter_0_0_1_rx: i32, %ctrl_0_0_rx: tuple<i1
   }
 }
 
-dfg.operator @ctrl outputs(%ctrl_0_0_tx: tuple<i1, i32>, %ctrl_0_1_tx: tuple<i1, i32>, %ctrl_0_6_tx: tuple<i1, i32>) {
+dfg.process @ctrl outputs(%ctrl_0_0_tx: tuple<i1, i32>, %ctrl_0_1_tx: tuple<i1, i32>, %ctrl_0_6_tx: tuple<i1, i32>) {
   %size = arith.constant 1000 : i32
   %ctrl = func.call @convenient_placeholder(%size) : (i32) -> tuple<i1, i32>
 
@@ -177,18 +177,18 @@ dfg.operator @ctrl outputs(%ctrl_0_0_tx: tuple<i1, i32>, %ctrl_0_1_tx: tuple<i1,
   dfg.push(%ctrl) %ctrl_0_6_tx : tuple<i1, i32>
 }
 
-dfg.operator @writevec inputs(%rsv_0_0_0_rx: !RoadSpeedVector)
+dfg.process @writevec inputs(%rsv_0_0_0_rx: !RoadSpeedVector)
                        outputs(%something_0_0_0_tx: i8) {
-  dfg.loop inputs(%rsv_0_0_0_rx: !RoadSpeedVector) outputs(%something_0_0_0_tx: i8) {
+  dfg.monitor inputs(%rsv_0_0_0_rx: !RoadSpeedVector) outputs(%something_0_0_0_tx: i8) {
     %var_0 = dfg.pull %rsv_0_0_0_rx : !RoadSpeedVector
     %something_0_0_0 = func.call @write_vector(%var_0) : (!RoadSpeedVector) -> i8
     dfg.push(%something_0_0_0) %something_0_0_0_tx : i8
   }
 }
 
-dfg.operator @cell_clone3 inputs(%mapcell_0_0_1_0_rx: !MapCell)
+dfg.process @cell_clone3 inputs(%mapcell_0_0_1_0_rx: !MapCell)
                           outputs(%mapcell_0_0_0_0_tx: !MapCell, %mapcell_0_0_0_0_2_tx: !MapCell) {
-  dfg.loop inputs(%mapcell_0_0_1_0_rx: !MapCell) outputs(%mapcell_0_0_0_0_tx: !MapCell, %mapcell_0_0_0_0_2_tx: !MapCell) {
+  dfg.monitor inputs(%mapcell_0_0_1_0_rx: !MapCell) outputs(%mapcell_0_0_0_0_tx: !MapCell, %mapcell_0_0_0_0_2_tx: !MapCell) {
     %var_0 = dfg.pull %mapcell_0_0_1_0_rx : !MapCell
     %var_1 = func.call @clone(%var_0) : (!MapCell) -> !MapCell
     dfg.push(%var_0) %mapcell_0_0_0_0_tx : !MapCell
@@ -196,9 +196,9 @@ dfg.operator @cell_clone3 inputs(%mapcell_0_0_1_0_rx: !MapCell)
   }
 }
 
-dfg.operator @cv_clone inputs(%cv_0_0_1_rx: !CandiVector)
+dfg.process @cv_clone inputs(%cv_0_0_1_rx: !CandiVector)
                        outputs(%cv_0_0_0_0_tx: !CandiVector, %cv_0_0_0_0_2_tx: !CandiVector) {
-  dfg.loop inputs(%cv_0_0_1_rx: !CandiVector) outputs(%cv_0_0_0_0_tx: !CandiVector, %cv_0_0_0_0_2_tx: !CandiVector) {
+  dfg.monitor inputs(%cv_0_0_1_rx: !CandiVector) outputs(%cv_0_0_0_0_tx: !CandiVector, %cv_0_0_0_0_2_tx: !CandiVector) {
     %var_0 = dfg.pull %cv_0_0_1_rx : !CandiVector
     %var_1 = func.call @cclone(%var_0) : (!CandiVector) -> !CandiVector
     dfg.push(%var_0) %cv_0_0_0_0_tx : !CandiVector
@@ -206,9 +206,9 @@ dfg.operator @cv_clone inputs(%cv_0_0_1_rx: !CandiVector)
   }
 }
 
-dfg.operator @gv_clone inputs(%gv_0_0_1_0_rx: !GpsVector)
+dfg.process @gv_clone inputs(%gv_0_0_1_0_rx: !GpsVector)
                        outputs(%gv_0_0_0_0_tx: !GpsVector, %gv0_0_0_0_tx: !GpsVector) {
-  dfg.loop inputs(%gv_0_0_1_0_rx: !GpsVector) outputs(%gv_0_0_0_0_tx: !GpsVector, %gv0_0_0_0_tx: !GpsVector) {
+  dfg.monitor inputs(%gv_0_0_1_0_rx: !GpsVector) outputs(%gv_0_0_0_0_tx: !GpsVector, %gv0_0_0_0_tx: !GpsVector) {
     %var_0 = dfg.pull %gv_0_0_1_0_rx : !GpsVector
     %gv_0_0_0_0 = func.call @gclone(%var_0) : (!GpsVector) -> !GpsVector
     dfg.push(%var_0) %gv_0_0_0_0_tx : !GpsVector
@@ -216,9 +216,9 @@ dfg.operator @gv_clone inputs(%gv_0_0_1_0_rx: !GpsVector)
   }
 }
 
-dfg.operator @cell_clone2 inputs(%cin2: !MapCell)
+dfg.process @cell_clone2 inputs(%cin2: !MapCell)
                           outputs(%mapcell_0_0_1_0_tx: !MapCell, %mapcell0_0_0_0_tx: !MapCell) {
-  dfg.loop inputs(%cin2: !MapCell) outputs(%mapcell_0_0_1_0_tx: !MapCell, %mapcell0_0_0_0_tx: !MapCell) {
+  dfg.monitor inputs(%cin2: !MapCell) outputs(%mapcell_0_0_1_0_tx: !MapCell, %mapcell0_0_0_0_tx: !MapCell) {
     %var_0 = dfg.pull %cin2 : !MapCell
     %mapcell0_0_0_0 = func.call @clone(%var_0) : (!MapCell) -> !MapCell
     dfg.push(%mapcell0_0_0_0) %mapcell0_0_0_0_tx : !MapCell
@@ -226,9 +226,9 @@ dfg.operator @cell_clone2 inputs(%cin2: !MapCell)
   }
 }
 
-dfg.operator @cell_clone inputs(%mapcell_0_0_2_rx: !MapCell)
+dfg.process @cell_clone inputs(%mapcell_0_0_2_rx: !MapCell)
                          outputs(%cout1: !MapCell, %cout2: !MapCell) {
-  dfg.loop inputs(%mapcell_0_0_2_rx: !MapCell) outputs(%cout1: !MapCell, %cout2: !MapCell) {
+  dfg.monitor inputs(%mapcell_0_0_2_rx: !MapCell) outputs(%cout1: !MapCell, %cout2: !MapCell) {
     %value = dfg.pull %mapcell_0_0_2_rx : !MapCell
     %val2 = func.call @clone(%value) : (!MapCell) -> !MapCell
     dfg.push(%value) %cout1 : !MapCell
@@ -236,18 +236,18 @@ dfg.operator @cell_clone inputs(%mapcell_0_0_2_rx: !MapCell)
   }
 }
 
-dfg.operator @make_dijkstra inputs(%cin1: !MapCell)
+dfg.process @make_dijkstra inputs(%cin1: !MapCell)
                             outputs(%dijkstra_0_0_0_tx: !Dijkstra) {
-  dfg.loop inputs(%cin1: !MapCell) outputs(%dijkstra_0_0_0_tx: !Dijkstra) {
+  dfg.monitor inputs(%cin1: !MapCell) outputs(%dijkstra_0_0_0_tx: !Dijkstra) {
     %var_0 = dfg.pull %cin1 : !MapCell
     %dijkstra_0_0_0 = func.call @Dijkstra(%var_0) : (!MapCell) -> !Dijkstra
     dfg.push(%dijkstra_0_0_0) %dijkstra_0_0_0_tx : !Dijkstra
   }
 }
 
-dfg.operator @var_0_at inputs(%mapcells_0_0_1_0_rx: !VecMapCell, %index_0_0_0_rx: i64)
+dfg.process @var_0_at inputs(%mapcells_0_0_1_0_rx: !VecMapCell, %index_0_0_0_rx: i64)
                        outputs(%mapcell_0_0_2_tx: !MapCell) {
-  dfg.loop inputs(%mapcells_0_0_1_0_rx: !VecMapCell, %index_0_0_0_rx: i64) outputs(%mapcell_0_0_2_tx: !MapCell) {
+  dfg.monitor inputs(%mapcells_0_0_1_0_rx: !VecMapCell, %index_0_0_0_rx: i64) outputs(%mapcell_0_0_2_tx: !MapCell) {
     %var_0 = dfg.pull %mapcells_0_0_1_0_rx : !VecMapCell
     %var_1 = dfg.pull %index_0_0_0_rx : i64
     %mapcell_0_0_2 = func.call @vecat(%var_0, %var_1) : (!VecMapCell, i64) -> !MapCell
@@ -255,9 +255,9 @@ dfg.operator @var_0_at inputs(%mapcells_0_0_1_0_rx: !VecMapCell, %index_0_0_0_rx
   }
 }
 
-dfg.operator @findcells inputs(%mapcells0_0_0_0_rx: !VecMapCell, %cell_0_0_0_0_rx: !GpsPosition)
+dfg.process @findcells inputs(%mapcells0_0_0_0_rx: !VecMapCell, %cell_0_0_0_0_rx: !GpsPosition)
                         outputs(%index_0_0_0_tx: i64) {
-  dfg.loop inputs(%mapcells0_0_0_0_rx: !VecMapCell, %cell_0_0_0_0_rx: !GpsPosition) outputs(%index_0_0_0_tx: i64) {
+  dfg.monitor inputs(%mapcells0_0_0_0_rx: !VecMapCell, %cell_0_0_0_0_rx: !GpsPosition) outputs(%index_0_0_0_tx: i64) {
     %var_0 = dfg.pull %mapcells0_0_0_0_rx : !VecMapCell
     %var_1 = dfg.pull %cell_0_0_0_0_rx : !GpsPosition
     %index_0_0_0 = func.call @findcell(%var_0, %var_1) : (!VecMapCell, !GpsPosition) -> i64
@@ -265,9 +265,9 @@ dfg.operator @findcells inputs(%mapcells0_0_0_0_rx: !VecMapCell, %cell_0_0_0_0_r
   }
 }
 
-dfg.operator @gvat inputs(%gv_0_0_2_rx: !GpsVector)
+dfg.process @gvat inputs(%gv_0_0_2_rx: !GpsVector)
                     outputs(%cell_0_0_0_0_tx: !GpsPosition, %gv_0_0_1_0_tx: !GpsVector) {
-  dfg.loop inputs(%gv_0_0_2_rx: !GpsVector) outputs(%cell_0_0_0_0_tx: !GpsPosition, %gv_0_0_1_0_tx: !GpsVector) {
+  dfg.monitor inputs(%gv_0_0_2_rx: !GpsVector) outputs(%cell_0_0_0_0_tx: !GpsPosition, %gv_0_0_1_0_tx: !GpsVector) {
     %var_0 = dfg.pull %gv_0_0_2_rx : !GpsVector
     %idx = arith.constant 0 : index
     %cell_0_0_0_0 = func.call @gpsat(%var_0, %idx) : (!GpsVector, index) -> !GpsPosition
@@ -276,25 +276,25 @@ dfg.operator @gvat inputs(%gv_0_0_2_rx: !GpsVector)
   }
 }
 
-dfg.operator @make_ctr outputs(%counter_0_0_1_tx: i32) {
+dfg.process @make_ctr outputs(%counter_0_0_1_tx: i32) {
   %counter_0_0_1 = func.call @Magic() : () -> i32
   dfg.push(%counter_0_0_1) %counter_0_0_1_tx : i32
 }
 
 
-dfg.operator @kernel_interpolate inputs(%rsvbb_0_0_0_rx: !RoadSpeedVector, %mapcell_0_0_0_0_1_rx: !MapCell)
+dfg.process @kernel_interpolate inputs(%rsvbb_0_0_0_rx: !RoadSpeedVector, %mapcell_0_0_0_0_1_rx: !MapCell)
                                  outputs(%rsv_0_0_0_tx: !RoadSpeedVector)
                                  attributes { dfg.path = "mma/component_interpolate.cpp" }
 
-dfg.operator @kernel_viterbi inputs(%t_0_0_0_rx: !Trellis, %cv_0_0_0_0_1_rx: !CandiVector)
+dfg.process @kernel_viterbi inputs(%t_0_0_0_rx: !Trellis, %cv_0_0_0_0_1_rx: !CandiVector)
                              outputs(%rsvbb_0_0_0_tx: !RoadSpeedVector)
                              attributes { dfg.path = "mma/viterbi.cpp" }
 
-dfg.operator @kernel_build_trellis inputs(%gv_0_0_0_0_rx: !GpsVector, %cv_0_0_0_0_2_rx: !CandiVector, %mapcell_0_0_0_0_2_rx: !MapCell, %dijkstra_0_0_0_rx: !Dijkstra)
+dfg.process @kernel_build_trellis inputs(%gv_0_0_0_0_rx: !GpsVector, %cv_0_0_0_0_2_rx: !CandiVector, %mapcell_0_0_0_0_2_rx: !MapCell, %dijkstra_0_0_0_rx: !Dijkstra)
                                    outputs(%t_0_0_0_tx: !Trellis)
                                    attributes { dfg.path = "mma/component_trellis.cpp" }
 
-dfg.operator @kernel_projection inputs(%gv0_0_0_0_rx: !GpsVector, %mapcell0_0_0_0_rx: !MapCell)
+dfg.process @kernel_projection inputs(%gv0_0_0_0_rx: !GpsVector, %mapcell0_0_0_0_rx: !MapCell)
                                 outputs(%cv_0_0_1_tx: !CandiVector)
                                 attributes { dfg.path = "mma/component_projection.cpp" }
 

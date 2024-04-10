@@ -108,9 +108,9 @@ struct OffloadedInstantiateOpLowering
         //
         ModuleOp parent = op->getParentOfType<ModuleOp>();
 
-        // find associated OperatorOp
-        OperatorOp kernelDefinition =
-            parent.lookupSymbol<OperatorOp>(adaptor.getCallee());
+        // find associated ProcessOp
+        ProcessOp kernelDefinition =
+            parent.lookupSymbol<ProcessOp>(adaptor.getCallee());
 
         // verify that both argument lengths match
         size_t kernelArgLength =
@@ -253,7 +253,7 @@ LogicalResult createAlveoHostObject(SmallVector<InstantiateOp> &instantiations)
 
     // ensure that the host object has not been created yet (which should be
     // impossible)
-    OperatorOp opExists = module.lookupSymbol<OperatorOp>(alveoHostWrapperName);
+    ProcessOp opExists = module.lookupSymbol<ProcessOp>(alveoHostWrapperName);
     if (opExists) {
         emitError(
             opExists.getLoc(),
@@ -261,7 +261,7 @@ LogicalResult createAlveoHostObject(SmallVector<InstantiateOp> &instantiations)
         return failure();
     }
 
-    // create the OperatorOp
+    // create the ProcessOp
     std::vector<Type> tyVec;
     std::vector<Location> locs;
     for (size_t i = 0; i < numInstantiations; i++) {
@@ -270,7 +270,7 @@ LogicalResult createAlveoHostObject(SmallVector<InstantiateOp> &instantiations)
     }
 
     FunctionType opSignature = FunctionType::get(moduleCtx, {}, tyVec);
-    OperatorOp hostCreationOp = rewriter.create<OperatorOp>(
+    ProcessOp hostCreationOp = rewriter.create<ProcessOp>(
         instantiations[0].getLoc(),
         alveoHostWrapperName,
         opSignature);
@@ -312,7 +312,7 @@ LogicalResult createAlveoHostObject(SmallVector<InstantiateOp> &instantiations)
     return success();
 }
 
-OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
+ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
 {
     ModuleOp module = instantiation->getParentOfType<ModuleOp>();
     // ConversionPatternRewriter rewriter(module.getContext());
@@ -327,9 +327,9 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
         OutputType::get(instantiation.getContext(), alveoHostObjectType);
 
     // verification & data extraction
-    // find associated OperatorOp
-    OperatorOp kernelDefinition =
-        module.lookupSymbol<OperatorOp>(instantiation.getCallee());
+    // find associated ProcessOp
+    ProcessOp kernelDefinition =
+        module.lookupSymbol<ProcessOp>(instantiation.getCallee());
 
     // verify that both argument lengths match
     size_t kernelArgLength =
@@ -340,7 +340,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
             kernelDefinition.getLoc(),
             "The kernel declaration that corresponds to this instantiation "
             "does not have a matching argument list length");
-        return OperatorOp();
+        return ProcessOp();
     }
 
     ArrayRef<int64_t> multiplicities = kernelDefinition.getMultiplicity();
@@ -352,10 +352,10 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
             "The multiplicity argument of the kernel definition does not "
             "match the number of operands supplied to the instantiation "
             "function");
-        return OperatorOp();
+        return ProcessOp();
     }
 
-    // create the OperatorOp
+    // create the ProcessOp
     SmallVector<Type> inputs, outputs, allArgs;
     SmallVector<Location> locs;
     for (Value arg : instantiation.getInputs()) {
@@ -377,7 +377,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
     FunctionType opSignature =
         FunctionType::get(instantiation.getContext(), inputs, outputs);
 
-    OperatorOp wrapperOp = rewriter.create<OperatorOp>(
+    ProcessOp wrapperOp = rewriter.create<ProcessOp>(
         instantiation.getLoc(),
         wrapperOpName,
         opSignature);
@@ -437,7 +437,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
             outVals.push_back(entryBlock->getArgument(i));
 
     // loopOp
-    LoopOp loopOp = rewriter.create<LoopOp>(loc, inVals, outVals);
+    MonitorOp loopOp = rewriter.create<MonitorOp>(loc, inVals, outVals);
     Block* loopEntryBlock = rewriter.createBlock(&loopOp.getBody());
     rewriter.setInsertionPointToStart(loopEntryBlock);
 
@@ -555,7 +555,7 @@ createAlveoHostChannels(func::FuncOp topLevel, size_t numChannels)
 
 LogicalResult replaceInstantiations(
     SmallVector<InstantiateOp> &instantiations,
-    SmallVector<OperatorOp> &newOps,
+    SmallVector<ProcessOp> &newOps,
     SmallVector<ChannelOp> &newChans)
 {
     ModuleOp module = instantiations[0]->getParentOfType<ModuleOp>();
@@ -571,7 +571,7 @@ LogicalResult replaceInstantiations(
 
     // insert the instantiation for the AlveoHostObject above the first
     // instantiation
-    if (!module.lookupSymbol<OperatorOp>(alveoHostWrapperName)) {
+    if (!module.lookupSymbol<ProcessOp>(alveoHostWrapperName)) {
         emitError(
             module.getLoc(),
             "The Alveo Host wrapper generation operator does not exist. This "
@@ -674,9 +674,9 @@ void ConvertDfgInsertOlympusWrapperPass::runOnOperation()
         // 2. Insert the creation of the AlveoHost object
         if (failed(createAlveoHostObject(instantiations))) signalPassFailure();
 
-        // 3. Insert an OperatorOp for each offloaded instantiate
+        // 3. Insert an ProcessOp for each offloaded instantiate
         // TODO -> re-use the olympus lowering
-        SmallVector<OperatorOp> newOps;
+        SmallVector<ProcessOp> newOps;
         for (InstantiateOp instantiation : instantiations)
             newOps.push_back(insertOlympusWrapperOp(instantiation));
         assert(newOps.size() == instantiations.size());

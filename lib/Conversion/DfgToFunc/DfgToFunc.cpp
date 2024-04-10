@@ -36,15 +36,15 @@ struct ConvertDfgToFuncPass
 };
 } // namespace
 
-struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
-    using OpConversionPattern<OperatorOp>::OpConversionPattern;
+struct ProcessOpLowering : public OpConversionPattern<ProcessOp> {
+    using OpConversionPattern<ProcessOp>::OpConversionPattern;
 
-    OperatorOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<OperatorOp>(typeConverter, context){};
+    ProcessOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ProcessOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
-        OperatorOp op,
-        OperatorOpAdaptor adaptor,
+        ProcessOp op,
+        ProcessOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         Location loc = op.getLoc();
@@ -120,15 +120,15 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
     }
 };
 
-struct LoopOpLowering : public OpConversionPattern<LoopOp> {
-    using OpConversionPattern<LoopOp>::OpConversionPattern;
+struct MonitorOpLowering : public OpConversionPattern<MonitorOp> {
+    using OpConversionPattern<MonitorOp>::OpConversionPattern;
 
-    LoopOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<LoopOp>(typeConverter, context){};
+    MonitorOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<MonitorOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
-        LoopOp op,
-        LoopOpAdaptor adaptor,
+        MonitorOp op,
+        MonitorOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         // TODO(feliix42):
@@ -189,7 +189,7 @@ struct LoopOpLowering : public OpConversionPattern<LoopOp> {
         rewriter.setInsertionPointToEnd(&loopRegion.back());
         rewriter.create<cf::BranchOp>(op.getLoc(), &loopRegion.front());
 
-        // 4. move the blocks from the region to after the LoopOp
+        // 4. move the blocks from the region to after the MonitorOp
         rewriter.inlineRegionBefore(loopRegion, finalizerBlock);
 
         // 5. insert a br before the loop
@@ -208,13 +208,13 @@ void mlir::populateDfgToFuncConversionPatterns(
     RewritePatternSet &patterns)
 {
     // dfg.operator -> func.func
-    patterns.add<OperatorOpLowering>(typeConverter, patterns.getContext());
+    patterns.add<ProcessOpLowering>(typeConverter, patterns.getContext());
 
     // dfg.instantiate -> func.call
     patterns.add<InstantiateOpLowering>(typeConverter, patterns.getContext());
 
     // dfg.loop -> cf
-    patterns.add<LoopOpLowering>(typeConverter, patterns.getContext());
+    patterns.add<MonitorOpLowering>(typeConverter, patterns.getContext());
 }
 
 void ConvertDfgToFuncPass::runOnOperation()
@@ -321,7 +321,7 @@ void ConvertDfgToFuncPass::runOnOperation()
     target.addLegalDialect<DfgDialect>();
     // NOTE(feliix42): Offloaded InstantiateOp operations are *not* covered by
     // this lowering but are illegal.
-    target.addIllegalOp<OperatorOp, LoopOp, InstantiateOp>();
+    target.addIllegalOp<ProcessOp, MonitorOp, InstantiateOp>();
     // target.addDynamicallyLegalOp<InstantiateOp>(
     //     [](InstantiateOp op) { return op.getOffloaded(); });
 
