@@ -2,7 +2,7 @@ dfg.process @sum
     inputs (%op_a: ui32, %op_b: ui32)
     outputs (%a: ui32)
 {
-    dfg.monitor inputs(%op_a: ui32) {
+    dfg.loop inputs(%op_a: ui32) {
         %inp1 = dfg.pull %op_a : ui32
         %inp2 = dfg.pull %op_b : ui32
 

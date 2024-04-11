@@ -26,7 +26,7 @@ def Dfg_ProcessOp : Dfg_Op<
             HasParent<"ModuleOp">,
             NoTerminator
         ]> {
-    let summary = "Defines a node in the Dataflow Graph";
+    let summary = "Defines a process in the KPN MoC";
     let description = [{
         The `process` operation produces a dataflow node which is linked to other
         processes by hooking up their input and output ports.
@@ -74,12 +74,12 @@ def Dfg_ProcessOp : Dfg_Op<
 
 // TODO:
 // , RegionBranchOpInterface]>
-def Dfg_MonitorOp : Dfg_Op<"monitor", [HasParent<"ProcessOp">, NoTerminator, AttrSizedOperandSegments, RecursiveMemoryEffects]>
+def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"ProcessOp">, NoTerminator, AttrSizedOperandSegments, RecursiveMemoryEffects]>
 {
     let summary = "Defines a list of input/output ports maybe closed";
 
     let description = [{
-        The `monitor` operation defines a list of input or output ports
+        The `loop` operation defines a list of input or output ports
         that will be closed later. The close behavior will terminate
         the process and populate to other processes so that the whole
         dataflow graph will be shut down.
@@ -88,7 +88,7 @@ def Dfg_MonitorOp : Dfg_Op<"monitor", [HasParent<"ProcessOp">, NoTerminator, Att
         ```
         dfg.process @add inputs(%a: type) outputs(%b: type)
         {
-            dfg.monitor inputs(%a: type) outputs(%b: type) {
+            dfg.loop inputs(%a: type) outputs(%b: type) {
                 ops ...
             }
         }

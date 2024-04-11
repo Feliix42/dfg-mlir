@@ -54,7 +54,7 @@ fsm::MachineOp insertController(
     FunctionType funcTy,
     SmallVector<Operation*> ops,
     bool hasMultiOutputs,
-    bool hasMonitorOp = false,
+    bool hasLoopOp = false,
     SmallVector<std::pair<bool, int>> loopChanArgIdx = {})
 {
     auto context = module.getContext();
@@ -342,11 +342,11 @@ fsm::MachineOp insertController(
         auto transInit = builder.create<fsm::TransitionOp>(
             loc,
             (i == ops.size() - 1)
-                ? (hasMonitorOp ? "INIT" : "CLOSE")
+                ? (hasLoopOp ? "INIT" : "CLOSE")
                 : "WRITE" + std::to_string(idxStateWrite + 1));
         builder.setInsertionPointToEnd(transInit.ensureGuard(builder));
         transInit.getGuard().front().front().erase();
-        if (hasMonitorOp && i == ops.size() - 1) {
+        if (hasLoopOp && i == ops.size() - 1) {
             Value closeQueue;
             for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
                 auto chanIdx = loopChanArgIdx[i];
@@ -376,7 +376,7 @@ fsm::MachineOp insertController(
         } else {
             builder.create<fsm::ReturnOp>(loc, machine.getArgument(readyIdx));
         }
-        if (hasMonitorOp && i == ops.size() - 1) {
+        if (hasLoopOp && i == ops.size() - 1) {
             builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
             auto transClose = builder.create<fsm::TransitionOp>(loc, "CLOSE");
             builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
@@ -518,25 +518,25 @@ public:
         auto types = op.getBody().getArgumentTypes();
         size_t size = types.size();
 
-        // If there is a MonitorOp, get ops inside and log the index of channel
+        // If there is a LoopOp, get ops inside and log the index of channel
         auto opsInBody = op.getBody().getOps();
-        bool hasMonitorOp = false;
+        bool hasLoopOp = false;
         SmallVector<int> loopChanIdx;
-        if (auto loopOp = dyn_cast<MonitorOp>(*opsInBody.begin())) {
+        if (auto loopOp = dyn_cast<LoopOp>(*opsInBody.begin())) {
             if (!loopOp.getOutChans().empty())
                 return rewriter.notifyMatchFailure(
                     loopOp.getLoc(),
                     "Not supported closing on output ports yet!");
             opsInBody = loopOp.getBody().getOps();
             if (!loopOp.getInChans().empty()) {
-                hasMonitorOp = true;
+                hasLoopOp = true;
                 for (auto inChan : loopOp.getInChans()) {
                     auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
                     loopChanIdx.push_back(idxChan);
                 }
             }
         }
-        operatorHasLoop.push_back(std::make_pair(hasMonitorOp, opName));
+        operatorHasLoop.push_back(std::make_pair(hasLoopOp, opName));
         operatorPortIdx.push_back(std::make_pair(loopChanIdx, opName));
 
         SmallVector<hw::PortInfo> ports;
@@ -562,7 +562,7 @@ public:
             std::string name;
 
             bool isMonitored = false;
-            if (hasMonitorOp) {
+            if (hasLoopOp) {
                 if (llvm::find(loopChanIdx, i) != loopChanIdx.end())
                     isMonitored = true;
             }
@@ -594,7 +594,7 @@ public:
                 in_bits.dir = hw::ModulePort::Direction::Input;
                 in_bits.type = rewriter.getIntegerType(elemTy.getWidth());
                 ports.push_back(in_bits);
-                // Add close for input port if it's monitored
+                // Add close for input port if it's looped
                 if (isMonitored) {
                     hw::PortInfo in_close;
                     name = ((numInputs == 1) ? "in"
@@ -757,7 +757,7 @@ public:
                 fsmOutTypesVec),
             ops,
             hwInstanceOutTypes.size() > 1,
-            hasMonitorOp,
+            hasLoopOp,
             loopChanArgIdx);
 
         auto hwInstanceOutSize = hwInstanceOutTypes.size();
@@ -1189,7 +1189,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             for (auto operand : outputs.getOperands())
                 oldOutputs.push_back(std::make_pair(i, operand));
         });
-        // Determine the monitored ports are from arguments
+        // Determine the looped ports are from arguments
         SmallVector<int> needClosePortIdx;
         op.walk([&](InstantiateOp instanceOp) {
             auto calleeName = instanceOp.getCallee().getRootReference().str();

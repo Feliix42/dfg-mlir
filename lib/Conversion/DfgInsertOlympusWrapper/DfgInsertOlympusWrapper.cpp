@@ -437,7 +437,7 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
             outVals.push_back(entryBlock->getArgument(i));
 
     // loopOp
-    MonitorOp loopOp = rewriter.create<MonitorOp>(loc, inVals, outVals);
+    LoopOp loopOp = rewriter.create<LoopOp>(loc, inVals, outVals);
     Block* loopEntryBlock = rewriter.createBlock(&loopOp.getBody());
     rewriter.setInsertionPointToStart(loopEntryBlock);
 

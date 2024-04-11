@@ -355,13 +355,13 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         auto ops = op.getOps();
         auto moduleOp = op->getParentOfType<ModuleOp>();
 
-        MonitorOp loopOp = nullptr;
-        bool hasMonitorOp = false;
+        LoopOp loopOp = nullptr;
+        bool hasLoopOp = false;
         SmallVector<int> loopInChanIdx, loopOutChanIdx;
-        if (auto oldLoop = dyn_cast<MonitorOp>(*ops.begin())) {
+        if (auto oldLoop = dyn_cast<LoopOp>(*ops.begin())) {
             ops = oldLoop.getOps();
             loopOp = oldLoop;
-            hasMonitorOp = true;
+            hasLoopOp = true;
             for (auto inChan : oldLoop.getInChans()) {
                 auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
                 loopInChanIdx.push_back(idxChan);
@@ -443,7 +443,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         SmallVector<Value> newPulledValue;
         auto loc = rewriter.getUnknownLoc();
         rewriter.setInsertionPointToStart(entryBlock);
-        if (hasMonitorOp) {
+        if (hasLoopOp) {
             SmallVector<Value> loopInChans, loopOutChans;
             for (auto inChanIdx : loopInChanIdx) {
                 loopInChans.push_back(
@@ -454,7 +454,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
                     newOperator.getBody().getArgument(outChanIdx));
             }
             auto newLoop =
-                rewriter.create<MonitorOp>(loc, loopInChans, loopOutChans);
+                rewriter.create<LoopOp>(loc, loopInChans, loopOutChans);
             Block* loopEntryBlock = rewriter.createBlock(&newLoop.getBody());
             rewriter.setInsertionPointToStart(loopEntryBlock);
         }
@@ -720,7 +720,7 @@ void ConvertStdToCirctPass::runOnOperation()
 
     target.addDynamicallyLegalOp<ProcessOp>([&](ProcessOp op) {
         auto ops = op.getBody().getOps();
-        if (auto loopOp = dyn_cast<MonitorOp>(*ops.begin()))
+        if (auto loopOp = dyn_cast<LoopOp>(*ops.begin()))
             ops = loopOp.getBody().getOps();
         for (auto &opi : ops) {
             if (!isa<PullOp>(opi) && !isa<HWInstanceOp>(opi)

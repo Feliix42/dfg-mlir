@@ -120,15 +120,15 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
     }
 };
 
-struct MonitorOpLowering : public OpConversionPattern<MonitorOp> {
-    using OpConversionPattern<MonitorOp>::OpConversionPattern;
+struct LoopOpLowering : public OpConversionPattern<LoopOp> {
+    using OpConversionPattern<LoopOp>::OpConversionPattern;
 
-    MonitorOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<MonitorOp>(typeConverter, context){};
+    LoopOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<LoopOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
-        MonitorOp op,
-        MonitorOpAdaptor adaptor,
+        LoopOp op,
+        LoopOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         // TODO(feliix42):
@@ -189,7 +189,7 @@ struct MonitorOpLowering : public OpConversionPattern<MonitorOp> {
         rewriter.setInsertionPointToEnd(&loopRegion.back());
         rewriter.create<cf::BranchOp>(op.getLoc(), &loopRegion.front());
 
-        // 4. move the blocks from the region to after the MonitorOp
+        // 4. move the blocks from the region to after the LoopOp
         rewriter.inlineRegionBefore(loopRegion, finalizerBlock);
 
         // 5. insert a br before the loop
@@ -214,7 +214,7 @@ void mlir::populateDfgToFuncConversionPatterns(
     patterns.add<InstantiateOpLowering>(typeConverter, patterns.getContext());
 
     // dfg.loop -> cf
-    patterns.add<MonitorOpLowering>(typeConverter, patterns.getContext());
+    patterns.add<LoopOpLowering>(typeConverter, patterns.getContext());
 }
 
 void ConvertDfgToFuncPass::runOnOperation()
@@ -321,7 +321,7 @@ void ConvertDfgToFuncPass::runOnOperation()
     target.addLegalDialect<DfgDialect>();
     // NOTE(feliix42): Offloaded InstantiateOp operations are *not* covered by
     // this lowering but are illegal.
-    target.addIllegalOp<ProcessOp, MonitorOp, InstantiateOp>();
+    target.addIllegalOp<ProcessOp, LoopOp, InstantiateOp>();
     // target.addDynamicallyLegalOp<InstantiateOp>(
     //     [](InstantiateOp op) { return op.getOffloaded(); });
 
