@@ -72,6 +72,52 @@ def Dfg_ProcessOp : Dfg_Op<
     let hasVerifier = 1;
 }
 
+def Dfg_OperatorOp : Dfg_Op<"operator", [
+            AutomaticAllocationScope,
+            // AttrSizedOperandSegments,
+            IsolatedFromAbove,
+            HasParent<"ModuleOp">,
+            SingleBlockImplicitTerminator<"YieldOp">
+        ]> {
+    let summary = "define an SDF node in DFG";
+
+    let description = [{
+        ```
+        TODO
+        ```
+    }];
+
+    let arguments = (ins SymbolNameAttr: $sym_name,
+                         TypeAttrOf<FunctionType>: $function_type);
+    let regions = (region AnyRegion: $body);
+
+    let extraClassDeclaration = [{
+        /// Returns whether the process is externally defined
+        bool isExternal();
+
+        //===------------------------------------------------------------------===//
+        // SymbolOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        bool isDeclaration() { return isExternal(); }
+    }];
+
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
+}
+
+def Dfg_YieldOp : Dfg_Op<"yield", [
+            Terminator,
+            HasParent<"OperatorOp">
+        ]> {
+    let summary = "Yield op for a dfg.operator";
+
+    let arguments = (ins Variadic<AnyType>:$operands);
+
+    let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
+    let hasVerifier = 1;
+}
+
 // TODO:
 // , RegionBranchOpInterface]>
 def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"ProcessOp">, NoTerminator, AttrSizedOperandSegments, RecursiveMemoryEffects]>

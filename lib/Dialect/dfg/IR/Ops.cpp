@@ -50,6 +50,9 @@ bool ProcessOp::isExternal()
 /// @param parser The currently used parser
 /// @param arguments A list of arguments to parse
 /// @return A parse result indicating success or failure to parse.
+struct TypeId {
+    static Type get(MLIRContext* ctx, Type t) { return t; }
+};
 template<typename T>
 static ParseResult parseChannelArgumentList(
     OpAsmParser &parser,
@@ -203,18 +206,19 @@ void ProcessOp::print(OpAsmPrinter &p)
     }
 }
 
+// TODO: ProcessOp should allow ops outside of loop
 LogicalResult ProcessOp::verify()
 {
-    // If there is a MonitorOp, it must be the first op in the body
+    // If there is a LoopOp, it must be the first op in the body
     if (!getBody().empty()) {
         auto ops = getBody().getOps();
         bool isFirstLoop, hasLoop = false;
         for (const auto &op : ops)
-            if (auto loopOp = dyn_cast<MonitorOp>(op)) hasLoop = true;
-        if (auto loopOp = dyn_cast<MonitorOp>(&getBody().front().front()))
+            if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
+        if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
             isFirstLoop = true;
         if (hasLoop && !isFirstLoop)
-            return emitError("The MonitorOp must be the first op of Operator");
+            return emitError("The LoopOp must be the first op of Operator");
     }
 
     // Ensure that all inputs are of type OutputType and all outputs of type
@@ -224,13 +228,13 @@ LogicalResult ProcessOp::verify()
         if (!llvm::isa<OutputType>(in))
             return ::emitError(
                 getLoc(),
-                "MonitorOp inputs must be of type OutputType");
+                "LoopOp inputs must be of type OutputType");
 
     for (Type out : fnSig.getResults())
         if (!llvm::isa<InputType>(out))
             return ::emitError(
                 getLoc(),
-                "MonitorOp outputs must be of type InputType");
+                "LoopOp outputs must be of type InputType");
 
     // if a multiplicity is defined, it must cover all arguments!
     ArrayRef<int64_t> multiplicity = getMultiplicity();
@@ -244,10 +248,159 @@ LogicalResult ProcessOp::verify()
 }
 
 //===----------------------------------------------------------------------===//
-// MonitorOp
+// OperatorOp
 //===----------------------------------------------------------------------===//
 
-ParseResult MonitorOp::parse(OpAsmParser &parser, OperationState &result)
+// TODO: parse and print - need to solve the types, otherwise there is no way to
+// TODO: use the arguments in the region
+// TODO: maybe try add block arguments as the original types and wrap to dfg
+// TODO: types in yield type
+
+ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    auto &builder = parser.getBuilder();
+
+    // parse the operator name
+    StringAttr nameAttr;
+    if (parser.parseSymbolName(
+            nameAttr,
+            getSymNameAttrName(result.name),
+            result.attributes))
+        return failure();
+
+    // parse the signature of the operator
+    SmallVector<OpAsmParser::Argument> inVals, outVals;
+    SMLoc signatureLocation = parser.getCurrentLocation();
+
+    // parse inputs/outputs separately for later distinction
+    if (succeeded(parser.parseOptionalKeyword("inputs"))) {
+        if (parseChannelArgumentList<TypeId>(parser, inVals)) return failure();
+    }
+
+    if (succeeded(parser.parseOptionalKeyword("outputs"))) {
+        if (parseChannelArgumentList<TypeId>(parser, outVals)) return failure();
+    }
+
+    SmallVector<Type> argTypes, resultTypes;
+    argTypes.reserve(inVals.size());
+    resultTypes.reserve(outVals.size());
+
+    for (auto &arg : inVals) argTypes.push_back(arg.type);
+    for (auto &arg : outVals) resultTypes.push_back(arg.type);
+    Type type = builder.getFunctionType(argTypes, resultTypes);
+
+    if (!type) {
+        return parser.emitError(signatureLocation)
+               << "Failed to construct operator type";
+    }
+
+    result.addAttribute(
+        getFunctionTypeAttrName(result.name),
+        TypeAttr::get(type));
+
+    // merge both argument lists for the block arguments
+    inVals.append(outVals);
+
+    OptionalParseResult attrResult =
+        parser.parseOptionalAttrDictWithKeyword(result.attributes);
+    if (attrResult.has_value() && failed(*attrResult)) return failure();
+
+    // parse the attached region, if any
+    auto* body = result.addRegion();
+    SMLoc loc = parser.getCurrentLocation();
+    OptionalParseResult parseResult = parser.parseOptionalRegion(
+        *body,
+        inVals,
+        /*enableNameShadowing=*/false);
+
+    if (parseResult.has_value()) {
+        if (failed(*parseResult)) return failure();
+        if (body->empty())
+            return parser.emitError(loc, "expected non-empty operator body");
+    }
+
+    return success();
+}
+
+void OperatorOp::print(OpAsmPrinter &p)
+{
+    Operation* op = getOperation();
+    Region &body = op->getRegion(0);
+    bool isExternal = body.empty();
+
+    // print the operation and function name
+    auto funcName =
+        op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName())
+            .getValue();
+
+    p << ' ';
+    p.printSymbolName(funcName);
+
+    ArrayRef<Type> inputTypes = getFunctionType().getInputs();
+    ArrayRef<Type> outputTypes = getFunctionType().getResults();
+
+    if (!inputTypes.empty()) {
+        p << " inputs(";
+        for (unsigned i = 0; i < inputTypes.size(); i++) {
+            if (i > 0) p << ", ";
+
+            if (isExternal)
+                p << "\%arg" << i;
+            else
+                p.printOperand(body.getArgument(i));
+            p << " : " << inputTypes[i];
+        }
+        p << ") ";
+    }
+
+    if (!outputTypes.empty()) {
+        p << " outputs(";
+        unsigned inpSize = inputTypes.size();
+        for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
+            if (i > inpSize) p << ", ";
+
+            if (isExternal)
+                p << "\%arg" << i;
+            else
+                p.printOperand(body.getArgument(i));
+            p << " : " << outputTypes[i - inpSize];
+        }
+        p << ") ";
+    }
+
+    // print any attributes in the attribute list into the dict
+    if (!op->getAttrs().empty())
+        p.printOptionalAttrDictWithKeyword(
+            op->getAttrs(),
+            /*elidedAttrs=*/{getFunctionTypeAttrName(), getSymNameAttrName()});
+
+    // Print the region
+    if (!isExternal) {
+        p << ' ';
+        p.printRegion(
+            body,
+            /*printEntryBlockArgs =*/false,
+            /*printBlockTerminators =*/true);
+    }
+}
+
+// TODO: cannot contain LoopOp
+// TODO: something else?
+LogicalResult OperatorOp::verify() { return success(); }
+
+//===----------------------------------------------------------------------===//
+// YieldOp
+//===----------------------------------------------------------------------===//
+
+// TODO: check if the num of results matches the num of output channels
+// TODO: and the types, getParentOp ...
+LogicalResult YieldOp::verify() { return success(); }
+
+//===----------------------------------------------------------------------===//
+// LoopOp
+//===----------------------------------------------------------------------===//
+
+ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
 {
     // parse inputs/outputs
     SmallVector<OpAsmParser::Argument> inVals, outVals;
@@ -306,7 +459,7 @@ ParseResult MonitorOp::parse(OpAsmParser &parser, OperationState &result)
     return success();
 }
 
-void MonitorOp::print(OpAsmPrinter &p)
+void LoopOp::print(OpAsmPrinter &p)
 {
     assert(!getOperands().empty());
 

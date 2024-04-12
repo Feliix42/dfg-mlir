@@ -16,6 +16,15 @@ dfg.process @sum
     }
 }
 
+func.func private @to_call(%in: i32) -> i32
+dfg.operator @call_func
+    inputs(%in: i32)
+    outputs(%out: i32)
+{
+    %out_data = func.call @to_call(%in) : (i32) -> i32
+    dfg.yield %out_data : i32
+}
+
 func.func @return_a_value() -> ui32
 {
     %0 = arith.constant 0 : i32
