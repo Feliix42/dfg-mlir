@@ -517,17 +517,21 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 
     // parse an optional channel size
     int size = 0;
+    Attribute sizeAttr;
     OptionalParseResult sizeResult = parser.parseOptionalInteger(size);
-    if (sizeResult.has_value()) {
-        if (succeeded(*sizeResult)) {
-            MLIRContext context;
-            result.addAttribute(
-                getBufferSizeAttrName(result.name),
-                parser.getBuilder().getI32IntegerAttr(size));
-        } else {
-            return failure();
-        }
+    OptionalParseResult sizeAliasResult =
+        parser.parseOptionalAttribute(sizeAttr);
+    if (sizeResult.has_value() && succeeded(*sizeResult)) {
+        sizeAttr = parser.getBuilder().getI32IntegerAttr(size);
+    } else if (sizeAliasResult.has_value() && succeeded(*sizeAliasResult)) {
+        if (!isa<IntegerAttr>(sizeAttr))
+            return parser.emitError(
+                parser.getCurrentLocation(),
+                "The buffer size must be an i32 signless integer attribute!");
+    } else {
+        return failure();
     }
+    result.addAttribute(getBufferSizeAttrName(result.name), sizeAttr);
 
     if (parser.parseRParen() || parser.parseColon()) return failure();
 
