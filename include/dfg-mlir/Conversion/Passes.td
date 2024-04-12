@@ -101,7 +101,8 @@ def ConvertDfgInsertOlympusWrapper : Pass<"insert-olympus-wrappers"> {
 
     let  dependentDialects = [
         "func::FuncDialect",
-        "dfg::DfgDialect"
+        "dfg::DfgDialect",
+        "LLVM::LLVMDialect"
     ];
 }
 
