@@ -210,16 +210,16 @@ void ProcessOp::print(OpAsmPrinter &p)
 LogicalResult ProcessOp::verify()
 {
     // If there is a LoopOp, it must be the first op in the body
-    if (!getBody().empty()) {
-        auto ops = getBody().getOps();
-        bool isFirstLoop, hasLoop = false;
-        for (const auto &op : ops)
-            if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
-        if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
-            isFirstLoop = true;
-        if (hasLoop && !isFirstLoop)
-            return emitError("The LoopOp must be the first op of Operator");
-    }
+    // if (!getBody().empty()) {
+    //     auto ops = getBody().getOps();
+    //     bool isFirstLoop, hasLoop = false;
+    //     for (const auto &op : ops)
+    //         if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
+    //     if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
+    //         isFirstLoop = true;
+    //     if (hasLoop && !isFirstLoop)
+    //         return emitError("The LoopOp must be the first op of ProcessOp");
+    // }
 
     // Ensure that all inputs are of type OutputType and all outputs of type
     // InputType

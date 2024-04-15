@@ -154,8 +154,11 @@ rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter)
         rewriter.getI64IntegerAttr(1));
     auto ptrType =
         LLVM::LLVMPointerType::get(op.getInp().getType().getContext());
-    auto allocated =
-        rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{one});
+    auto allocated = rewriter.create<LLVM::AllocaOp>(
+        loc,
+        ptrType,
+        op.getInp().getType(),
+        one);
     rewriter.create<LLVM::StoreOp>(loc, op.getInp(), allocated);
 
     // return value
@@ -243,7 +246,7 @@ rewritePullOp(PullOp op, Block* terminatorBlock, IRRewriter &rewriter)
         rewriter.getI64IntegerAttr(1));
     auto ptrType = LLVM::LLVMPointerType::get(op.getType().getContext());
     auto allocated =
-        rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{one});
+        rewriter.create<LLVM::AllocaOp>(loc, ptrType, op.getType(), one);
 
     // create the struct type that models the result
     Type boolReturnVal = rewriter.getI1Type();
@@ -278,7 +281,7 @@ rewritePullOp(PullOp op, Block* terminatorBlock, IRRewriter &rewriter)
         args2);
 
     LLVM::LoadOp value =
-        rewriter.create<LLVM::LoadOp>(loc, rewriter.getI64Type(), allocated);
+        rewriter.create<LLVM::LoadOp>(loc, op.getType(), allocated);
 
     op.getResult().replaceAllUsesWith(value.getResult());
 

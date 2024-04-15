@@ -423,7 +423,7 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
         LLVM::LLVMPointerType ptrType =
             LLVM::LLVMPointerType::get(elementType.getContext());
         LLVM::AllocaOp allocated =
-            rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{bufSize});
+            rewriter.create<LLVM::AllocaOp>(loc, ptrType, elementType, bufSize);
 
         ioChans.push_back(allocated);
     }
