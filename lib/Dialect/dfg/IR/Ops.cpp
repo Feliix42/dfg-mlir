@@ -521,17 +521,18 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
     OptionalParseResult sizeResult = parser.parseOptionalInteger(size);
     OptionalParseResult sizeAliasResult =
         parser.parseOptionalAttribute(sizeAttr);
-    if (sizeResult.has_value() && succeeded(*sizeResult)) {
+    if (sizeResult.has_value()) {
+        if (failed(sizeResult.value())) return failure();
         sizeAttr = parser.getBuilder().getI32IntegerAttr(size);
-    } else if (sizeAliasResult.has_value() && succeeded(*sizeAliasResult)) {
+        result.addAttribute(getBufferSizeAttrName(result.name), sizeAttr);
+    } else if (sizeAliasResult.has_value()) {
+        if (failed(sizeAliasResult.value())) return failure();
         if (!isa<IntegerAttr>(sizeAttr))
             return parser.emitError(
                 parser.getCurrentLocation(),
                 "The buffer size must be an i32 signless integer attribute!");
-    } else {
-        return failure();
+        result.addAttribute(getBufferSizeAttrName(result.name), sizeAttr);
     }
-    result.addAttribute(getBufferSizeAttrName(result.name), sizeAttr);
 
     if (parser.parseRParen() || parser.parseColon()) return failure();
 
@@ -556,7 +557,7 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 void ChannelOp::print(OpAsmPrinter &p)
 {
     p << '(';
-    if (const auto size = getBufferSize()) p << size;
+    if (const auto size = getBufferSize()) p << size.value();
     p << ") : ";
 
     p.printType(getEncapsulatedType());
@@ -597,7 +598,7 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
         getCalleeAttrName(result.name),
         SymbolRefAttr::get(calleeAttr));
 
-    // parse the operator inputs and outpus
+    // parse the operator inputs and outputs
     SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs;
     if (succeeded(parser.parseOptionalKeyword("inputs"))) {
         if (parser.parseLParen() || parser.parseOperandList(inputs) ||

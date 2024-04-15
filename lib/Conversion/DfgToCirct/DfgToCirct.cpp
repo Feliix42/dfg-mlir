@@ -1419,7 +1419,12 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             if (auto channelOp = dyn_cast<ChannelOp>(opInside)) {
                 auto portBit =
                     channelOp.getEncapsulatedType().getIntOrFloatBitWidth();
-                auto size = channelOp.getBufferSize().value();
+                auto bufSize = channelOp.getBufferSize();
+                if (!bufSize.has_value())
+                    return rewriter.notifyMatchFailure(
+                        channelOp.getLoc(),
+                        "For hardware lowering, a channel must have a size.");
+                auto size = bufSize.value();
 
                 OpBuilder builder(context);
                 builder.setInsertionPointToStart(

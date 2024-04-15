@@ -207,7 +207,7 @@ void mlir::populateDfgToFuncConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns)
 {
-    // dfg.operator -> func.func
+    // dfg.process -> func.func
     patterns.add<ProcessOpLowering>(typeConverter, patterns.getContext());
 
     // dfg.instantiate -> func.call

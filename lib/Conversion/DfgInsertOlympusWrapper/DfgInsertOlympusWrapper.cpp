@@ -613,7 +613,7 @@ void mlir::populateDfgInsertOlympusWrapperConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns)
 {
-    // dfg.instantiate offloaded -> dfg.instantiate & dfg.operator
+    // dfg.instantiate offloaded -> dfg.instantiate & dfg.process
     patterns.add<OffloadedInstantiateOpLowering>(
         typeConverter,
         patterns.getContext());
