@@ -1,7 +1,7 @@
 /// Implementation of StdToCirct pass.
 ///
 /// @file
-/// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
 #include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
 

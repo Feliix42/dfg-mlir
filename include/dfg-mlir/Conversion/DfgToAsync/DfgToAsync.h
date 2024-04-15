@@ -1,7 +1,7 @@
 /// Declaration of the Dfg to Async lowering pass.
 ///
 /// @file
-/// @author     Jiahong Bi (jiahong.bi@mailbox.tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
 #pragma once
 
