@@ -394,7 +394,26 @@ LogicalResult OperatorOp::verify() { return success(); }
 
 // TODO: check if the num of results matches the num of output channels
 // TODO: and the types, getParentOp ...
-LogicalResult YieldOp::verify() { return success(); }
+LogicalResult YieldOp::verify()
+{
+    auto operatorOp = getParentOp<OperatorOp>();
+    auto funcTy = operatorOp.getFunctionType();
+
+    if (funcTy.getNumResults() != getNumOperands())
+        return ::emitError(
+            getLoc(),
+            "The number of yield operands must match the number of output "
+            "channels");
+
+    for (size_t i = 0; i < funcTy.getNumResults(); i++)
+        if (funcTy.getResult(i) != getOperand(i).getType())
+            return ::emitError(
+                getLoc(),
+                "The type of operand must match the output channel's "
+                "encapsulated type.");
+
+    return success();
+}
 
 //===----------------------------------------------------------------------===//
 // LoopOp
@@ -521,6 +540,7 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
     OptionalParseResult sizeResult = parser.parseOptionalInteger(size);
     OptionalParseResult sizeAliasResult =
         parser.parseOptionalAttribute(sizeAttr);
+    // try parseCustomAttributeWithFallback
     if (sizeResult.has_value()) {
         if (failed(sizeResult.value())) return failure();
         sizeAttr = parser.getBuilder().getI32IntegerAttr(size);
