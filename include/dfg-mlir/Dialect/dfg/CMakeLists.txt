@@ -10,3 +10,4 @@ add_custom_target(DfgIncGen)
 # add_subdirectory(Interfaces)
 # Attributes, Dialect, Operations and Types.
 add_subdirectory(IR)
+add_subdirectory(Transforms)

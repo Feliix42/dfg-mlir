@@ -7,6 +7,7 @@
 #include "circt/InitAllPasses.h"
 #include "dfg-mlir/Conversion/Passes.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
@@ -24,6 +25,7 @@ int main(int argc, char* argv[])
 
     registerAllPasses();
     dfg::registerConversionPasses();
+    dfg::registerDfgPasses();
     circt::registerAllPasses();
 
     registry.insert<dfg::DfgDialect>();
