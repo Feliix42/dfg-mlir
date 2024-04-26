@@ -386,7 +386,29 @@ void OperatorOp::print(OpAsmPrinter &p)
 
 // TODO: cannot contain LoopOp
 // TODO: something else?
-LogicalResult OperatorOp::verify() { return success(); }
+LogicalResult OperatorOp::verify()
+{
+    // In OperatorOp, YieldOp is the only legal dfg operation
+    for (auto &op : getOps()) {
+        if (op.getDialect()->getNamespace() == "dfg") {
+            if (!isa<YieldOp>(op))
+                return ::emitError(getLoc(), "Only yield op are allowed here.");
+        }
+    }
+
+    // Verify that all output ports are only used in YieldOp
+    for (size_t i = getFunctionType().getNumInputs();
+         i < getBody().getArguments().size();
+         i++) {
+        for (Operation* user : getBody().getArgument(i).getUsers())
+            if (!isa<YieldOp>(user))
+                return ::emitError(
+                    user->getLoc(),
+                    "Output ports can only be used to yield data into them.");
+    }
+
+    return success();
+}
 
 //===----------------------------------------------------------------------===//
 // YieldOp
