@@ -397,7 +397,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
     // initialize the two buffers for sx/rx
     // -> alloca buffers
     SmallVector<Value> ioChans;
-    for (size_t i = 0; i < multiplicities.size(); i++) {
+    for (size_t i = 0; i < instantiation.getInputs().size(); i++) {
         // TODO: #iterations will go here!!
         int64_t m = multiplicities[i] * dataWidth;
         LLVM::ConstantOp bufSize = rewriter.create<LLVM::ConstantOp>(
@@ -478,11 +478,13 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
 
     ioChans.insert(ioChans.begin(), hostObject.getOutp());
 
+    SmallVector<Value> alveoInputs(ioChans.begin(), ioChans.begin() + 1 + instantiation.getInputs().size());
+
     //   call host
     FlatSymbolRefAttr alveoHostFunc =
-        getOrInsertFunc(rewriter, module, alveoHostCall, std::nullopt, ioChans);
+        getOrInsertFunc(rewriter, module, alveoHostCall, std::nullopt, alveoInputs);
     rewriter
-        .create<func::CallOp>(loc, ArrayRef<Type>(), alveoHostFunc, ioChans);
+        .create<func::CallOp>(loc, ArrayRef<Type>(), alveoHostFunc, alveoInputs);
 
     //   retrieve results
     for (size_t i = 0; i < instantiation.getOutputs().size(); i++) {
@@ -496,7 +498,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
         LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
             loc,
             LLVM::LLVMPointerType::get(instantiation.getContext()),
-            ioChans[j+1]);
+            ioChans[j+1 - instantiation.getOutputs().size()]);
         UnrealizedConversionCastOp inputType =
             rewriter.create<UnrealizedConversionCastOp>(
                 loc,
