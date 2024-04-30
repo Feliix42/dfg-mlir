@@ -384,8 +384,6 @@ void OperatorOp::print(OpAsmPrinter &p)
     }
 }
 
-// TODO: cannot contain LoopOp
-// TODO: something else?
 LogicalResult OperatorOp::verify()
 {
     // In OperatorOp, YieldOp is the only legal dfg operation

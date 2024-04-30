@@ -973,6 +973,12 @@ hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc)
     auto maybe_full = builder.create<sv::RegOp>(loc, i1Ty);
     auto maybe_full_value =
         builder.create<sv::ReadInOutOp>(loc, maybe_full.getResult());
+    auto ptr_last = builder.create<sv::RegOp>(loc, i32Ty);
+    auto ptr_last_value =
+        builder.create<sv::ReadInOutOp>(loc, ptr_last.getResult());
+    auto is_done = builder.create<sv::RegOp>(loc, i1Ty);
+    auto is_done_value =
+        builder.create<sv::ReadInOutOp>(loc, maybe_full.getResult());
 
     // Signals
     auto ptr_match = builder.create<comb::ICmpOp>(
@@ -1029,10 +1035,27 @@ hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc)
         not_full.getResult(),
         not_want_close.getResult());
     placeholderNotFull.replaceAllUsesWith(io_enq_ready_value.getResult());
-    auto isDone = builder.create<comb::AndOp>(
+    // auto isDone = builder.create<comb::AndOp>(
+    //     loc,
+    //     want_close_value.getResult(),
+    //     empty.getResult());
+    auto last_read = builder.create<comb::ICmpOp>(
+        loc,
+        comb::ICmpPredicate::eq,
+        ptr_last_value.getResult(),
+        ptr_read_value.getResult());
+    auto last_read_want_close = builder.create<comb::AndOp>(
         loc,
         want_close_value.getResult(),
-        empty.getResult());
+        last_read.getResult());
+    auto last_read_want_close_deq = builder.create<comb::AndOp>(
+        loc,
+        last_read_want_close.getResult(),
+        do_deq.getResult());
+    auto isDone = builder.create<comb::OrOp>(
+        loc,
+        last_read_want_close_deq.getResult(),
+        is_done_value.getResult());
 
     // Clocked logic
     builder.create<sv::AlwaysOp>(loc, sv::EventControl::AtPosEdge, clk, [&] {
@@ -1121,7 +1144,20 @@ hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc)
                         loc,
                         want_close.getResult(),
                         c_true.getResult());
+                    builder.create<sv::PAssignOp>(
+                        loc,
+                        ptr_last.getResult(),
+                        ptr_write_value.getResult());
                 });
+                builder.create<sv::IfOp>(
+                    loc,
+                    last_read_want_close_deq.getResult(),
+                    [&] {
+                        builder.create<sv::PAssignOp>(
+                            loc,
+                            is_done.getResult(),
+                            c_true.getResult());
+                    });
             });
     });
 
