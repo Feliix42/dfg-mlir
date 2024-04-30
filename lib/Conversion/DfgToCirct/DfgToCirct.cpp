@@ -71,6 +71,7 @@ fsm::MachineOp insertController(
     auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1);
     auto c_false = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
     size_t numPull = 0;
+    size_t numPush = 0;
     size_t numHWInstanceResults = 0;
     SmallVector<Value> hwInstanceValids;
     SmallVector<Value> pullVars;
@@ -102,6 +103,7 @@ fsm::MachineOp insertController(
             newArguments.push_back(
                 std::make_pair(varOp.getResult(), pullOp.getOutp()));
         } else if (auto pushOp = dyn_cast<PushOp>(op)) {
+            numPush++;
             continue;
         } else if (auto hwInstanceOp = dyn_cast<HWInstanceOp>(op)) {
             auto types = hwInstanceOp.getResultTypes();
@@ -978,7 +980,7 @@ hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc)
         builder.create<sv::ReadInOutOp>(loc, ptr_last.getResult());
     auto is_done = builder.create<sv::RegOp>(loc, i1Ty);
     auto is_done_value =
-        builder.create<sv::ReadInOutOp>(loc, maybe_full.getResult());
+        builder.create<sv::ReadInOutOp>(loc, is_done.getResult());
 
     // Signals
     auto ptr_match = builder.create<comb::ICmpOp>(
@@ -1078,6 +1080,14 @@ hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc)
                 builder.create<sv::PAssignOp>(
                     loc,
                     want_close.getResult(),
+                    c_false.getResult());
+                builder.create<sv::PAssignOp>(
+                    loc,
+                    ptr_last.getResult(),
+                    c_zero.getResult());
+                builder.create<sv::PAssignOp>(
+                    loc,
+                    is_done.getResult(),
                     c_false.getResult());
             },
             [&] {
