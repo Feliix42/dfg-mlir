@@ -223,31 +223,119 @@ fsm::MachineOp insertController(
         newOutputs[argIndex] = machine.getArgument(validIdx);
         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
         builder.setInsertionPointToEnd(&stateRead.getTransitions().back());
-        auto transCalc = builder.create<fsm::TransitionOp>(
-            loc,
-            (i == pullVars.size() - 1) ? (isNextPush ? "WRITE0" : "CALC")
-                                       : "READ" + std::to_string(i + 1));
-        builder.setInsertionPointToEnd(transCalc.ensureGuard(builder));
-        transCalc.getGuard().front().front().erase();
-        builder.create<fsm::ReturnOp>(loc, machine.getArgument(validIdx));
-        builder.setInsertionPointToEnd(transCalc.ensureAction(builder));
-        if (hasHwInstance)
+
+        if (i == numPull - 1) {
+            if (!isNextPush || (isNextPush && numPush > 1)) {
+                auto transCalc = builder.create<fsm::TransitionOp>(
+                    loc,
+                    (i == pullVars.size() - 1)
+                        ? (isNextPush ? "WRITE0" : "CALC")
+                        : "READ" + std::to_string(i + 1));
+                builder.setInsertionPointToEnd(transCalc.ensureGuard(builder));
+                transCalc.getGuard().front().front().erase();
+                builder.create<fsm::ReturnOp>(
+                    loc,
+                    machine.getArgument(validIdx));
+                builder.setInsertionPointToEnd(transCalc.ensureAction(builder));
+                if (hasHwInstance)
+                    builder.create<fsm::UpdateOp>(
+                        loc,
+                        hwInstanceValids[i],
+                        c_true.getResult());
+                builder.create<fsm::UpdateOp>(
+                    loc,
+                    pullVars[i],
+                    machine.getArgument(validIdx + 1));
+            } else if (isChanLooped) {
+                // If there is only one push and the process is looped, add two
+                // transitions
+                // 1. If there is no close signal, go to normal WRITE state,
+                // which will go to init state to restart the computation
+                auto transWriteInit =
+                    builder.create<fsm::TransitionOp>(loc, "WRITE0");
+                builder.setInsertionPointToEnd(
+                    transWriteInit.ensureGuard(builder));
+                transWriteInit.getGuard().front().front().erase();
+                // Use logic or with all close signals
+                Value closeQueue;
+                for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                    auto chanIdx = loopChanArgIdx[i];
+                    auto hasClose = chanIdx.first;
+                    auto closeSignalIdx = chanIdx.second;
+                    if (!hasClose) continue;
+                    auto closeSignal = machine.getArgument(closeSignalIdx);
+                    if (i == 0)
+                        closeQueue = closeSignal;
+                    else {
+                        auto closeOrResult = builder.create<comb::OrOp>(
+                            loc,
+                            closeQueue,
+                            closeSignal);
+                        closeQueue = closeOrResult.getResult();
+                    }
+                }
+                auto notClose = builder.create<comb::XorOp>(
+                    loc,
+                    closeQueue,
+                    c_true.getResult());
+                auto guardWrite = builder.create<comb::AndOp>(
+                    loc,
+                    machine.getArgument(validIdx),
+                    notClose.getResult());
+                builder.create<fsm::ReturnOp>(loc, guardWrite.getResult());
+                builder.setInsertionPointToEnd(
+                    &stateRead.getTransitions().back());
+                // 2. If there is close signal, got to WRITE_CLOSE state, which
+                // will write out and assert the done signal at same time
+                auto transWriteClose =
+                    builder.create<fsm::TransitionOp>(loc, "WRITE_CLOSE");
+                builder.setInsertionPointToEnd(
+                    transWriteClose.ensureGuard(builder));
+                transWriteClose.getGuard().front().front().erase();
+                // Use logic or with all close signals
+                for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                    auto chanIdx = loopChanArgIdx[i];
+                    auto hasClose = chanIdx.first;
+                    auto closeSignalIdx = chanIdx.second;
+                    if (!hasClose) continue;
+                    auto closeSignal = machine.getArgument(closeSignalIdx);
+                    if (i == 0)
+                        closeQueue = closeSignal;
+                    else {
+                        auto closeOrResult = builder.create<comb::OrOp>(
+                            loc,
+                            closeQueue,
+                            closeSignal);
+                        closeQueue = closeOrResult.getResult();
+                    }
+                }
+                builder.create<fsm::ReturnOp>(loc, closeQueue);
+            } else if (!isChanLooped && isNextPush && numPush == 1) {
+                auto transClose =
+                    builder.create<fsm::TransitionOp>(loc, "WRITE_CLOSE");
+                builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
+                transClose.getGuard().front().front().erase();
+                builder.create<fsm::ReturnOp>(
+                    loc,
+                    machine.getArgument(validIdx));
+            }
+        } else {
+            auto transCalc = builder.create<fsm::TransitionOp>(
+                loc,
+                "READ" + std::to_string(i + 1));
+            builder.setInsertionPointToEnd(transCalc.ensureGuard(builder));
+            transCalc.getGuard().front().front().erase();
+            builder.create<fsm::ReturnOp>(loc, machine.getArgument(validIdx));
+            builder.setInsertionPointToEnd(transCalc.ensureAction(builder));
+            if (hasHwInstance)
+                builder.create<fsm::UpdateOp>(
+                    loc,
+                    hwInstanceValids[i],
+                    c_true.getResult());
             builder.create<fsm::UpdateOp>(
                 loc,
-                hwInstanceValids[i],
-                c_true.getResult());
-        builder.create<fsm::UpdateOp>(
-            loc,
-            pullVars[i],
-            machine.getArgument(validIdx + 1));
-        if (isChanLooped) {
-            builder.setInsertionPointToEnd(&stateRead.getTransitions().back());
-            auto transClose = builder.create<fsm::TransitionOp>(loc, "CLOSE");
-            builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
-            transClose.getGuard().front().front().erase();
-            builder.create<fsm::ReturnOp>(
-                loc,
-                machine.getArgument(loopedArgIdx));
+                pullVars[i],
+                machine.getArgument(validIdx + 1));
         }
         builder.setInsertionPointToEnd(&machine.getBody().back());
     }
@@ -259,11 +347,39 @@ fsm::MachineOp insertController(
         stateCalc.getOutput().front().front().erase();
         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(outputTempVec));
         builder.setInsertionPointToEnd(&stateCalc.getTransitions().back());
-        auto transWrite = builder.create<fsm::TransitionOp>(loc, "WRITE0");
+        fsm::TransitionOp transWrite;
+        if (hasLoopOp || (!hasLoopOp && numPush != 1))
+            transWrite = builder.create<fsm::TransitionOp>(loc, "WRITE0");
+        else if (!hasLoopOp && numPush == 1)
+            transWrite = builder.create<fsm::TransitionOp>(loc, "WRITE_CLOSE");
         builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
         transWrite.getGuard().front().front().erase();
         idxBias = loopChanArgIdx.back().second + 1;
         auto numCalcDataValid = calcDataValids.size();
+        // If wrapped calc func has more than one output, need to wait all
+        // output ports are ready to transit to next state
+        Value closeQueue, notCloseQueue, returnValue;
+        if (numPush == 1 && hasLoopOp) {
+            for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                auto chanIdx = loopChanArgIdx[i];
+                auto hasClose = chanIdx.first;
+                auto closeSignalIdx = chanIdx.second;
+                if (!hasClose) continue;
+                auto closeSignal = machine.getArgument(closeSignalIdx);
+                if (i == 0)
+                    closeQueue = closeSignal;
+                else {
+                    auto closeOrResult = builder.create<comb::OrOp>(
+                        loc,
+                        closeQueue,
+                        closeSignal);
+                    closeQueue = closeOrResult.getResult();
+                }
+            }
+            notCloseQueue =
+                builder.create<comb::XorOp>(loc, closeQueue, c_true.getResult())
+                    .getResult();
+        }
         if (hasMultiOutputs) {
             Value calcDone;
             for (size_t i = 0; i < numCalcDataValid; i++) {
@@ -276,10 +392,29 @@ fsm::MachineOp insertController(
                     calcDone = validAndResult.getResult();
                 }
             }
-            builder.create<fsm::ReturnOp>(loc, calcDone);
+            if (numPush == 1 && hasLoopOp) {
+                returnValue =
+                    builder.create<comb::AndOp>(loc, calcDone, notCloseQueue)
+                        .getResult();
+            } else {
+                returnValue = calcDone;
+            }
+            // builder.create<fsm::ReturnOp>(loc, calcDone);
         } else {
-            builder.create<fsm::ReturnOp>(loc, machine.getArgument(idxBias));
+            if (numPush == 1 && hasLoopOp) {
+                returnValue = builder
+                                  .create<comb::AndOp>(
+                                      loc,
+                                      machine.getArgument(idxBias),
+                                      notCloseQueue)
+                                  .getResult();
+            } else {
+                returnValue = machine.getArgument(idxBias);
+            }
+            // builder.create<fsm::ReturnOp>(loc, machine.getArgument(idxBias));
         }
+        builder.create<fsm::ReturnOp>(loc, returnValue);
+        // If only one output, update the variable with calc result
         if (!hasMultiOutputs) {
             builder.setInsertionPointToEnd(transWrite.ensureAction(builder));
             builder.create<fsm::UpdateOp>(
@@ -288,6 +423,70 @@ fsm::MachineOp insertController(
                 machine.getArgument(idxBias + 1));
             builder.setInsertionPointToEnd(&machine.getBody().back());
         }
+        // If there is only one push as following, add one transition to
+        // write_close state
+        if (numPush == 1 && hasLoopOp) {
+            // TODO
+            builder.setInsertionPointToEnd(&stateCalc.getTransitions().back());
+            auto transWriteClose =
+                builder.create<fsm::TransitionOp>(loc, "WRITE_CLOSE");
+            builder.setInsertionPointToEnd(
+                transWriteClose.ensureGuard(builder));
+            transWriteClose.getGuard().front().front().erase();
+            for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                auto chanIdx = loopChanArgIdx[i];
+                auto hasClose = chanIdx.first;
+                auto closeSignalIdx = chanIdx.second;
+                if (!hasClose) continue;
+                auto closeSignal = machine.getArgument(closeSignalIdx);
+                if (i == 0)
+                    closeQueue = closeSignal;
+                else {
+                    auto closeOrResult = builder.create<comb::OrOp>(
+                        loc,
+                        closeQueue,
+                        closeSignal);
+                    closeQueue = closeOrResult.getResult();
+                }
+            }
+            if (hasMultiOutputs) {
+                Value calcDone;
+                for (size_t i = 0; i < numCalcDataValid; i++) {
+                    auto validSignal = calcDataValids[i];
+                    if (i == 0)
+                        calcDone = validSignal;
+                    else {
+                        auto validAndResult = builder.create<comb::AndOp>(
+                            loc,
+                            calcDone,
+                            validSignal);
+                        calcDone = validAndResult.getResult();
+                    }
+                }
+                returnValue =
+                    builder.create<comb::AndOp>(loc, calcDone, closeQueue)
+                        .getResult();
+            } else {
+                returnValue = builder
+                                  .create<comb::AndOp>(
+                                      loc,
+                                      machine.getArgument(idxBias),
+                                      closeQueue)
+                                  .getResult();
+            }
+            builder.create<fsm::ReturnOp>(loc, returnValue);
+            if (!hasMultiOutputs) {
+                builder.setInsertionPointToEnd(
+                    transWriteClose.ensureAction(builder));
+                builder.create<fsm::UpdateOp>(
+                    loc,
+                    calcResults[0],
+                    machine.getArgument(idxBias + 1));
+            }
+            builder.setInsertionPointToEnd(&machine.getBody().back());
+        }
+        // If more than one output, add one transition to calc state itself,
+        // update the variables at the same time
         if (hasMultiOutputs) {
             builder.setInsertionPointToEnd(&stateCalc.getTransitions().back());
             auto transCalcSelf = builder.create<fsm::TransitionOp>(loc, "CALC");
@@ -320,8 +519,9 @@ fsm::MachineOp insertController(
     int idxStateWrite = 0;
     size_t startIdx = isNextPush ? numPull : numPull + 1;
     for (size_t i = startIdx; i < ops.size(); i++) {
+        if (!hasLoopOp && (numPush == 1 || i == ops.size() - 1)) break;
         auto pushOp = dyn_cast<PushOp>(ops[i]);
-        assert(pushOp && "here shoule be all PushOp");
+        assert(pushOp && "here should be all PushOp");
         auto argIndex =
             getNewIndexOrArg<int, Value>(pushOp.getChan(), oldArgsIndex)
                 .value();
@@ -341,158 +541,108 @@ fsm::MachineOp insertController(
                 .value();
         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
         builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
-        auto transInit = builder.create<fsm::TransitionOp>(
-            loc,
-            (i == ops.size() - 1)
-                ? (hasLoopOp ? "INIT" : "CLOSE")
-                : "WRITE" + std::to_string(idxStateWrite + 1));
-        builder.setInsertionPointToEnd(transInit.ensureGuard(builder));
-        transInit.getGuard().front().front().erase();
-        if (hasLoopOp && i == ops.size() - 1) {
-            Value closeQueue;
-            for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                auto chanIdx = loopChanArgIdx[i];
-                auto hasClose = chanIdx.first;
-                auto closeSignalIdx = chanIdx.second;
-                if (!hasClose) continue;
-                auto closeSignal = machine.getArgument(closeSignalIdx);
-                if (i == 0)
-                    closeQueue = closeSignal;
-                else {
-                    auto closeOrResult = builder.create<comb::OrOp>(
-                        loc,
-                        closeQueue,
-                        closeSignal);
-                    closeQueue = closeOrResult.getResult();
+        if (numPush != 1 && i == ops.size() - 2) {
+            if (hasLoopOp) {
+                auto transNext = builder.create<fsm::TransitionOp>(
+                    loc,
+                    "WRITE" + std::to_string(idxStateWrite + 1));
+                builder.setInsertionPointToEnd(transNext.ensureGuard(builder));
+                transNext.getGuard().front().front().erase();
+                Value closeQueue;
+                for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                    auto chanIdx = loopChanArgIdx[i];
+                    auto hasClose = chanIdx.first;
+                    auto closeSignalIdx = chanIdx.second;
+                    if (!hasClose) continue;
+                    auto closeSignal = machine.getArgument(closeSignalIdx);
+                    if (i == 0)
+                        closeQueue = closeSignal;
+                    else {
+                        auto closeOrResult = builder.create<comb::OrOp>(
+                            loc,
+                            closeQueue,
+                            closeSignal);
+                        closeQueue = closeOrResult.getResult();
+                    }
                 }
+                auto notCloseSignal = builder.create<comb::XorOp>(
+                    loc,
+                    closeQueue,
+                    c_true.getResult());
+                auto canWriteOut = builder.create<comb::AndOp>(
+                    loc,
+                    machine.getArgument(readyIdx),
+                    notCloseSignal.getResult());
+                builder.create<fsm::ReturnOp>(loc, canWriteOut.getResult());
+                builder.setInsertionPointToEnd(
+                    &stateWrite.getTransitions().back());
+                auto transClose =
+                    builder.create<fsm::TransitionOp>(loc, "WRITE_CLOSE");
+                builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
+                transClose.getGuard().front().front().erase();
+                for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                    auto chanIdx = loopChanArgIdx[i];
+                    auto hasClose = chanIdx.first;
+                    auto closeSignalIdx = chanIdx.second;
+                    if (!hasClose) continue;
+                    auto closeSignal = machine.getArgument(closeSignalIdx);
+                    if (i == 0)
+                        closeQueue = closeSignal;
+                    else {
+                        auto closeOrResult = builder.create<comb::OrOp>(
+                            loc,
+                            closeQueue,
+                            closeSignal);
+                        closeQueue = closeOrResult.getResult();
+                    }
+                }
+                builder.create<fsm::ReturnOp>(loc, closeQueue);
+            } else {
+                auto transClose =
+                    builder.create<fsm::TransitionOp>(loc, "WRITE_CLOSE");
+                builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
+                transClose.getGuard().front().front().erase();
+                builder.create<fsm::ReturnOp>(
+                    loc,
+                    machine.getArgument(readyIdx));
             }
-            auto notCloseSignal = builder.create<comb::XorOp>(
-                loc,
-                closeQueue,
-                c_true.getResult());
-            auto canWriteOut = builder.create<comb::AndOp>(
-                loc,
-                machine.getArgument(readyIdx),
-                notCloseSignal.getResult());
-            builder.create<fsm::ReturnOp>(loc, canWriteOut.getResult());
-        } else {
+        } else if (hasLoopOp && i == ops.size() - 1) {
+            auto transInit = builder.create<fsm::TransitionOp>(loc, "INIT");
+            builder.setInsertionPointToEnd(transInit.ensureGuard(builder));
+            transInit.getGuard().front().front().erase();
             builder.create<fsm::ReturnOp>(loc, machine.getArgument(readyIdx));
-        }
-        if (hasLoopOp && i == ops.size() - 1) {
-            builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
-            auto transClose = builder.create<fsm::TransitionOp>(loc, "CLOSE");
-            builder.setInsertionPointToEnd(transClose.ensureGuard(builder));
-            transClose.getGuard().front().front().erase();
-            Value closeQueue;
-            for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                auto chanIdx = loopChanArgIdx[i];
-                auto hasClose = chanIdx.first;
-                auto closeSignalIdx = chanIdx.second;
-                if (!hasClose) continue;
-                auto closeSignal = machine.getArgument(closeSignalIdx);
-                if (i == 0)
-                    closeQueue = closeSignal;
-                else {
-                    auto closeOrResult = builder.create<comb::OrOp>(
-                        loc,
-                        closeQueue,
-                        closeSignal);
-                    closeQueue = closeOrResult.getResult();
-                }
-            }
-            builder.create<fsm::ReturnOp>(loc, closeQueue);
+        } else {
+            auto transNextWrite = builder.create<fsm::TransitionOp>(
+                loc,
+                "WRITE" + std::to_string(idxStateWrite + 1));
+            builder.setInsertionPointToEnd(transNextWrite.ensureGuard(builder));
+            transNextWrite.getGuard().front().front().erase();
+            builder.create<fsm::ReturnOp>(loc, machine.getArgument(readyIdx));
         }
         builder.setInsertionPointToEnd(&machine.getBody().back());
         idxStateWrite++;
     }
 
-    // CLOSE state and its behavior
-    auto stateClose = builder.create<fsm::StateOp>(loc, "CLOSE");
+    // WRITE_CLOSE state to output the last data along with the done signal,
+    // this is similar to the tlast signal behaviour in Xilinx modules
+    auto stateClose = builder.create<fsm::StateOp>(loc, "WRITE_CLOSE");
     builder.setInsertionPointToEnd(&stateClose.getOutput().back());
     stateClose.getOutput().front().front().erase();
     std::vector<Value> newOutputs = outputTempVec;
+    auto lastPushOp = dyn_cast<PushOp>(ops.back());
+    auto argIndex =
+        getNewIndexOrArg<int, Value>(lastPushOp.getChan(), oldArgsIndex)
+            .value();
+    auto isChanLooped = loopChanArgIdx[argIndex].first;
+    auto loopedArgIdx = loopChanArgIdx[argIndex].second;
+    auto readyIdx = isChanLooped ? loopedArgIdx - 1 : loopedArgIdx;
+    newOutputs[2 * argIndex - numPullChan] = machine.getArgument(readyIdx);
+    newOutputs[2 * argIndex - numPullChan + 1] =
+        getNewIndexOrArg<Value, Value>(lastPushOp.getInp(), newArguments)
+            .value();
     newOutputs[numPullChan + 2 * numPushChan] = c_true.getResult();
     builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
     builder.setInsertionPointToEnd(&machine.getBody().back());
-
-    // int idxCalc = 0;
-    // int idxPush = 0;
-    // isNextPush = false;
-    // for (size_t i = numPull; i < ops.size(); i++) {
-    //     auto op = ops[i];
-    //     auto isThisPush = dyn_cast<PushOp>(op);
-    //     if (i < ops.size() - 1) isNextPush = isa<PushOp>(ops[i + 1]);
-
-    //     // For every push create one STATE: WRITE
-    //     if (isThisPush) {
-    //         auto argIndex =
-    //             getNewIndexOrArg<int, Value>(isThisPush.getChan(),
-    //             oldArgsIndex)
-    //                 .value();
-
-    //         auto stateWrite = builder.create<fsm::StateOp>(
-    //             loc,
-    //             "WRITE" + std::to_string(idxPush));
-    //         builder.setInsertionPointToEnd(&stateWrite.getOutput().back());
-    //         stateWrite.getOutput().front().front().erase();
-    //         std::vector<Value> newOutputs = outputAllZero;
-    //         newOutputs[2 * argIndex - numPullChan] =
-    //             machine.getArgument(argIndex + numPullChan);
-    //         newOutputs[2 * argIndex - numPullChan + 1] =
-    //             getNewIndexOrArg<Value, Value>(
-    //                 isThisPush.getInp(),
-    //                 newArguments)
-    //                 .value();
-    //         builder.create<fsm::OutputOp>(loc, ArrayRef<Value>(newOutputs));
-    //         builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
-    //         auto transWrite = builder.create<fsm::TransitionOp>(
-    //             loc,
-    //             (i == ops.size() - 1)
-    //                 ? "INIT"
-    //                 : (isNextPush ? "WRITE" + std::to_string(idxPush + 1)
-    //                               : "CALC" + std::to_string(idxCalc)));
-    //         builder.setInsertionPointToEnd(transWrite.ensureGuard(builder));
-    //         transWrite.getGuard().front().front().erase();
-    //         builder.create<fsm::ReturnOp>(
-    //             loc,
-    //             machine.getArgument(argIndex + numPullChan));
-    //         builder.setInsertionPointToEnd(&machine.getBody().back());
-    //         idxPush++;
-    //     }
-    //     // For every computation create one STATE: CALC
-    //     else {
-    //         auto stateCal = builder.create<fsm::StateOp>(
-    //             loc,
-    //             "CALC" + std::to_string(idxCalc));
-    //         builder.setInsertionPointToEnd(&stateCal.getOutput().back());
-    //         stateCal.getOutput().front().front().erase();
-    //         builder.create<fsm::OutputOp>(loc,
-    //         ArrayRef<Value>(outputAllZero));
-    //         builder.setInsertionPointToEnd(&stateCal.getTransitions().back());
-    //         auto transCal = builder.create<fsm::TransitionOp>(
-    //             loc,
-    //             (i == ops.size() - 1)
-    //                 ? "INIT"
-    //                 : (isNextPush ? "WRITE" + std::to_string(idxPush)
-    //                               : "CALC" + std::to_string(idxCalc + 1)));
-    //         builder.setInsertionPointToEnd(transCal.ensureAction(builder));
-    //         auto newCalcOp = op->clone();
-    //         for (size_t j = 0; j < newCalcOp->getNumOperands(); j++) {
-    //             auto newOperand = getNewIndexOrArg<Value, Value>(
-    //                                   newCalcOp->getOperand(j),
-    //                                   newArguments)
-    //                                   .value();
-    //             newCalcOp->setOperand(j, newOperand);
-    //         }
-    //         builder.insert(newCalcOp);
-    //         builder.create<fsm::UpdateOp>(
-    //             loc,
-    //             calcResults[idxCalc],
-    //             newCalcOp->getResult(0));
-    //         builder.setInsertionPointToEnd(&machine.getBody().back());
-    //         idxCalc++;
-    //     }
-    // }
 
     return machine;
 }
