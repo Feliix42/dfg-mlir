@@ -1,0 +1,2 @@
+../build/bin/dfg-opt --convert-arith-to-llvm --convert-dfg-nodes-to-func --convert-dfg-edges-to-llvm --convert-func-to-llvm --canonicalize --mlir-print-ir-after-failure better_test.mlir > lowered.mlir
+mlir-translate --mlir-to-llvmir lowered.mlir > lowered.ll

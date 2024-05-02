@@ -69,8 +69,8 @@ def ConvertDfgToFunc : Pass<"convert-dfg-nodes-to-func"> {
     ];
 }
 
-def ConvertDfgToLLVM : Pass<"convert-dfg-edges-to-llvm"> {
-    let summary = "Convert DFG dialect graph edges to channels implemented in LLVM.";
+def ConvertDfgToLLVM : Pass<"convert-dfg-to-dpm-calls"> {
+    let summary = "Convert DFG dialect to calls to the DPM library.";
 
     let constructor = "mlir::createConvertDfgToLLVMPass()";
 

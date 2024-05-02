@@ -21,6 +21,8 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
+#include <iostream>
+
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTDFGTOLLVM
 #include "dfg-mlir/Conversion/Passes.h.inc"
@@ -29,47 +31,16 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::dfg;
 
-// ========================================================
-// Helper Functions
-// ========================================================
+Value mainRegion;
 
-/// Return a symbol reference to the requested function, inserting it into the
-/// module if necessary.
-static FlatSymbolRefAttr getOrInsertFunc(
-    PatternRewriter &rewriter,
-    ModuleOp module,
-    std::string funcName,
-    std::optional<Type> result,
-    ValueRange arguments)
-{
-    auto* context = module.getContext();
-    if (module.lookupSymbol<func::FuncOp>(funcName))
-        return SymbolRefAttr::get(context, funcName);
-
-    // convert the OperandRange into a list of types
-    auto argIterator = arguments.getTypes();
-    std::vector<Type> tyVec(argIterator.begin(), argIterator.end());
-
-    // Create a function declaration for the desired function
-    FunctionType fnType;
-    if (result.has_value())
-        fnType = rewriter.getFunctionType(tyVec, result.value());
-    else
-        fnType = rewriter.getFunctionType(tyVec, {});
-
-    // Insert the function into the body of the parent module.
-    PatternRewriter::InsertionGuard insertGuard(rewriter);
-    rewriter.setInsertionPointToStart(module.getBody());
-    rewriter.create<func::FuncOp>(module.getLoc(), funcName, fnType)
-        .setPrivate();
-    return SymbolRefAttr::get(context, funcName);
-}
-
-/// Returns the appropriate LLVM pointer representation for a channel.
-Type getLLVMPointerFromChannelType(const Type &elementType)
-{
-    return LLVM::LLVMPointerType::get(elementType.getContext());
-}
+Type wrapperType;
+Type wrapperPtrType;
+Type rtWrapperType;
+Type rtWrapperPtrType;
+Type channelUntypedType;
+Type channelUntypedPtrType;
+Type rtChannelUntypedType;
+Type rtChannelUntypedPtrType;
 
 // ========================================================
 // Lowerings
@@ -82,237 +53,6 @@ struct ConvertDfgToLLVMPass
 };
 } // namespace
 
-LogicalResult insertTeardownFunctionFromPush(
-    ModuleOp parentModule,
-    PushOp pushOp,
-    ConversionPatternRewriter &rewriter)
-{
-    // create function name for PushOp in LLVM IR
-    std::string funcName = "close_channel";
-
-    // fetch or create the FlatSymbolRefAttr for the called function
-    FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
-        rewriter,
-        parentModule,
-        funcName,
-        std::nullopt,
-        pushOp.getChan());
-
-    rewriter.create<func::CallOp>(
-        pushOp.getLoc(),
-        pushFuncName,
-        ArrayRef<Type>(),
-        pushOp.getChan());
-
-    return success();
-}
-
-LogicalResult insertTeardownFunctionFromPull(
-    ModuleOp parentModule,
-    PullOp pullOp,
-    ConversionPatternRewriter &rewriter)
-{
-    // create function name for PushOp in LLVM IR
-    std::string funcName = "close_channel";
-
-    // Translate to InputType, insert UnrealizedConversionCastOp
-    UnrealizedConversionCastOp inputType =
-        rewriter.create<UnrealizedConversionCastOp>(
-            pullOp.getLoc(),
-            rewriter.getType<InputType>(pullOp.getType()),
-            pullOp.getChan());
-
-    // fetch or create the FlatSymbolRefAttr for the called function
-    FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
-        rewriter,
-        parentModule,
-        funcName,
-        std::nullopt,
-        inputType.getResult(0));
-
-    rewriter.create<func::CallOp>(
-        pullOp.getLoc(),
-        pushFuncName,
-        ArrayRef<Type>(),
-        inputType.getResult(0));
-
-    return success();
-}
-
-LogicalResult rewritePushOp(
-    PushOp op,
-    Block* terminatorBlock,
-    ConversionPatternRewriter &rewriter)
-{
-    // create function name for PushOp in LLVM IR
-    std::string funcName = "push";
-
-    Location loc = op.getLoc();
-    // create a stack allocated data segment, write the data into it and call
-    // the channel send function with this pointer
-    auto one = rewriter.create<LLVM::ConstantOp>(
-        loc,
-        rewriter.getI64Type(),
-        rewriter.getI64IntegerAttr(1));
-    auto ptrType = LLVM::LLVMPointerType::get(op.getInp().getType());
-    auto allocated =
-        rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{one});
-    rewriter.create<LLVM::StoreOp>(loc, op.getInp(), allocated);
-
-    // return value
-    Type boolReturnVal = rewriter.getI1Type();
-
-    // TODO: The function declaration can be static: 2 pointers. Hence, this can
-    // be simplified, here and elsewhere
-
-    // fetch or create the FlatSymbolRefAttr for the called function
-    ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-    SmallVector<Value> arguments;
-    arguments.push_back(op.getChan());
-    arguments.push_back(op.getChan());
-    //arguments.push_back(allocated.getResult());
-
-    FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
-        rewriter,
-        parentModule,
-        funcName,
-        boolReturnVal,
-        arguments);
-
-    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(op.getLoc(), LLVM::LLVMPointerType::get(op.getContext()), allocated);
-
-    SmallVector<Value> args2;
-    args2.push_back(op.getChan());
-    args2.push_back(casted);
-
-    func::CallOp pushOperation = rewriter.create<func::CallOp>(
-        loc,
-        pushFuncName,
-        ArrayRef<Type>(boolReturnVal),
-        args2);
-
-    // to handle the result of the push, we must do the following:
-    // - split the current block after this instruction
-    // - conditionally either continue processing the body or break the
-    // computation
-
-    Block* currentBlock = pushOperation->getBlock();
-
-    // create the new block with the same argument list
-    Block* newBlock =
-        rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
-
-
-    // insert conditional jump to the break block
-    rewriter.setInsertionPointToEnd(currentBlock);
-
-    // if the terminator block has arguments, insert poison values
-    SmallVector<Value> terminatorArgs;
-    if (terminatorBlock->getNumArguments() > 0) {
-        for (auto ty: terminatorBlock->getArgumentTypes()) {
-            LLVM::PoisonOp poison = rewriter.create<LLVM::PoisonOp>(loc, ty);
-            terminatorArgs.push_back(poison);
-        }
-    }
-    rewriter.create<cf::CondBranchOp>(
-        pushOperation.getLoc(),
-        pushOperation.getResult(0),
-        newBlock,
-        /* trueArgs = */ ArrayRef<Value>(),
-        terminatorBlock,
-        /* falseArgs = */ terminatorArgs);
-
-    op->erase();
-
-    return success();
-}
-
-LogicalResult rewritePullOp(
-    PullOp op,
-    Block* terminatorBlock,
-    ConversionPatternRewriter &rewriter)
-{
-    // create function name for PullOp in LLVM IR
-    std::string funcName = "pull";
-
-    Location loc = op.getLoc();
-    // create a stack allocated data segment, write the data into it and call
-    // the channel send function with this pointer
-    auto one = rewriter.create<LLVM::ConstantOp>(
-        loc,
-        rewriter.getI64Type(),
-        rewriter.getI64IntegerAttr(1));
-    auto ptrType = LLVM::LLVMPointerType::get(op.getType());
-    auto allocated =
-        rewriter.create<LLVM::AllocaOp>(loc, ptrType, ValueRange{one});
-
-    // create the struct type that models the result
-    Type boolReturnVal = rewriter.getI1Type();
-
-    SmallVector<Value> arguments;
-    arguments.push_back(op.getChan());
-    //arguments.push_back(allocated);
-    arguments.push_back(op.getChan());
-
-    // fetch or create the FlatSymbolRefAttr for the called function
-    ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-    FlatSymbolRefAttr pullFuncName = getOrInsertFunc(
-        rewriter,
-        parentModule,
-        funcName,
-        boolReturnVal,
-        arguments);
-
-    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(op.getLoc(), LLVM::LLVMPointerType::get(op.getContext()), allocated);
-
-    SmallVector<Value> args2;
-    args2.push_back(op.getChan());
-    args2.push_back(casted);
-
-    func::CallOp valid = rewriter.create<func::CallOp>(
-        loc,
-        ArrayRef<Type>(boolReturnVal),
-        pullFuncName,
-        args2);
-
-    LLVM::LoadOp value = rewriter.create<LLVM::LoadOp>(loc, allocated);
-
-    op.getResult().replaceAllUsesWith(value.getResult());
-
-    Block* currentBlock = value->getBlock();
-
-    // create the new block with everything following this pull op
-    Block* newBlock =
-        rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
-    // Originally, I added the Block arguments of the current block to the next
-    // block. But because of the nature of SSA value scoping, that's not
-    // necessary. All values of a block are visible in the successor blocks.
-
-    // insert conditional jump to the break block
-    rewriter.setInsertionPointToEnd(currentBlock);
-
-    // if the terminator block has arguments, insert poison values
-    SmallVector<Value> terminatorArgs;
-    if (terminatorBlock->getNumArguments() > 0) {
-        for (auto ty: terminatorBlock->getArgumentTypes()) {
-            LLVM::PoisonOp poison = rewriter.create<LLVM::PoisonOp>(loc, ty);
-            terminatorArgs.push_back(poison);
-        }
-    }
-    rewriter.create<cf::CondBranchOp>(
-        valid.getLoc(),
-        valid.getResult(0),
-        newBlock,
-        ArrayRef<Value>(),
-        // blockArgs,
-        terminatorBlock,
-        terminatorArgs);
-
-    op->erase();
-
-    return success();
-}
-
 struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
     using OpConversionPattern<ChannelOp>::OpConversionPattern;
 
@@ -320,255 +60,497 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
             : OpConversionPattern<ChannelOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
-        ChannelOp op,
+        ChannelOp channelOp,
         ChannelOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        // 1. create a new CallOp calling the channel creation function
-        Type encapsulatedType = adaptor.getEncapsulatedType();
-        std::string funcName = "channel";
+        auto loc = channelOp.getLoc();
 
-        // Compute the byte width of the channel
-        LLVM::LLVMPointerType nullPtrTy =
-            LLVM::LLVMPointerType::get(encapsulatedType);
+        auto constant = rewriter.create<LLVM::ConstantOp>(
+            loc,
+            rewriter.getI32Type(),
+            rewriter.getI32IntegerAttr(4));
 
-        LLVM::NullOp nullOp =
-            rewriter.create<LLVM::NullOp>(op.getLoc(), nullPtrTy);
-        LLVM::GEPOp gepResult = rewriter.create<LLVM::GEPOp>(
-            op.getLoc(),
-            nullPtrTy,
-            nullOp.getResult(),
-            ArrayRef<LLVM::GEPArg>{1});
-        LLVM::PtrToIntOp bytewidthOp = rewriter.create<LLVM::PtrToIntOp>(
-            op.getLoc(),
-            rewriter.getI64Type(),
-            gepResult.getResult());
+        auto newChannel = rewriter.create<LLVM::CallOp>(
+            loc,
+            TypeRange{
+                typeConverter->convertType(channelOp.getInChan().getType())},
+            rewriter.getStringAttr("C_INTERFACE_AddChannel"),
+            ValueRange{constant.getResult()});
 
-        // I want to use the original encapsulated type here
-        Type returnedPtr = getLLVMPointerFromChannelType(encapsulatedType);
-
-        ModuleOp parentModule = op->getParentOfType<ModuleOp>();
-        // 2. insert the appropriate definition at the top
-        FlatSymbolRefAttr chanFunctionName = getOrInsertFunc(
-            rewriter,
-            parentModule,
-            funcName,
-            returnedPtr,
-            ArrayRef<Value>(bytewidthOp.getResult()));
-
-        func::CallOp channelCreation = rewriter.create<func::CallOp>(
-            op.getLoc(),
-            ArrayRef<Type>{returnedPtr},
-            chanFunctionName,
-            ArrayRef<Value>(bytewidthOp.getResult()));
-
-        // 2.1 create 2 UnrealizedConversionCastOps that cast the resulting llvm
-        // struct to an input and an output
-        // 3. replace all channel inputs and outputs with the newly created
-        // results
-        UnrealizedConversionCastOp convertedInput =
-            rewriter.create<UnrealizedConversionCastOp>(
-                op.getLoc(),
-                rewriter.getType<InputType>(encapsulatedType),
-                channelCreation.getResult(0));
-        op.getInChan().replaceAllUsesWith(convertedInput.getResult(0));
-
-        UnrealizedConversionCastOp convertedOutput =
-            rewriter.create<UnrealizedConversionCastOp>(
-                op.getLoc(),
-                rewriter.getType<OutputType>(encapsulatedType),
-                channelCreation.getResult(0));
-        op.getOutChan().replaceAllUsesWith(convertedOutput.getResult(0));
-
-        // 4. delete the old op
-        rewriter.eraseOp(op);
+        rewriter.replaceOp(
+            channelOp,
+            ValueRange{newChannel.getResult(), newChannel.getResult()});
 
         return success();
     }
 };
 
-void mlir::populateDfgToLLVMConversionPatterns(
-    TypeConverter &typeConverter,
-    RewritePatternSet &patterns)
-{
-    // dfg.channel -> !llvm.ptr
-    patterns.add<ChannelOpLowering>(typeConverter, patterns.getContext());
-}
+struct PushOpLowering : public mlir::OpConversionPattern<PushOp> {
+    using OpConversionPattern<PushOp>::OpConversionPattern;
+
+    PushOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PushOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        PushOp pushOp,
+        PushOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        rewriter.replaceOpWithNewOp<LLVM::CallOp>(
+            pushOp,
+            TypeRange{},
+            rewriter.getStringAttr("C_INTERFACE_PushBytes"),
+            ValueRange{adaptor.getChan(), adaptor.getInp()});
+        return success();
+    }
+};
+
+struct PullOpLowering : public mlir::OpConversionPattern<PullOp> {
+    using OpConversionPattern<PullOp>::OpConversionPattern;
+
+    PullOpLowering(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PullOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        PullOp pullOp,
+        PullOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        rewriter.replaceOpWithNewOp<LLVM::CallOp>(
+            pullOp,
+            TypeRange{pullOp.getOutp()},
+            rewriter.getStringAttr("C_INTERFACE_PopBytes"),
+            ValueRange{adaptor.getChan()});
+        return success();
+    }
+};
+
+struct OperatorOpLowering_BUT_WE_NEED_TO_CALL_IT_SOMETHING_ELSE_FOR_SOME_REASON
+        : public mlir::OpConversionPattern<OperatorOp> {
+    using OpConversionPattern<OperatorOp>::OpConversionPattern;
+
+    OperatorOpLowering_BUT_WE_NEED_TO_CALL_IT_SOMETHING_ELSE_FOR_SOME_REASON(
+        TypeConverter &typeConverter,
+        MLIRContext* context)
+            : OpConversionPattern<OperatorOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        OperatorOp operatorOp,
+        OperatorOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+
+    {
+
+        auto loc = operatorOp.getLoc();
+
+        LLVM::LLVMFunctionType functionType = LLVM::LLVMFunctionType::get(
+            rewriter.getContext(),
+            LLVM::LLVMVoidType::get(rewriter.getContext()),
+            {rtWrapperPtrType, rtWrapperPtrType},
+            false);
+        auto functionHolder = rewriter.create<LLVM::LLVMFuncOp>(
+            loc,
+            operatorOp.getSymName(),
+            functionType);
+
+        Block* newBlock = new Block();
+
+        newBlock->addArgument(rtWrapperPtrType, adaptor.getBody().getLoc());
+        newBlock->addArgument(rtWrapperPtrType, adaptor.getBody().getLoc());
+
+        Value inputWrapper = newBlock->getArgument(0);
+        Value outputWrapper = newBlock->getArgument(1);
+
+        rewriter.setInsertionPointToEnd(newBlock);
+
+        std::vector<Value> allValues;
+
+        size_t index = 0;
+        for (auto input : adaptor.getFunctionType().getInputs()) {
+            auto inputType = typeConverter->convertType(input);
+            auto indexValue = rewriter.create<LLVM::ConstantOp>(
+                loc,
+                rewriter.getI64Type(),
+                rewriter.getI64IntegerAttr(index++));
+            auto newValue = rewriter.create<LLVM::CallOp>(
+                loc,
+                TypeRange{inputType},
+                rewriter.getStringAttr("RTChannelUntypedPtrsWrapperGet"),
+                ValueRange{inputWrapper, indexValue.getResult()});
+            allValues.push_back(newValue.getResult());
+        }
+
+        index = 0;
+        for (auto output : adaptor.getFunctionType().getResults()) {
+            auto outputType = typeConverter->convertType(output);
+            auto indexValue = rewriter.create<LLVM::ConstantOp>(
+                loc,
+                rewriter.getI64Type(),
+                rewriter.getI64IntegerAttr(index++));
+            auto newValue = rewriter.create<LLVM::CallOp>(
+                loc,
+                TypeRange{outputType},
+                rewriter.getStringAttr("RTChannelUntypedPtrsWrapperGet"),
+                ValueRange{outputWrapper, indexValue.getResult()});
+            allValues.push_back(newValue.getResult());
+        }
+
+        rewriter.create<cf::BranchOp>(
+            loc,
+            allValues,
+            &adaptor.getBody().back());
+        rewriter.setInsertionPointToEnd(&adaptor.getBody().back());
+        newBlock->insertBefore(&adaptor.getBody().back());
+
+        FailureOr<Block*> convertedBlock =
+            rewriter.convertRegionTypes(&adaptor.getBody(), *typeConverter);
+
+        if (*convertedBlock == nullptr) return failure();
+
+        rewriter.inlineRegionBefore(
+            adaptor.getBody(),
+            functionHolder.getBody(),
+            functionHolder.end());
+
+        rewriter.setInsertionPointToEnd(&functionHolder.getRegion().back());
+        rewriter.create<LLVM::ReturnOp>(loc, TypeRange({}), ValueRange({}));
+        rewriter.eraseOp(operatorOp);
+
+        return success();
+    }
+};
+
+struct
+    InstantiateOpLowering_BUT_WE_NEED_TO_CALL_IT_SOMETHING_ELSE_FOR_SOME_REASON
+        : public mlir::OpConversionPattern<dfg::InstantiateOp> {
+    using OpConversionPattern<dfg::InstantiateOp>::OpConversionPattern;
+
+    InstantiateOpLowering_BUT_WE_NEED_TO_CALL_IT_SOMETHING_ELSE_FOR_SOME_REASON(
+        TypeConverter &typeConverter,
+        MLIRContext* context)
+            : OpConversionPattern<dfg::InstantiateOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        dfg::InstantiateOp instantiateOp,
+        dfg::InstantiateOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+
+        auto loc = instantiateOp.getLoc();
+
+        auto arraySize = rewriter.create<LLVM::ConstantOp>(
+            loc,
+            rewriter.getI32Type(),
+            rewriter.getI32IntegerAttr(1));
+
+        auto inputWrapper = rewriter.create<LLVM::AllocaOp>(
+            loc,
+            wrapperPtrType,
+            arraySize.getResult(),
+            8);
+
+        auto inputSize = rewriter.create<LLVM::ConstantOp>(
+            loc,
+            rewriter.getI64Type(),
+            rewriter.getI64IntegerAttr(adaptor.getInputs().size()));
+
+        rewriter.create<LLVM::CallOp>(
+            loc,
+            TypeRange{},
+            rewriter.getStringAttr("ChannelUntypedPtrsWrapperInit"),
+            ValueRange{inputWrapper.getResult(), inputSize});
+
+        size_t index = 0;
+        for (auto input : adaptor.getInputs()) {
+            rewriter.create<LLVM::CallOp>(
+                loc,
+                TypeRange{},
+                rewriter.getStringAttr("ChannelUntypedPtrsWrapperSet"),
+                ValueRange{
+                    inputWrapper.getResult(),
+                    input,
+                    rewriter.create<LLVM::ConstantOp>(
+                        loc,
+                        rewriter.getI64Type(),
+                        rewriter.getI64IntegerAttr(index++))});
+        }
+
+        auto outputWrapper = rewriter.create<LLVM::AllocaOp>(
+            loc,
+            wrapperPtrType,
+            arraySize.getResult(),
+            8);
+
+        auto outputSize = rewriter.create<LLVM::ConstantOp>(
+            loc,
+            rewriter.getI64Type(),
+            rewriter.getI64IntegerAttr(adaptor.getOutputs().size()));
+
+        rewriter.create<LLVM::CallOp>(
+            loc,
+            TypeRange{},
+            rewriter.getStringAttr("ChannelUntypedPtrsWrapperInit"),
+            ValueRange{outputWrapper.getResult(), outputSize});
+
+        index = 0;
+        for (auto output : adaptor.getOutputs()) {
+            rewriter.create<LLVM::CallOp>(
+                loc,
+                TypeRange{},
+                rewriter.getStringAttr("ChannelUntypedPtrsWrapperSet"),
+                ValueRange{
+                    outputWrapper.getResult(),
+                    output,
+                    rewriter.create<LLVM::ConstantOp>(
+                        loc,
+                        rewriter.getI64Type(),
+                        rewriter.getI64IntegerAttr(index++))});
+        }
+
+        rewriter.create<LLVM::CallOp>(
+            loc,
+            TypeRange{LLVM::LLVMPointerType::get(rewriter.getContext())},
+            rewriter.getStringAttr("C_INTERFACE_AddKpnProcess"),
+            ValueRange{inputWrapper.getResult(), outputWrapper.getResult()});
+
+        rewriter.eraseOp(instantiateOp);
+
+        return success();
+    }
+};
 
 void ConvertDfgToLLVMPass::runOnOperation()
 {
     Operation* op = getOperation();
 
-    TypeConverter converter;
+    TypeConverter highLevelConverter;
+    TypeConverter runtimeConverter;
 
-    // this is a stack!! Hence, the most generic conversion lives at the bottom
-    converter.addConversion([](Type t) { return t; });
-    converter.addConversion([](OutputType t) {
-        return getLLVMPointerFromChannelType(t.getElementType());
+    ConversionPatternRewriter rewriter(&getContext());
+    wrapperType = LLVM::LLVMStructType::getNewIdentified(
+        &getContext(),
+        StringRef("ChannelUntypedPtrsWrapper"),
+        {rewriter.getI32Type()});
+    wrapperPtrType = LLVM::LLVMPointerType::get(wrapperType);
+
+    rtWrapperType = LLVM::LLVMStructType::getNewIdentified(
+        &getContext(),
+        StringRef("RTChannelUntypedPtrsWrapper"),
+        {rewriter.getI32Type()});
+    rtWrapperPtrType = LLVM::LLVMPointerType::get(rtWrapperType);
+
+    channelUntypedType = LLVM::LLVMStructType::getNewIdentified(
+        &getContext(),
+        StringRef("ChannelUntyped"),
+        {rewriter.getI32Type()});
+    channelUntypedPtrType = LLVM::LLVMPointerType::get(channelUntypedType);
+
+    rtChannelUntypedType = LLVM::LLVMStructType::getNewIdentified(
+        &getContext(),
+        StringRef("RTChannelUntyped"),
+        {rewriter.getI32Type()});
+    rtChannelUntypedPtrType = LLVM::LLVMPointerType::get(rtChannelUntypedType);
+
+    auto regionUntypedPtrType =
+        LLVM::LLVMPointerType::get(LLVM::LLVMStructType::getNewIdentified(
+            &getContext(),
+            StringRef("class.Dppm::RegionUntyped"),
+            {rewriter.getI32Type()}));
+
+    auto applicationPtrType =
+        LLVM::LLVMPointerType::get(LLVM::LLVMStructType::getNewIdentified(
+            &getContext(),
+            StringRef("class.Dppm::Application"),
+            {rewriter.getI32Type()}));
+
+    auto managerPtrType =
+        LLVM::LLVMPointerType::get(LLVM::LLVMStructType::getNewIdentified(
+            &getContext(),
+            StringRef("class.Dppm::Manager"),
+            {rewriter.getI32Type()}));
+
+    highLevelConverter.addConversion([](Type t) { return t; });
+
+    highLevelConverter.addConversion([](InputType t) {
+        Type templateType = t.getElementType();
+        std::string templateTypeString;
+        llvm::raw_string_ostream templateTypeStream(templateTypeString);
+        templateType.print(templateTypeStream);
+        return channelUntypedPtrType;
     });
-    converter.addConversion([](InputType t) {
-        return getLLVMPointerFromChannelType(t.getElementType());
+
+    highLevelConverter.addConversion([](OutputType t) {
+        Type templateType = t.getElementType();
+        std::string templateTypeString;
+        llvm::raw_string_ostream templateTypeStream(templateTypeString);
+        templateType.print(templateTypeStream);
+        return channelUntypedPtrType;
     });
-    converter.addSourceMaterialization(
-        [&](OpBuilder &builder,
-            Type resultType,
-            ValueRange inputs,
-            Location loc) -> std::optional<Value> {
-            if (inputs.size() != 1) return std::nullopt;
 
-            return builder
-                .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
-                .getResult(0);
-        });
-    converter.addTargetMaterialization(
-        [&](OpBuilder &builder,
-            Type resultType,
-            ValueRange inputs,
-            Location loc) -> std::optional<Value> {
-            if (inputs.size() != 1) return std::nullopt;
+    runtimeConverter.addConversion([](Type t) { return t; });
+    runtimeConverter.addConversion([](InputType t) {
+        Type templateType = t.getElementType();
+        std::string templateTypeString;
+        llvm::raw_string_ostream templateTypeStream(templateTypeString);
+        templateType.print(templateTypeStream);
+        return rtChannelUntypedPtrType;
+    });
 
-            return builder
-                .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
-                .getResult(0);
-        });
+    runtimeConverter.addConversion([](OutputType t) {
+        Type templateType = t.getElementType();
+        std::string templateTypeString;
+        llvm::raw_string_ostream templateTypeStream(templateTypeString);
+        templateType.print(templateTypeStream);
+        return rtChannelUntypedPtrType;
+    });
 
-    // =========================================================================================
-    // In the following block, we do multiple things in one go:
-    // 0. create an empty terminator block for any functions with dfg.pull/push
-    // ops.
-    // 1. lower `PushOp` and `PullOp` into their respective `LLVM::CallOp`s
-    // 2. insert the necessary teardown logic for channels
-    //
-    // The reasoning behind doing this with a walk pattern instead of a "normal"
-    // ConversionRewritePattern is the irreducible entangledness between the
-    // three aforementioned tasks. We cannot "just" create an empty termination
-    // block in one pass and find it again later. Canonicalization passes will
-    // immediately remove it. Similarly, it's hard to find a non-empty block
-    // again later without retaining a reference all the time. In the end, it
-    // was easier to solve this problem by doing all three things in one go.
-
-    // per func, collect all push/pull ops
-    WalkResult res = op->walk([&](func::FuncOp funcOp) -> WalkResult {
-        SmallVector<PushOp> pushOps;
-        SmallVector<PullOp> pullOps;
-        funcOp->walk([&pushOps](PushOp push) {
-            pushOps.push_back(push);
+    op->walk([&](func::FuncOp funcOp) -> WalkResult {
+        if (funcOp.getName() != "main") {
             return WalkResult::advance();
-        });
-        funcOp->walk([&pullOps](PullOp pull) {
-            pullOps.push_back(pull);
-            return WalkResult::advance();
-        });
+        } else {
+            ConversionPatternRewriter localRewriter(funcOp->getContext());
+            auto loc = funcOp.getLoc();
 
-        if (pullOps.empty() && pushOps.empty()) return WalkResult::advance();
-        // if (pushOps.empty()) return WalkResult::advance();
+            localRewriter.setInsertionPoint(funcOp);
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "C_INTERFACE_AddChannel",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    channelUntypedPtrType,
+                    {rewriter.getI32Type()},
+                    false));
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "ChannelUntypedPtrsWrapperSet",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    LLVM::LLVMVoidType::get(&getContext()),
+                    {wrapperPtrType,
+                     channelUntypedPtrType,
+                     rewriter.getI64Type()},
+                    false));
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "RTChannelUntypedPtrsWrapperGet",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    rtChannelUntypedPtrType,
+                    {rtWrapperPtrType, rewriter.getI64Type()},
+                    false));
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "C_INTERFACE_PopBytes",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    localRewriter.getI64Type(),
+                    {rtChannelUntypedPtrType},
+                    false));
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "C_INTERFACE_PushBytes",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    LLVM::LLVMVoidType::get(&getContext()),
+                    {rtChannelUntypedPtrType, localRewriter.getI64Type()},
+                    false));
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "C_INTERFACE_GetMainRegion",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    regionUntypedPtrType,
+                    {applicationPtrType},
+                    false));
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "C_INTERFACE_CreateApplication",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    applicationPtrType,
+                    {managerPtrType},
+                    false));
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "C_INTERFACE_ManagerGetInstance",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    managerPtrType,
+                    {},
+                    false));
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "ChannelUntypedPtrsWrapperInit",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    LLVM::LLVMVoidType::get(&getContext()),
+                    {wrapperPtrType, rewriter.getI64Type()},
+                    false));
+            localRewriter.create<LLVM::LLVMFuncOp>(
+                loc,
+                "C_INTERFACE_AddKpnProcess",
+                LLVM::LLVMFunctionType::get(
+                    &getContext(),
+                    LLVM::LLVMPointerType::get(rewriter.getContext()),
+                    {wrapperPtrType, wrapperPtrType},
+                    false));
+            localRewriter.setInsertionPointToStart(&funcOp.getBody().front());
 
-        Block* terminatorBlock = funcOp.addBlock();
-        if (funcOp.getNumResults() > 0) {
-            SmallVector<Location> locs;
-            for (unsigned i = 0; i < funcOp.getNumResults(); i++) {
-                locs.push_back(funcOp.getLoc());
-            }
-            terminatorBlock->addArguments(funcOp.getResultTypes(), locs);
+            auto manager = localRewriter.create<LLVM::CallOp>(
+                loc,
+                TypeRange{managerPtrType},
+                localRewriter.getStringAttr("C_INTERFACE_ManagerGetInstance"),
+                ValueRange{});
+
+            auto application = localRewriter.create<LLVM::CallOp>(
+                loc,
+                TypeRange{applicationPtrType},
+                localRewriter.getStringAttr("C_INTERFACE_CreateApplication"),
+                ValueRange{manager.getResult()});
+
+            mainRegion = localRewriter
+                             .create<LLVM::CallOp>(
+                                 loc,
+                                 TypeRange{regionUntypedPtrType},
+                                 localRewriter.getStringAttr(
+                                     "C_INTERFACE_GetMainRegion"),
+                                 ValueRange{application.getResult()})
+                             .getResult();
+
+            return WalkResult::interrupt();
         }
-
-        // search all returns, forward to TerminatorBlock
-        funcOp->walk([&](func::ReturnOp ret) {
-            ConversionPatternRewriter localRewriter(ret->getContext());
-            localRewriter.setInsertionPoint(ret);
-
-            // NOTE(feliix42): replaceWithNewOp does *not* work here!
-            // localRewriter.create<cf::BranchOp>(ret->getLoc(), terminatorBlock);
-            localRewriter.create<cf::BranchOp>(ret->getLoc(), ret.getOperands(), terminatorBlock);
-            ret->erase();
-        });
-
-        // insert Return into terminatorBlock
-        ConversionPatternRewriter rewriter(funcOp->getContext());
-        rewriter.setInsertionPointToEnd(terminatorBlock);
-        // insert teardown function calls for push and pull ops
-        ModuleOp parent = funcOp->getParentOfType<ModuleOp>();
-
-        SmallPtrSet<Value, 16> inpSet;
-        for (PushOp push : pushOps) {
-            Value in = push.getChan();
-            if (!inpSet.contains(in)) {
-                inpSet.insert(in);
-                if (failed(insertTeardownFunctionFromPush(parent, push, rewriter)))
-                    return WalkResult::interrupt();
-            }
-        }
-        SmallPtrSet<Value, 16> outSet;
-        for (PullOp pull : pullOps) {
-            Value out = pull.getChan();
-            if (!outSet.contains(out)) {
-                outSet.insert(out);
-                if (failed(insertTeardownFunctionFromPull(parent, pull, rewriter)))
-                    return WalkResult::interrupt();
-            }
-        }
-        rewriter.create<func::ReturnOp>(funcOp->getLoc(), terminatorBlock->getArguments());
-
-        for (PushOp replace : pushOps) {
-            ConversionPatternRewriter pushRewriter(replace->getContext());
-            pushRewriter.setInsertionPointAfter(replace);
-            if (failed(rewritePushOp(replace, terminatorBlock, pushRewriter)))
-                return WalkResult::interrupt();
-        }
-
-        for (PullOp replace : pullOps) {
-            ConversionPatternRewriter pullRewriter(replace->getContext());
-            pullRewriter.setInsertionPointAfter(replace);
-            if (failed(rewritePullOp(replace, terminatorBlock, pullRewriter)))
-                return WalkResult::interrupt();
-        }
-
-        return WalkResult::advance();
     });
-
-    if (res.wasInterrupted()) signalPassFailure();
-
-    // =======================================================================
 
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
-    populateDfgToLLVMConversionPatterns(converter, patterns);
-    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
-        patterns,
-        converter);
-    populateReturnOpTypeConversionPattern(patterns, converter);
-    populateCallOpTypeConversionPattern(patterns, converter);
-    populateBranchOpInterfaceTypeConversionPattern(patterns, converter);
+    patterns.add<
+        ChannelOpLowering,
+        InstantiateOpLowering_BUT_WE_NEED_TO_CALL_IT_SOMETHING_ELSE_FOR_SOME_REASON>(
+        highLevelConverter,
+        patterns.getContext());
+
+    patterns.add<
+        PushOpLowering,
+        PullOpLowering,
+        OperatorOpLowering_BUT_WE_NEED_TO_CALL_IT_SOMETHING_ELSE_FOR_SOME_REASON>(
+        runtimeConverter,
+        patterns.getContext());
 
     target.addLegalDialect<
-        BuiltinDialect,
-        func::FuncDialect,
+        LLVM::LLVMDialect,
         cf::ControlFlowDialect,
-        LLVM::LLVMDialect>();
-
+        BuiltinDialect,
+        func::FuncDialect>();
     target.addIllegalDialect<DfgDialect>();
-    // target.addDynamicallyLegalOp<InstantiateOp>(
-    //     [](InstantiateOp op) { return op.getOffloaded(); });
 
-    // mark func dialect ops as illegal when they contain a dfg type
-    target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
-        return converter.isSignatureLegal(op.getFunctionType());
-    });
-    target.addDynamicallyLegalOp<func::CallOp>([&](func::CallOp op) {
-        return converter.isSignatureLegal(op.getCalleeType());
-    });
-    target.addDynamicallyLegalOp<func::ReturnOp>([&](func::ReturnOp op) {
-        return converter.isLegal(op.getOperandTypes());
-    });
-    // Mark BranchOps as illegal when they contain a dfg type
-    target.markUnknownOpDynamicallyLegal([&](Operation* op) {
-        return !llvm::isa<BranchOpInterface>(op)
-               || converter.isLegal(op->getOperandTypes());
-    });
-
-    if (failed(applyPartialConversion(op, target, std::move(patterns))))
+    if (failed(applyPartialConversion(
+            getOperation(),
+            target,
+            std::move(patterns)))) {
         signalPassFailure();
+    }
 }
 
 std::unique_ptr<Pass> mlir::createConvertDfgToLLVMPass()
