@@ -35,6 +35,40 @@ constexpr char kOperandSegmentSizesAttr[] = "operandSegmentSizes";
 // ProcessOp
 //===----------------------------------------------------------------------===//
 
+void ProcessOp::build(
+    OpBuilder &builder,
+    OperationState &state,
+    StringRef name,
+    FunctionType function_type,
+    ArrayRef<int64_t> multiplicity)
+{
+    state.addAttribute(
+        SymbolTable::getSymbolAttrName(),
+        builder.getStringAttr(name));
+    state.addAttribute(
+        ProcessOp::getFunctionTypeAttrName(state.name),
+        TypeAttr::get(function_type));
+    if (!multiplicity.empty())
+        state.addAttribute(
+            "multiplicity",
+            DenseI64ArrayAttr::get(state.getContext(), multiplicity));
+
+    Region* region = state.addRegion();
+    Block* body = new Block();
+    region->push_back(body);
+
+    SmallVector<Type> blockArgTypes;
+    blockArgTypes.append(
+        function_type.getInputs().begin(),
+        function_type.getInputs().end());
+    blockArgTypes.append(
+        function_type.getResults().begin(),
+        function_type.getResults().end());
+    body->addArguments(
+        blockArgTypes,
+        SmallVector<Location>(blockArgTypes.size(), builder.getUnknownLoc()));
+}
+
 /// @brief  Returns whether the operator is externally defined, i.e., has no
 /// body.
 /// @return `true` if there is no body attached, `false` the operator has a
@@ -439,6 +473,25 @@ LogicalResult YieldOp::verify()
 // LoopOp
 //===----------------------------------------------------------------------===//
 
+void LoopOp::build(
+    OpBuilder &builder,
+    OperationState &state,
+    ValueRange inChans,
+    ValueRange outChans)
+{
+    state.addOperands(inChans);
+    state.addOperands(outChans);
+    llvm::copy(
+        ArrayRef<int32_t>(
+            {static_cast<int32_t>(inChans.size()),
+             static_cast<int32_t>(outChans.size())}),
+        state.getOrAddProperties<Properties>().operandSegmentSizes.begin());
+    Region* region = state.addRegion();
+    Block* block = new Block();
+    region->push_back(block);
+    // builder.createBlock(state.addRegion());
+}
+
 ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
 {
     // parse inputs/outputs
@@ -570,7 +623,8 @@ ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
         if (!isa<IntegerAttr>(sizeAttr))
             return parser.emitError(
                 parser.getCurrentLocation(),
-                "The buffer size must be an i32 signless integer attribute!");
+                "The buffer size must be an i32 signless integer "
+                "attribute!");
         result.addAttribute(getBufferSizeAttrName(result.name), sizeAttr);
     }
 
@@ -612,7 +666,8 @@ LogicalResult ChannelOp::verify()
     if (encapsulated != out || encapsulated != in)
         return ::emitError(
             getLoc(),
-            "The element types of both results and the encapsulated type of "
+            "The element types of both results and the encapsulated type "
+            "of "
             "the function itself must match");
 
     return success();

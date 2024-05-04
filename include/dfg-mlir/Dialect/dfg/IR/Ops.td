@@ -56,6 +56,12 @@ def Dfg_ProcessOp : Dfg_Op<
     // The FunctionOpInterface requires zero or one region attached to the process
     let regions = (region AnyRegion: $body);
 
+    let skipDefaultBuilders = 1;
+    let builders = [
+        OpBuilder<(ins "StringRef":$name, "FunctionType":$function_type,
+                       CArg<"ArrayRef<int64_t>", "{}">:$multiplicity)>
+    ];
+
     let extraClassDeclaration = [{
         /// Returns whether the process is externally defined
         bool isExternal();
@@ -145,6 +151,12 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"ProcessOp">, NoTerminator, AttrSized
                          Variadic<Dfg_InputType>: $outChans);
 
     let regions = (region MinSizedRegion<1>: $body);
+
+    let skipDefaultBuilders = 1;
+    let builders = [
+        OpBuilder<(ins CArg<"ValueRange", "{}">:$inChans,
+                       CArg<"ValueRange", "{}">:$outChans)>
+    ];
 
     let hasCustomAssemblyFormat = 1;
 }

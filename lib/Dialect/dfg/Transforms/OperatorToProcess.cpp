@@ -103,17 +103,17 @@ struct ConvertAnyOperatorToEquivalentProcess
                 inChanTypes,
                 outChanTypes));
         auto newFuncTy = processOp.getFunctionType();
-        Block* processBlock = new Block();
-        SmallVector<Type> blockArgTypes;
-        blockArgTypes.append(
-            newFuncTy.getInputs().begin(),
-            newFuncTy.getInputs().end());
-        blockArgTypes.append(
-            newFuncTy.getResults().begin(),
-            newFuncTy.getResults().end());
-        SmallVector<Location> locations(blockArgTypes.size(), loc);
-        processBlock->addArguments(blockArgTypes, locations);
-        processOp.getBody().push_back(processBlock);
+        Block* processBlock = &processOp.getBody().front();
+        // SmallVector<Type> blockArgTypes;
+        // blockArgTypes.append(
+        //     newFuncTy.getInputs().begin(),
+        //     newFuncTy.getInputs().end());
+        // blockArgTypes.append(
+        //     newFuncTy.getResults().begin(),
+        //     newFuncTy.getResults().end());
+        // SmallVector<Location> locations(blockArgTypes.size(), loc);
+        // processBlock->addArguments(blockArgTypes, locations);
+        // processOp.getBody().push_back(processBlock);
 
         // Insert LoopOp in the ProcessOp
         rewriter.setInsertionPointToStart(processBlock);
@@ -123,9 +123,10 @@ struct ConvertAnyOperatorToEquivalentProcess
         auto loopOp = rewriter.create<LoopOp>(loc, inChans, outChans);
 
         // Insert number of input channels PullOps
-        Block* loopBlock = new Block();
-        loopOp.getBody().push_back(loopBlock);
-        rewriter.setInsertionPointToStart(loopBlock);
+        // Block* loopBlock = new Block();
+        // loopOp.getBody().push_back(loopBlock);
+        // rewriter.setInsertionPointToStart(loopBlock);
+        rewriter.setInsertionPointToStart(&loopOp.getBody().front());
         SmallVector<Value> newOperands;
         for (size_t i = 0; i < newFuncTy.getNumInputs(); i++) {
             auto pullOp =
