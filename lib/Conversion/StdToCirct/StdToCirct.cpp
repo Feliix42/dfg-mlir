@@ -363,11 +363,11 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
             loopOp = oldLoop;
             hasLoopOp = true;
             for (auto inChan : oldLoop.getInChans()) {
-                auto idxChan = inChan.cast<BlockArgument>().getArgNumber();
+                auto idxChan = cast<BlockArgument>(inChan).getArgNumber();
                 loopInChanIdx.push_back(idxChan);
             }
             for (auto outChan : oldLoop.getOutChans()) {
-                auto idxChan = outChan.cast<BlockArgument>().getArgNumber();
+                auto idxChan = cast<BlockArgument>(outChan).getArgNumber();
                 loopOutChanIdx.push_back(idxChan);
             }
         }
@@ -398,7 +398,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
                 pulledValue.push_back(pullValue);
                 auto pullChan = pullOp.getChan();
                 pulledTypes.push_back(pullChan.getType().getElementType());
-                auto idxChan = pullChan.cast<BlockArgument>().getArgNumber();
+                auto idxChan = cast<BlockArgument>(pullChan).getArgNumber();
                 pulledChanIdx.push_back(idxChan);
                 pulledValueIdx.push_back(std::make_pair(idxPull++, pullValue));
                 numPull++;
@@ -419,7 +419,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
                     pushedTypes.push_back(pushChan.getType().getElementType());
                     numResult++;
                 }
-                auto idxChan = pushChan.cast<BlockArgument>().getArgNumber();
+                auto idxChan = cast<BlockArgument>(pushChan).getArgNumber();
                 pushedChanIdx.push_back(idxChan);
                 if (!isPushPulledValue) {
                     auto idx =
@@ -434,15 +434,9 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
 
         auto newOperator =
             rewriter.create<ProcessOp>(op.getLoc(), op.getSymName(), funcTy);
-        Block* entryBlock = rewriter.createBlock(&newOperator.getBody());
-        for (auto inTy : funcTy.getInputs())
-            entryBlock->addArgument(inTy, newOperator.getLoc());
-        for (auto outTy : funcTy.getResults())
-            entryBlock->addArgument(outTy, newOperator.getLoc());
-
         SmallVector<Value> newPulledValue;
         auto loc = rewriter.getUnknownLoc();
-        rewriter.setInsertionPointToStart(entryBlock);
+        rewriter.setInsertionPointToStart(&newOperator.getBody().front());
         if (hasLoopOp) {
             SmallVector<Value> loopInChans, loopOutChans;
             for (auto inChanIdx : loopInChanIdx) {
@@ -455,8 +449,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
             }
             auto newLoop =
                 rewriter.create<LoopOp>(loc, loopInChans, loopOutChans);
-            Block* loopEntryBlock = rewriter.createBlock(&newLoop.getBody());
-            rewriter.setInsertionPointToStart(loopEntryBlock);
+            rewriter.setInsertionPointToStart(&newLoop.getBody().front());
         }
         for (int i = 0; i < numPull; i++) {
             auto newPull = rewriter.create<PullOp>(
