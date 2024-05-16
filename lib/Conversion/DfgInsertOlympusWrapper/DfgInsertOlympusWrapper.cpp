@@ -7,6 +7,7 @@
 
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -29,7 +30,6 @@ std::string alveoHostWrapperName = "createAlveoHostObjectWrapper";
 std::string alveoHostFunctionName = "createAlveoHost";
 std::string alveoHostCall = "olympus_wrapper";
 
-uint64_t dataWidth = 80;
 
 // ========================================================
 // Helper Functions
@@ -393,17 +393,38 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
         entryBlock->getArgument(wrapperOp.getFunctionType().getNumInputs() - 1);
     PullOp hostObject = rewriter.create<PullOp>(loc, alveoInput);
 
+    SmallVector<Value> getNumTimesArgs;
+    getNumTimesArgs.push_back(hostObject);
+
+    FlatSymbolRefAttr getNumTimesFunc = getOrInsertFunc(
+        rewriter,
+        module,
+        "get_num_times",
+        rewriter.getI64Type(),
+        getNumTimesArgs);
+
+    func::CallOp dataWidth = rewriter.create<func::CallOp>(
+        loc,
+        ArrayRef<Type>(rewriter.getI64Type()),
+        getNumTimesFunc,
+        getNumTimesArgs);
+
     // TODO: Draw the rest of the fuckin owl
     // initialize the two buffers for sx/rx
     // -> alloca buffers
     SmallVector<Value> ioChans;
+    SmallVector<Value> inputDepth;
     for (size_t i = 0; i < instantiation.getInputs().size(); i++) {
         // TODO: #iterations will go here!!
-        int64_t m = multiplicities[i] * dataWidth;
-        LLVM::ConstantOp bufSize = rewriter.create<LLVM::ConstantOp>(
+        arith::ConstantOp multI = rewriter.create<arith::ConstantOp>(
             loc,
             rewriter.getI64Type(),
-            rewriter.getI64IntegerAttr(m));
+            rewriter.getI64IntegerAttr(multiplicities[i]));
+        arith::MulIOp bufSize = rewriter.create<arith::MulIOp>(
+            loc,
+            dataWidth.getResults()[0],
+            multI);
+        inputDepth.push_back(bufSize);
 
         Type elementType;
         if (i < instantiation.getInputs().size()) {
@@ -442,11 +463,6 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
 
     //   accumulate items
     for (size_t i = 0; i < instantiation.getInputs().size(); i++) {
-        int64_t m = multiplicities[i] * dataWidth;
-        LLVM::ConstantOp numData = rewriter.create<LLVM::ConstantOp>(
-            loc,
-            rewriter.getI64Type(),
-            rewriter.getI64IntegerAttr(m));
         LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
             loc,
             LLVM::LLVMPointerType::get(instantiation.getContext()),
@@ -460,7 +476,7 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
         SmallVector<Value> callValues;
         callValues.push_back(inputType.getResult(0));
         callValues.push_back(casted);
-        callValues.push_back(numData);
+        callValues.push_back(inputDepth[i]);
         FlatSymbolRefAttr pullNFunc = getOrInsertFunc(
             rewriter,
             module,
@@ -489,12 +505,15 @@ OperatorOp insertOlympusWrapperOp(InstantiateOp instantiation)
     //   retrieve results
     for (size_t i = 0; i < instantiation.getOutputs().size(); i++) {
         size_t j = instantiation.getInputs().size() + i;
-        int64_t m = multiplicities[j] * dataWidth;
 
-        LLVM::ConstantOp numData = rewriter.create<LLVM::ConstantOp>(
+        arith::ConstantOp multJ = rewriter.create<arith::ConstantOp>(
             loc,
             rewriter.getI64Type(),
-            rewriter.getI64IntegerAttr(m));
+            rewriter.getI64IntegerAttr(multiplicities[j]));
+        arith::MulIOp numData = rewriter.create<arith::MulIOp>(
+            loc,
+            dataWidth.getResults()[0],
+            multJ);
         LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
             loc,
             LLVM::LLVMPointerType::get(instantiation.getContext()),
