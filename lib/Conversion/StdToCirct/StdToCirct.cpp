@@ -26,6 +26,9 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "wrap-process-ops"
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTSTDTOCIRCT
@@ -299,15 +302,32 @@ void processNestedRegions(
     func::FuncOp &genFuncOp,
     PatternRewriter &rewriter)
 {
+    LLVM_DEBUG(
+        llvm::dbgs() << "\nInserting op " << newCalcOp->getName() << " from "
+                     << newCalcOp->getLoc() << "\n");
     int idxOperand = 0;
+
     for (auto operand : newCalcOp->getOperands()) {
         if (auto idxArg =
                 getNewIndexOrArg<int, Value>(operand, pulledValueIdx)) {
+            LLVM_DEBUG(
+                llvm::dbgs() << "Found value: " << idxArg.value() << "\n");
             newCalcOp->setOperand(
                 idxOperand++,
                 genFuncOp.getBody().getArgument(idxArg.value()));
         } else {
+            if (isa<BlockArgument>(operand)) {
+                LLVM_DEBUG(
+                    llvm::dbgs() << "Found number " << idxOperand++
+                                 << " operand, which is a " << operand << "\n");
+                continue;
+            }
             auto definingOp = operand.getDefiningOp();
+            LLVM_DEBUG(
+                llvm::dbgs()
+                << "Found number " << idxOperand << " operand's defining op "
+                << definingOp->getName() << " at " << definingOp->getLoc()
+                << "\n");
             auto idxCalcOp =
                 getNewIndexOrArg<int, Operation*>(definingOp, calcOpIdx);
             auto idxResult = getResultIdx(operand, definingOp);
@@ -322,9 +342,15 @@ void processNestedRegions(
                         idxOperand++,
                         definingOp->getResult(idxResult.value()));
             }
+            LLVM_DEBUG(
+                llvm::dbgs() << "Replaced with result " << idxResult.value()
+                             << " of the defining op\n");
         }
     }
     if (newCalcOp->getRegions().size() != 0) {
+        LLVM_DEBUG(
+            llvm::dbgs()
+            << "\nFound region at " << newCalcOp->getLoc() << "\n");
         for (auto &region : newCalcOp->getRegions()) {
             for (auto &opRegion : region.getOps()) {
                 processNestedRegions(
@@ -434,6 +460,9 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
 
         auto newOperator =
             rewriter.create<ProcessOp>(op.getLoc(), op.getSymName(), funcTy);
+        LLVM_DEBUG(
+            llvm::dbgs() << "\nInserting " << newOperator << " at "
+                         << newOperator.getLoc() << "\n");
         SmallVector<Value> newPulledValue;
         auto loc = rewriter.getUnknownLoc();
         rewriter.setInsertionPointToStart(&newOperator.getBody().front());
@@ -449,12 +478,18 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
             }
             auto newLoop =
                 rewriter.create<LoopOp>(loc, loopInChans, loopOutChans);
+            LLVM_DEBUG(
+                llvm::dbgs()
+                << "\nInserting " << newLoop << " into new process op.\n");
             rewriter.setInsertionPointToStart(&newLoop.getBody().front());
         }
         for (int i = 0; i < numPull; i++) {
             auto newPull = rewriter.create<PullOp>(
                 loc,
                 newOperator.getBody().getArgument(pulledChanIdx[i]));
+            LLVM_DEBUG(
+                llvm::dbgs()
+                << "\nInserting " << newPull << " into new process op.\n");
             newPulledValue.push_back(newPull.getResult());
         }
 
@@ -491,9 +526,13 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         Block* funcEntryBlock = rewriter.createBlock(&genFuncOp.getBody());
         for (int i = 0; i < numPull; i++)
             funcEntryBlock->addArgument(pulledTypes[i], genFuncOp.getLoc());
+        LLVM_DEBUG(
+            llvm::dbgs()
+            << "\nInserting " << genFuncOp << " into new process op.\n");
         rewriter.setInsertionPointToStart(funcEntryBlock);
 
         SmallVector<Operation*> newCalcOps;
+        LLVM_DEBUG(llvm::dbgs() << "\nInserting ops into the func.\n");
         for (int i = 0; i < numCalc; i++) {
             auto it = ops.begin();
             std::advance(it, numPull + i);
@@ -523,6 +562,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         }
 
         rewriter.create<func::ReturnOp>(loc, returnValues);
+        LLVM_DEBUG(llvm::dbgs() << "\nInserting return.\n");
 
         writeFuncToFile(genFuncOp, genFuncOp.getSymName());
         rewriter.setInsertionPointToStart(&moduleOp.getBodyRegion().front());
@@ -736,3 +776,5 @@ std::unique_ptr<Pass> mlir::createConvertStdToCirctPass()
 {
     return std::make_unique<ConvertStdToCirctPass>();
 }
+
+#undef DEBUG_TYPE
