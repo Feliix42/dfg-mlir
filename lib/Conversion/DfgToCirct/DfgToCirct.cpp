@@ -44,13 +44,15 @@ namespace {
 // Helper to determine which new argument to use
 SmallVector<std::pair<int, Value>> oldArgsIndex;
 SmallVector<std::pair<Value, Value>> newArguments;
-SmallVector<std::pair<Operation*, StringAttr>> newOperators;
+SmallVector<std::pair<Operation*, StringAttr>> newProcesses;
 
 fsm::MachineOp insertController(
     ModuleOp module,
     std::string name,
     int numPullChan,
     int numPushChan,
+    size_t numPull,
+    size_t numPush,
     FunctionType funcTy,
     SmallVector<Operation*> ops,
     bool hasMultiOutputs,
@@ -70,12 +72,15 @@ fsm::MachineOp insertController(
     auto i1Ty = builder.getI1Type();
     auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1);
     auto c_false = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
-    size_t numPull = 0;
-    size_t numPush = 0;
+    // size_t numPull = 0;
+    // size_t numPush = 0;
     size_t numHWInstanceResults = 0;
     SmallVector<Value> hwInstanceValids;
     SmallVector<Value> pullVars;
     SmallVector<Value> closeRegs;
+    SmallVector<Value> closeValues;
+    SmallVector<Value> hasClosePull;
+    SmallVector<std::pair<size_t, Value>> closeRegIdices;
     SmallVector<Value> calcResults;
     SmallVector<std::pair<Value, int>> zeroWidth;
     bool hasHwInstance =
@@ -91,7 +96,7 @@ fsm::MachineOp insertController(
                     loc,
                     i1Ty,
                     builder.getIntegerAttr(i1Ty, 0),
-                    builder.getStringAttr("valid" + std::to_string(numPull)));
+                    builder.getStringAttr("valid" + std::to_string(i)));
                 hwInstanceValids.push_back(validVarOp.getResult());
             }
             auto valueTy = pullOp.getChan().getType().getElementType();
@@ -99,7 +104,7 @@ fsm::MachineOp insertController(
                 loc,
                 valueTy,
                 builder.getIntegerAttr(valueTy, 0),
-                builder.getStringAttr("data" + std::to_string(numPull)));
+                builder.getStringAttr("data" + std::to_string(i)));
             pullVars.push_back(varOp.getResult());
             newArguments.push_back(
                 std::make_pair(varOp.getResult(), pullOp.getOutp()));
@@ -107,19 +112,38 @@ fsm::MachineOp insertController(
                 getNewIndexOrArg<int, Value>(pullOp.getChan(), oldArgsIndex)
                     .value();
             auto isChanLooped = loopChanArgIdx[argIndex].first;
+            auto loopedArgIdx = loopChanArgIdx[argIndex].second;
             if (isChanLooped) {
-                auto closeVarOp = builder.create<fsm::VariableOp>(
-                    loc,
-                    i1Ty,
-                    builder.getIntegerAttr(i1Ty, 0),
-                    builder.getStringAttr("close" + std::to_string(numPull)));
-                closeRegs.push_back(closeVarOp.getResult());
+                if (!isInSmallVector<Value>(pullOp.getChan(), hasClosePull)) {
+                    if (!hasHwInstance && i == numPull - 1 && numPush == 1) {
+                        closeRegs.push_back(machine.getArgument(loopedArgIdx));
+                        closeValues.push_back(
+                            machine.getArgument(loopedArgIdx));
+                        continue;
+                    }
+                    auto closeVarOp = builder.create<fsm::VariableOp>(
+                        loc,
+                        i1Ty,
+                        builder.getIntegerAttr(i1Ty, 0),
+                        builder.getStringAttr("close" + std::to_string(i)));
+                    closeRegs.push_back(closeVarOp.getResult());
+                    closeValues.push_back(closeVarOp.getResult());
+                    hasClosePull.push_back(pullOp.getChan());
+                    closeRegIdices.push_back(
+                        std::make_pair(i, pullOp.getChan()));
+                } else {
+                    closeValues.push_back(
+                        closeValues[getNewIndexOrArg<size_t, Value>(
+                                        pullOp.getChan(),
+                                        closeRegIdices)
+                                        .value()]);
+                }
             } else {
-                closeRegs.push_back(nullptr);
+                closeValues.push_back(nullptr);
             }
-            numPull++;
+            // numPull++;
         } else if (auto pushOp = dyn_cast<PushOp>(op)) {
-            numPush++;
+            // numPush++;
             continue;
         } else if (auto hwInstanceOp = dyn_cast<HWInstanceOp>(op)) {
             auto types = hwInstanceOp.getResultTypes();
@@ -156,13 +180,16 @@ fsm::MachineOp insertController(
     // Caculate if the machine should be shut down
     Value shouldClose;
     for (size_t i = 0; i < closeRegs.size(); i++) {
+        auto closeReg = closeRegs[i];
+        // if (closeReg != nullptr) {
         if (i == 0)
-            shouldClose = closeRegs[i];
+            shouldClose = closeReg;
         else {
             auto closeResult =
-                builder.create<comb::AndOp>(loc, shouldClose, closeRegs[i]);
+                builder.create<comb::AndOp>(loc, shouldClose, closeReg);
             shouldClose = closeResult.getResult();
         }
+        // }
     }
     auto notClose =
         builder.create<comb::XorOp>(loc, shouldClose, c_true.getResult());
@@ -237,7 +264,7 @@ fsm::MachineOp insertController(
 
     // builder.setInsertionPointToEnd(&machine.getBody().back());
 
-    // All pulls are at beginning of an operator
+    // All pulls are at beginning of an process
     // For every PullOp there is one READ state
     assert(ops.size() > numPull && "cannot only pull");
     auto isNextPush = isa<PushOp>(ops[numPull]);
@@ -286,7 +313,7 @@ fsm::MachineOp insertController(
                         if (isChanLooped)
                             builder.create<fsm::UpdateOp>(
                                 loc,
-                                closeRegs[i],
+                                closeValues[i],
                                 machine.getArgument(loopedArgIdx));
                     });
             } else if (isChanLooped) {
@@ -299,28 +326,29 @@ fsm::MachineOp insertController(
                     "WRITE0",
                     /*guard*/
                     [&] {
-                        Value closeQueue;
-                        for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                            auto chanIdx = loopChanArgIdx[i];
-                            auto hasClose = chanIdx.first;
-                            auto closeSignalIdx = chanIdx.second;
-                            if (!hasClose) continue;
-                            auto closeSignal =
-                                machine.getArgument(closeSignalIdx);
-                            if (i == 0)
-                                closeQueue = closeSignal;
-                            else {
-                                auto closeOrResult = builder.create<comb::OrOp>(
-                                    loc,
-                                    closeQueue,
-                                    closeSignal);
-                                closeQueue = closeOrResult.getResult();
-                            }
-                        }
-                        auto notClose = builder.create<comb::XorOp>(
-                            loc,
-                            closeQueue,
-                            c_true.getResult());
+                        // Value closeQueue;
+                        // for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                        //     auto chanIdx = loopChanArgIdx[i];
+                        //     auto hasClose = chanIdx.first;
+                        //     auto closeSignalIdx = chanIdx.second;
+                        //     if (!hasClose) continue;
+                        //     auto closeSignal =
+                        //         machine.getArgument(closeSignalIdx);
+                        //     if (i == 0)
+                        //         closeQueue = closeSignal;
+                        //     else {
+                        //         auto closeOrResult =
+                        //         builder.create<comb::OrOp>(
+                        //             loc,
+                        //             closeQueue,
+                        //             closeSignal);
+                        //         closeQueue = closeOrResult.getResult();
+                        //     }
+                        // }
+                        // auto notClose = builder.create<comb::XorOp>(
+                        //     loc,
+                        //     closeQueue,
+                        //     c_true.getResult());
                         auto guardWrite = builder.create<comb::AndOp>(
                             loc,
                             machine.getArgument(validIdx),
@@ -338,25 +366,32 @@ fsm::MachineOp insertController(
                     "WRITE_CLOSE",
                     /*guard*/
                     [&] {
-                        Value closeQueue;
-                        for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                            auto chanIdx = loopChanArgIdx[i];
-                            auto hasClose = chanIdx.first;
-                            auto closeSignalIdx = chanIdx.second;
-                            if (!hasClose) continue;
-                            auto closeSignal =
-                                machine.getArgument(closeSignalIdx);
-                            if (i == 0)
-                                closeQueue = closeSignal;
-                            else {
-                                auto closeOrResult = builder.create<comb::OrOp>(
-                                    loc,
-                                    closeQueue,
-                                    closeSignal);
-                                closeQueue = closeOrResult.getResult();
-                            }
-                        }
-                        builder.create<fsm::ReturnOp>(loc, closeQueue);
+                        // Value closeQueue;
+                        // for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                        //     auto chanIdx = loopChanArgIdx[i];
+                        //     auto hasClose = chanIdx.first;
+                        //     auto closeSignalIdx = chanIdx.second;
+                        //     if (!hasClose) continue;
+                        //     auto closeSignal =
+                        //         machine.getArgument(closeSignalIdx);
+                        //     if (i == 0)
+                        //         closeQueue = closeSignal;
+                        //     else {
+                        //         auto closeOrResult =
+                        //         builder.create<comb::OrOp>(
+                        //             loc,
+                        //             closeQueue,
+                        //             closeSignal);
+                        //         closeQueue = closeOrResult.getResult();
+                        //     }
+                        // }
+                        auto closeQueue = builder.create<comb::AndOp>(
+                            loc,
+                            machine.getArgument(validIdx),
+                            shouldClose);
+                        builder.create<fsm::ReturnOp>(
+                            loc,
+                            closeQueue.getResult());
                     });
             } else if (!isChanLooped && isNextPush && numPush == 1) {
                 builder.create<fsm::TransitionOp>(
@@ -392,7 +427,7 @@ fsm::MachineOp insertController(
                     if (isChanLooped)
                         builder.create<fsm::UpdateOp>(
                             loc,
-                            closeRegs[i],
+                            closeValues[i],
                             machine.getArgument(loopedArgIdx));
                 });
         }
@@ -605,32 +640,33 @@ fsm::MachineOp insertController(
                     loc,
                     "WRITE" + std::to_string(idxStateWrite + 1),
                     /*guard*/ [&] {
-                        Value closeQueue;
-                        for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                            auto chanIdx = loopChanArgIdx[i];
-                            auto hasClose = chanIdx.first;
-                            auto closeSignalIdx = chanIdx.second;
-                            if (!hasClose) continue;
-                            auto closeSignal =
-                                machine.getArgument(closeSignalIdx);
-                            if (i == 0)
-                                closeQueue = closeSignal;
-                            else {
-                                auto closeOrResult = builder.create<comb::OrOp>(
-                                    loc,
-                                    closeQueue,
-                                    closeSignal);
-                                closeQueue = closeOrResult.getResult();
-                            }
-                        }
-                        auto notCloseSignal = builder.create<comb::XorOp>(
-                            loc,
-                            closeQueue,
-                            c_true.getResult());
+                        // Value closeQueue;
+                        // for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                        //     auto chanIdx = loopChanArgIdx[i];
+                        //     auto hasClose = chanIdx.first;
+                        //     auto closeSignalIdx = chanIdx.second;
+                        //     if (!hasClose) continue;
+                        //     auto closeSignal =
+                        //         machine.getArgument(closeSignalIdx);
+                        //     if (i == 0)
+                        //         closeQueue = closeSignal;
+                        //     else {
+                        //         auto closeOrResult =
+                        //         builder.create<comb::OrOp>(
+                        //             loc,
+                        //             closeQueue,
+                        //             closeSignal);
+                        //         closeQueue = closeOrResult.getResult();
+                        //     }
+                        // }
+                        // auto notCloseSignal = builder.create<comb::XorOp>(
+                        //     loc,
+                        //     closeQueue,
+                        //     c_true.getResult());
                         auto canWriteOut = builder.create<comb::AndOp>(
                             loc,
                             machine.getArgument(readyIdx),
-                            notCloseSignal.getResult());
+                            notClose.getResult());
                         builder.create<fsm::ReturnOp>(
                             loc,
                             canWriteOut.getResult());
@@ -642,25 +678,32 @@ fsm::MachineOp insertController(
                     loc,
                     "WRITE_CLOSE",
                     /*guard*/ [&] {
-                        Value closeQueue;
-                        for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                            auto chanIdx = loopChanArgIdx[i];
-                            auto hasClose = chanIdx.first;
-                            auto closeSignalIdx = chanIdx.second;
-                            if (!hasClose) continue;
-                            auto closeSignal =
-                                machine.getArgument(closeSignalIdx);
-                            if (i == 0)
-                                closeQueue = closeSignal;
-                            else {
-                                auto closeOrResult = builder.create<comb::OrOp>(
-                                    loc,
-                                    closeQueue,
-                                    closeSignal);
-                                closeQueue = closeOrResult.getResult();
-                            }
-                        }
-                        builder.create<fsm::ReturnOp>(loc, closeQueue);
+                        // Value closeQueue;
+                        // for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
+                        //     auto chanIdx = loopChanArgIdx[i];
+                        //     auto hasClose = chanIdx.first;
+                        //     auto closeSignalIdx = chanIdx.second;
+                        //     if (!hasClose) continue;
+                        //     auto closeSignal =
+                        //         machine.getArgument(closeSignalIdx);
+                        //     if (i == 0)
+                        //         closeQueue = closeSignal;
+                        //     else {
+                        //         auto closeOrResult =
+                        //         builder.create<comb::OrOp>(
+                        //             loc,
+                        //             closeQueue,
+                        //             closeSignal);
+                        //         closeQueue = closeOrResult.getResult();
+                        //     }
+                        // }
+                        auto closeQueue = builder.create<comb::AndOp>(
+                            loc,
+                            machine.getArgument(readyIdx),
+                            shouldClose);
+                        builder.create<fsm::ReturnOp>(
+                            loc,
+                            closeQueue.getResult());
                     });
             } else {
                 builder.create<fsm::TransitionOp>(
@@ -714,7 +757,7 @@ fsm::MachineOp insertController(
                         }
                     }
                     for (auto closeReg : closeRegs) {
-                        if (closeReg) {
+                        if (closeReg && !isa<BlockArgument>(closeReg)) {
                             builder.create<fsm::UpdateOp>(
                                 loc,
                                 closeReg,
@@ -758,13 +801,13 @@ fsm::MachineOp insertController(
     return machine;
 }
 
-SmallVector<std::pair<bool, std::string>> operatorHasLoop;
-SmallVector<std::pair<SmallVector<int>, std::string>> operatorPortIdx;
-struct ConvertOperator : OpConversionPattern<ProcessOp> {
+SmallVector<std::pair<bool, std::string>> processHasLoop;
+SmallVector<std::pair<SmallVector<int>, std::string>> processPortIdx;
+struct ConvertProcess : OpConversionPattern<ProcessOp> {
 public:
     using OpConversionPattern<ProcessOp>::OpConversionPattern;
 
-    ConvertOperator(TypeConverter &typeConverter, MLIRContext* context)
+    ConvertProcess(TypeConverter &typeConverter, MLIRContext* context)
             : OpConversionPattern<ProcessOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
@@ -799,8 +842,8 @@ public:
                 }
             }
         }
-        operatorHasLoop.push_back(std::make_pair(hasLoopOp, opName));
-        operatorPortIdx.push_back(std::make_pair(loopChanIdx, opName));
+        processHasLoop.push_back(std::make_pair(hasLoopOp, opName));
+        processPortIdx.push_back(std::make_pair(loopChanIdx, opName));
 
         SmallVector<hw::PortInfo> ports;
         int in_num = 1;
@@ -922,7 +965,7 @@ public:
             ArrayRef<NamedAttribute>{},
             StringAttr{},
             false);
-        newOperators.push_back(
+        newProcesses.push_back(
             std::make_pair(hwModule.getOperation(), op.getSymNameAttr()));
 
         // Store the pair of old and new argument(s) in vector
@@ -1009,11 +1052,17 @@ public:
             }
         }
         // Insert fsm.machine at top
+        size_t numPull = 0;
+        size_t numPush = 0;
+        op.walk([&](PullOp op) { numPull++; });
+        op.walk([&](PushOp op) { numPush++; });
         auto newMachine = insertController(
             module,
             op.getSymName().str() + "_controller",
             numInputs,
             numOutputs,
+            numPull,
+            numPush,
             FunctionType::get(
                 hwFuncTy.getContext(),
                 fsmInTypesVec,
@@ -1461,16 +1510,16 @@ SmallVector<std::pair<Value, Value>> placeholderInputs;
 SmallVector<std::pair<SmallVector<Value>, Value>> placeholderOutputs;
 SmallVector<std::pair<SmallVector<Value>, Value>> instanceInputs;
 SmallVector<std::pair<Value, Value>> instanceOutputs;
-std::map<std::string, int> instantiatedOperators;
+std::map<std::string, int> instantiatedProcesses;
 int getNameOfInstance(std::string to_find)
 {
-    auto it = instantiatedOperators.find(to_find);
-    if (it != instantiatedOperators.end()) {
+    auto it = instantiatedProcesses.find(to_find);
+    if (it != instantiatedProcesses.end()) {
         auto num = it->second;
         it->second++;
         return num;
     } else {
-        instantiatedOperators.emplace(to_find, 1);
+        instantiatedProcesses.emplace(to_find, 1);
         return 0;
     }
 }
@@ -1505,10 +1554,10 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
         op.walk([&](InstantiateOp instanceOp) {
             auto calleeName = instanceOp.getCallee().getRootReference().str();
             auto inputChans = instanceOp.getInputs();
-            auto loopedOperator = getNewIndexOrArg(calleeName, operatorHasLoop);
-            if (loopedOperator.value()) {
+            auto loopedProcess = getNewIndexOrArg(calleeName, processHasLoop);
+            if (loopedProcess.value()) {
                 auto indices =
-                    getNewIndexOrArg(calleeName, operatorPortIdx).value();
+                    getNewIndexOrArg(calleeName, processPortIdx).value();
                 for (auto idx : indices) {
                     auto loopedQueue =
                         dyn_cast<ChannelOp>(inputChans[idx].getDefiningOp());
@@ -1842,7 +1891,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                 auto calleeName = instantiateOp.getCallee().getRootReference();
                 auto calleeStr = calleeName.str();
                 auto needClosePortIdx =
-                    getNewIndexOrArg(calleeStr, operatorPortIdx).value();
+                    getNewIndexOrArg(calleeStr, processPortIdx).value();
                 SmallVector<Value> instantiateOpInChans(
                     instantiateOp.getInputs().begin(),
                     instantiateOp.getInputs().end());
@@ -1866,16 +1915,16 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                     auto queuePort = getNewIndexOrArg(output, instanceOutputs);
                     inputs.push_back(queuePort.value());
                 }
-                auto operatorToCall = getNewIndexOrArg<Operation*, StringAttr>(
+                auto processToCall = getNewIndexOrArg<Operation*, StringAttr>(
                     calleeName,
-                    newOperators);
+                    newProcesses);
                 auto nameSuffix = getNameOfInstance(calleeStr);
                 auto instanceName =
                     nameSuffix == 0 ? calleeStr
                                     : calleeStr + std::to_string(nameSuffix);
                 auto instanceOp = rewriter.create<hw::InstanceOp>(
                     loc,
-                    operatorToCall.value(),
+                    processToCall.value(),
                     instanceName,
                     inputs);
                 int i = 0;
@@ -1926,7 +1975,7 @@ void mlir::populateDfgToCirctConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns)
 {
-    patterns.add<ConvertOperator>(typeConverter, patterns.getContext());
+    patterns.add<ConvertProcess>(typeConverter, patterns.getContext());
     patterns.add<LegalizeHWModule>(typeConverter, patterns.getContext());
 }
 
