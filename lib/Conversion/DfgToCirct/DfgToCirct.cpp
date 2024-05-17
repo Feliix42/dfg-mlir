@@ -53,6 +53,7 @@ fsm::MachineOp insertController(
     int numPushChan,
     size_t numPull,
     size_t numPush,
+    Value lastMultiPulledChan,
     FunctionType funcTy,
     SmallVector<Operation*> ops,
     bool hasMultiOutputs,
@@ -115,8 +116,13 @@ fsm::MachineOp insertController(
             auto loopedArgIdx = loopChanArgIdx[argIndex].second;
             if (isChanLooped) {
                 if (!isInSmallVector<Value>(pullOp.getChan(), hasClosePull)) {
-                    if (!hasHwInstance && i == numPull - 1 && numPush == 1) {
-                        closeRegs.push_back(machine.getArgument(loopedArgIdx));
+                    if (!hasHwInstance && i == numPull - 1 && numPush == 1
+                        || pullOp.getChan() == lastMultiPulledChan) {
+                        if (!isInSmallVector<Value>(
+                                machine.getArgument(loopedArgIdx),
+                                closeRegs))
+                            closeRegs.push_back(
+                                machine.getArgument(loopedArgIdx));
                         closeValues.push_back(
                             machine.getArgument(loopedArgIdx));
                         continue;
@@ -225,45 +231,6 @@ fsm::MachineOp insertController(
             outputTempVec[idxBias + 2 * i + 1] = pullVars[i];
         }
 
-    // Create states and transitions
-    // INIT
-    // auto stateInit = builder.create<fsm::StateOp>(loc, "INIT", outputInit);
-    // builder.setInsertionPointToEnd(&stateInit.getTransitions().back());
-
-    // builder.create<fsm::TransitionOp>(
-    //     loc,
-    //     "READ0",
-    //     /*guard*/ nullptr,
-    //     /*action*/ [&] {
-    //         for (size_t i = 0; i < numPull; i++) {
-    //             if (hasHwInstance)
-    //                 builder.create<fsm::UpdateOp>(
-    //                     loc,
-    //                     hwInstanceValids[i],
-    //                     c_false.getResult());
-    //             auto pullVarWidth =
-    //                 pullVars[i].getType().getIntOrFloatBitWidth();
-    //             Value zeroValue;
-    //             if (pullVarWidth == 1)
-    //                 zeroValue = c_false.getResult();
-    //             else
-    //                 zeroValue =
-    //                     getNewIndexOrArg<Value, int>(pullVarWidth, zeroWidth)
-    //                         .value();
-    //             builder.create<fsm::UpdateOp>(loc, pullVars[i], zeroValue);
-    //         }
-    //         if (hasMultiOutputs) {
-    //             for (size_t i = 0; i < calcDataValids.size(); i++) {
-    //                 builder.create<fsm::UpdateOp>(
-    //                     loc,
-    //                     calcDataValids[i],
-    //                     c_false.getResult());
-    //             }
-    //         }
-    //     });
-
-    // builder.setInsertionPointToEnd(&machine.getBody().back());
-
     // All pulls are at beginning of an process
     // For every PullOp there is one READ state
     assert(ops.size() > numPull && "cannot only pull");
@@ -310,7 +277,8 @@ fsm::MachineOp insertController(
                             loc,
                             pullVars[i],
                             machine.getArgument(validIdx + 1));
-                        if (isChanLooped)
+                        if (isChanLooped
+                            && pullOp.getChan() != lastMultiPulledChan)
                             builder.create<fsm::UpdateOp>(
                                 loc,
                                 closeValues[i],
@@ -326,29 +294,6 @@ fsm::MachineOp insertController(
                     "WRITE0",
                     /*guard*/
                     [&] {
-                        // Value closeQueue;
-                        // for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                        //     auto chanIdx = loopChanArgIdx[i];
-                        //     auto hasClose = chanIdx.first;
-                        //     auto closeSignalIdx = chanIdx.second;
-                        //     if (!hasClose) continue;
-                        //     auto closeSignal =
-                        //         machine.getArgument(closeSignalIdx);
-                        //     if (i == 0)
-                        //         closeQueue = closeSignal;
-                        //     else {
-                        //         auto closeOrResult =
-                        //         builder.create<comb::OrOp>(
-                        //             loc,
-                        //             closeQueue,
-                        //             closeSignal);
-                        //         closeQueue = closeOrResult.getResult();
-                        //     }
-                        // }
-                        // auto notClose = builder.create<comb::XorOp>(
-                        //     loc,
-                        //     closeQueue,
-                        //     c_true.getResult());
                         auto guardWrite = builder.create<comb::AndOp>(
                             loc,
                             machine.getArgument(validIdx),
@@ -366,25 +311,6 @@ fsm::MachineOp insertController(
                     "WRITE_CLOSE",
                     /*guard*/
                     [&] {
-                        // Value closeQueue;
-                        // for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                        //     auto chanIdx = loopChanArgIdx[i];
-                        //     auto hasClose = chanIdx.first;
-                        //     auto closeSignalIdx = chanIdx.second;
-                        //     if (!hasClose) continue;
-                        //     auto closeSignal =
-                        //         machine.getArgument(closeSignalIdx);
-                        //     if (i == 0)
-                        //         closeQueue = closeSignal;
-                        //     else {
-                        //         auto closeOrResult =
-                        //         builder.create<comb::OrOp>(
-                        //             loc,
-                        //             closeQueue,
-                        //             closeSignal);
-                        //         closeQueue = closeOrResult.getResult();
-                        //     }
-                        // }
                         auto closeQueue = builder.create<comb::AndOp>(
                             loc,
                             machine.getArgument(validIdx),
@@ -424,7 +350,7 @@ fsm::MachineOp insertController(
                         loc,
                         pullVars[i],
                         machine.getArgument(validIdx + 1));
-                    if (isChanLooped)
+                    if (isChanLooped && pullOp.getChan() != lastMultiPulledChan)
                         builder.create<fsm::UpdateOp>(
                             loc,
                             closeValues[i],
@@ -450,29 +376,7 @@ fsm::MachineOp insertController(
         auto numCalcDataValid = calcDataValids.size();
         // If wrapped calc func has more than one output, need to wait all
         // output ports are ready to transit to next state
-        Value closeQueue, notCloseQueue, returnValue;
-        // if (numPush == 1 && hasLoopOp) {
-        //     for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-        //         auto chanIdx = loopChanArgIdx[i];
-        //         auto hasClose = chanIdx.first;
-        //         auto closeSignalIdx = chanIdx.second;
-        //         if (!hasClose) continue;
-        //         auto closeSignal = machine.getArgument(closeSignalIdx);
-        //         if (i == 0)
-        //             closeQueue = closeSignal;
-        //         else {
-        //             auto closeOrResult = builder.create<comb::OrOp>(
-        //                 loc,
-        //                 closeQueue,
-        //                 closeSignal);
-        //             closeQueue = closeOrResult.getResult();
-        //         }
-        //     }
-        //     notCloseQueue =
-        //         builder.create<comb::XorOp>(loc, closeQueue,
-        //         c_true.getResult())
-        //             .getResult();
-        // }
+        Value returnValue;
         if (hasMultiOutputs) {
             Value calcDone;
             for (size_t i = 0; i < numCalcDataValid; i++) {
@@ -524,22 +428,6 @@ fsm::MachineOp insertController(
             builder.setInsertionPointToEnd(
                 transWriteClose.ensureGuard(builder));
             transWriteClose.getGuard().front().front().erase();
-            // for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-            //     auto chanIdx = loopChanArgIdx[i];
-            //     auto hasClose = chanIdx.first;
-            //     auto closeSignalIdx = chanIdx.second;
-            //     if (!hasClose) continue;
-            //     auto closeSignal = machine.getArgument(closeSignalIdx);
-            //     if (i == 0)
-            //         closeQueue = closeSignal;
-            //     else {
-            //         auto closeOrResult = builder.create<comb::OrOp>(
-            //             loc,
-            //             closeQueue,
-            //             closeSignal);
-            //         closeQueue = closeOrResult.getResult();
-            //     }
-            // }
             if (hasMultiOutputs) {
                 Value calcDone;
                 for (size_t i = 0; i < numCalcDataValid; i++) {
@@ -640,29 +528,6 @@ fsm::MachineOp insertController(
                     loc,
                     "WRITE" + std::to_string(idxStateWrite + 1),
                     /*guard*/ [&] {
-                        // Value closeQueue;
-                        // for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                        //     auto chanIdx = loopChanArgIdx[i];
-                        //     auto hasClose = chanIdx.first;
-                        //     auto closeSignalIdx = chanIdx.second;
-                        //     if (!hasClose) continue;
-                        //     auto closeSignal =
-                        //         machine.getArgument(closeSignalIdx);
-                        //     if (i == 0)
-                        //         closeQueue = closeSignal;
-                        //     else {
-                        //         auto closeOrResult =
-                        //         builder.create<comb::OrOp>(
-                        //             loc,
-                        //             closeQueue,
-                        //             closeSignal);
-                        //         closeQueue = closeOrResult.getResult();
-                        //     }
-                        // }
-                        // auto notCloseSignal = builder.create<comb::XorOp>(
-                        //     loc,
-                        //     closeQueue,
-                        //     c_true.getResult());
                         auto canWriteOut = builder.create<comb::AndOp>(
                             loc,
                             machine.getArgument(readyIdx),
@@ -678,25 +543,6 @@ fsm::MachineOp insertController(
                     loc,
                     "WRITE_CLOSE",
                     /*guard*/ [&] {
-                        // Value closeQueue;
-                        // for (size_t i = 0; i < loopChanArgIdx.size(); i++) {
-                        //     auto chanIdx = loopChanArgIdx[i];
-                        //     auto hasClose = chanIdx.first;
-                        //     auto closeSignalIdx = chanIdx.second;
-                        //     if (!hasClose) continue;
-                        //     auto closeSignal =
-                        //         machine.getArgument(closeSignalIdx);
-                        //     if (i == 0)
-                        //         closeQueue = closeSignal;
-                        //     else {
-                        //         auto closeOrResult =
-                        //         builder.create<comb::OrOp>(
-                        //             loc,
-                        //             closeQueue,
-                        //             closeSignal);
-                        //         closeQueue = closeOrResult.getResult();
-                        //     }
-                        // }
                         auto closeQueue = builder.create<comb::AndOp>(
                             loc,
                             machine.getArgument(readyIdx),
@@ -794,8 +640,7 @@ fsm::MachineOp insertController(
         getNewIndexOrArg<Value, Value>(lastPushOp.getInp(), newArguments)
             .value();
     newOutputs[numPullChan + 2 * numPushChan] = c_true.getResult();
-    auto stateClose =
-        builder.create<fsm::StateOp>(loc, "WRITE_CLOSE", newOutputs);
+    builder.create<fsm::StateOp>(loc, "WRITE_CLOSE", newOutputs);
     builder.setInsertionPointToEnd(&machine.getBody().back());
 
     return machine;
@@ -1054,8 +899,16 @@ public:
         // Insert fsm.machine at top
         size_t numPull = 0;
         size_t numPush = 0;
-        op.walk([&](PullOp op) { numPull++; });
+        SmallVector<Value> pulledChan;
+        op.walk([&](PullOp op) {
+            numPull++;
+            pulledChan.push_back(op.getChan());
+        });
         op.walk([&](PushOp op) { numPush++; });
+        Value lastMultiPulledChan = nullptr;
+        for (size_t i = 0; i < pulledChan.size() - 1; i++)
+            if (pulledChan[i] == pulledChan[numPull - 1])
+                lastMultiPulledChan = pulledChan[i];
         auto newMachine = insertController(
             module,
             op.getSymName().str() + "_controller",
@@ -1063,6 +916,7 @@ public:
             numOutputs,
             numPull,
             numPush,
+            lastMultiPulledChan,
             FunctionType::get(
                 hwFuncTy.getContext(),
                 fsmInTypesVec,
