@@ -161,7 +161,6 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"ProcessOp">, NoTerminator, AttrSized
     let hasCustomAssemblyFormat = 1;
 }
 
-
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
         [

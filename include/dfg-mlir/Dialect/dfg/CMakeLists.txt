@@ -6,6 +6,8 @@
 
 add_custom_target(DfgIncGen)
 
+mlir_gen_enums(Dfg)
+
 # Interfaces.
 # add_subdirectory(Interfaces)
 # Attributes, Dialect, Operations and Types.
