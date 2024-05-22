@@ -317,10 +317,10 @@ void processNestedRegions(
                 genFuncOp.getBody().getArgument(idxArg.value()));
         } else {
             if (isa<BlockArgument>(operand)) {
-                idxOperand++;
                 LLVM_DEBUG(
                     llvm::dbgs() << "Found number " << idxOperand
                                  << " operand, which is a " << operand << "\n");
+                idxOperand++;
                 continue;
             }
             auto definingOp = operand.getDefiningOp();
