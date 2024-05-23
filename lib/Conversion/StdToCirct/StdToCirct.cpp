@@ -202,6 +202,15 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
                     loc,
                     "Unsupported Channel Style Attribute");
         }
+        if (channelStyle == "xilinx") {
+            for (auto type : funcTy.getInputs()) {
+                auto bitwidth = type.getIntOrFloatBitWidth();
+                if (bitwidth < 8 || bitwidth > 2048)
+                    return rewriter.notifyMatchFailure(
+                        loc,
+                        "Xilinx FIFO only support bitwidth from 8 to 2048");
+            }
+        }
 
         SmallVector<hw::PortInfo> ports;
         int in_num = 1;
