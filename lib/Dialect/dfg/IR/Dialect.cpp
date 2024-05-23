@@ -4,6 +4,7 @@
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
+
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 
 using namespace mlir;
