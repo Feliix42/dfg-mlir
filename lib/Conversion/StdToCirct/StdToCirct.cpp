@@ -189,6 +189,19 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
         auto funcTy = op.getFunctionType();
         auto numInputs = funcTy.getNumInputs();
         auto numOutputs = funcTy.getNumResults();
+        auto channelStyle =
+            op.getOperation()->getAttrOfType<StringAttr>("channel_style");
+        StringRef channelStyleStr;
+        // assert(channelStyle != nullptr);
+        if (channelStyle == nullptr)
+            channelStyleStr = "dfg";
+        else {
+            channelStyleStr = channelStyle.getValue();
+            if (channelStyleStr != "dfg" && channelStyleStr != "xilinx")
+                return rewriter.notifyMatchFailure(
+                    loc,
+                    "Unsupported Channel Style Attribute");
+        }
 
         SmallVector<hw::PortInfo> ports;
         int in_num = 1;
@@ -224,7 +237,9 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
             op.getSymNameAttr(),
             hw::ModulePortInfo(ports),
             ArrayAttr{},
-            ArrayRef<NamedAttribute>{},
+            ArrayRef<NamedAttribute>{NamedAttribute(
+                StringAttr::get(context, "channel_style"),
+                StringAttr::get(context, channelStyleStr))},
             StringAttr{},
             false);
         SmallVector<std::pair<Value, Value>> newArguments;
