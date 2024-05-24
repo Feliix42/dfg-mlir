@@ -272,6 +272,7 @@ void ConvertDfgToFuncPass::runOnOperation()
             ValueRange(),
             ValueRange(),
             ValueRange(),
+            DenseBoolArrayAttr{},
             ArrayAttr{},
             omp::ClauseProcBindKindAttr{},
             ValueRange(),
