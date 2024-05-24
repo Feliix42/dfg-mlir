@@ -198,6 +198,11 @@ def Dfg_ChannelOp : Dfg_Op<
         Dfg_OutputType:$out_chan
     );
 
+    let builders = [
+        OpBuilder<(ins "Type":$encapsulatedType,
+                       "int":$bufferSize)>
+    ];
+
     let hasCustomAssemblyFormat = 1;
 
     let hasVerifier = 1;

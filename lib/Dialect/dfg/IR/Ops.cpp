@@ -603,6 +603,21 @@ void LoopOp::print(OpAsmPrinter &p)
 // ChannelOp
 //===----------------------------------------------------------------------===//
 
+void ChannelOp::build(
+    OpBuilder &builder,
+    OperationState &state,
+    Type encapsulatedType,
+    int bufferSize)
+{
+    build(
+        builder,
+        state,
+        InputType::get(builder.getContext(), encapsulatedType),
+        OutputType::get(builder.getContext(), encapsulatedType),
+        encapsulatedType,
+        IntegerAttr::get(builder.getI32Type(), bufferSize));
+}
+
 ParseResult ChannelOp::parse(OpAsmParser &parser, OperationState &result)
 {
     if (failed(parser.parseLParen())) return failure();
