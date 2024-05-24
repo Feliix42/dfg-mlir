@@ -282,6 +282,24 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
                 rewriter.create<hw::OutputOp>(
                     rewriter.getUnknownLoc(),
                     newOutputs);
+            } else if (auto channelOp = dyn_cast<ChannelOp>(opInside)) {
+                if (channelStyleStr == "xilinx") {
+                    auto bufSize = channelOp.getBufferSize();
+                    if (!bufSize.has_value())
+                        return rewriter.notifyMatchFailure(
+                            channelOp.getLoc(),
+                            "For hardware lowering, a channel must have a "
+                            "size.");
+                    auto sizeValue = bufSize.value();
+                    auto size =
+                        sizeValue < 16
+                            ? 16
+                            : (sizeValue > 4194304 ? 4194304 : sizeValue);
+                    channelOp.setBufferSize(size);
+                }
+                opInside.moveBefore(
+                    hwModule.getBodyBlock(),
+                    hwModule.getBodyBlock()->end());
             } else {
                 opInside.moveBefore(
                     hwModule.getBodyBlock(),

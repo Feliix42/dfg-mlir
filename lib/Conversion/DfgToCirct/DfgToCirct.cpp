@@ -1001,9 +1001,99 @@ public:
     }
 };
 
-hw::HWModuleOp paramQueueModule = nullptr;
-hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc)
+hw::HWModuleExternOp insertXilinxQueue(OpBuilder &builder, Location loc)
 {
+    auto name = "xpm_fifo_axis";
+    auto i1Ty = builder.getI1Type();
+
+    SmallVector<Attribute> params;
+    params.push_back(
+        hw::ParamDeclAttr::get("FIFO_DEPTH", builder.getI32Type()));
+    params.push_back(
+        hw::ParamDeclAttr::get("TDATA_WIDTH", builder.getI32Type()));
+    auto dataParamAttr = hw::ParamDeclRefAttr::get(
+        builder.getStringAttr("TDATA_WIDTH"),
+        builder.getI32Type());
+    auto dataParamTy = hw::IntType::get(dataParamAttr);
+
+    SmallVector<hw::PortInfo> ports;
+    // Add clock port.
+    hw::PortInfo clock;
+    clock.name = builder.getStringAttr("s_aclk");
+    clock.dir = hw::ModulePort::Direction::Input;
+    clock.type = i1Ty;
+    ports.push_back(clock);
+    // Add reset port.
+    hw::PortInfo reset;
+    reset.name = builder.getStringAttr("s_aresetn");
+    reset.dir = hw::ModulePort::Direction::Input;
+    reset.type = i1Ty;
+    ports.push_back(reset);
+    // Add close signal
+    hw::PortInfo close;
+    close.name = builder.getStringAttr("s_axis_tlast");
+    close.dir = hw::ModulePort::Direction::Input;
+    close.type = i1Ty;
+    ports.push_back(close);
+    // Add io_enq_valid
+    hw::PortInfo io_enq_valid;
+    io_enq_valid.name = builder.getStringAttr("s_axis_tvalid");
+    io_enq_valid.dir = hw::ModulePort::Direction::Input;
+    io_enq_valid.type = i1Ty;
+    ports.push_back(io_enq_valid);
+    // Add io_enq_bits
+    hw::PortInfo io_enq_bits;
+    io_enq_bits.name = builder.getStringAttr("s_axis_tdata");
+    io_enq_bits.dir = hw::ModulePort::Direction::Input;
+    io_enq_bits.type = dataParamTy;
+    ports.push_back(io_enq_bits);
+    // Add io_deq_ready
+    hw::PortInfo io_deq_ready;
+    io_deq_ready.name = builder.getStringAttr("m_axis_tready");
+    io_deq_ready.dir = hw::ModulePort::Direction::Input;
+    io_deq_ready.type = i1Ty;
+    ports.push_back(io_deq_ready);
+    // Add io_enq_ready
+    hw::PortInfo io_enq_ready;
+    io_enq_ready.name = builder.getStringAttr("s_axis_tready");
+    io_enq_ready.dir = hw::ModulePort::Direction::Output;
+    io_enq_ready.type = i1Ty;
+    ports.push_back(io_enq_ready);
+    // Add io_deq_valid
+    hw::PortInfo io_deq_valid;
+    io_deq_valid.name = builder.getStringAttr("m_axis_tvalid");
+    io_deq_valid.dir = hw::ModulePort::Direction::Output;
+    io_deq_valid.type = i1Ty;
+    ports.push_back(io_deq_valid);
+    // Add io_deq_bits
+    hw::PortInfo io_deq_bits;
+    io_deq_bits.name = builder.getStringAttr("m_axis_tdata");
+    io_deq_bits.dir = hw::ModulePort::Direction::Output;
+    io_deq_bits.type = dataParamTy;
+    ports.push_back(io_deq_bits);
+    // Add done signal
+    hw::PortInfo done;
+    done.name = builder.getStringAttr("m_axis_tlast");
+    done.dir = hw::ModulePort::Direction::Output;
+    done.type = i1Ty;
+    ports.push_back(done);
+    // Create new HWModule
+    auto hwModule = builder.create<hw::HWModuleExternOp>(
+        loc,
+        builder.getStringAttr(name),
+        hw::ModulePortInfo(ports),
+        StringRef{},
+        ArrayAttr::get(builder.getContext(), params));
+
+    return hwModule;
+}
+
+hw::HWModuleOp paramQueueModule = nullptr;
+hw::HWModuleExternOp xilinxQueueModule = nullptr;
+hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc, bool isQueueXilinx)
+{
+    if (isQueueXilinx && xilinxQueueModule == nullptr)
+        xilinxQueueModule = insertXilinxQueue(builder, loc);
     if (paramQueueModule != nullptr) return paramQueueModule;
     auto i1Ty = builder.getI1Type();
     auto i32Ty = builder.getI32Type();
@@ -1097,260 +1187,299 @@ hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc)
     auto out_ready = hwModule.getBody().getArgument(5);
     builder.setInsertionPointToStart(&hwModule.getBodyRegion().front());
 
-    // Constants
-    auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1);
-    auto c_false = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
-    auto c_zero = builder.create<hw::ConstantOp>(loc, i32Ty, 0);
-    auto c_one = builder.create<hw::ConstantOp>(loc, i32Ty, 1);
-    auto sizeValue =
-        builder.create<hw::ParamValueOp>(loc, i32Ty, sizeParamAttr);
-    auto sizeMaxIdx = builder.create<comb::SubOp>(
-        loc,
-        sizeValue.getResult(),
-        c_one.getResult());
+    if (isQueueXilinx) {
+        // Contants
+        SmallVector<Value> inputs;
+        auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1).getResult();
+        auto areset = builder.create<comb::XorOp>(loc, rst, c_true).getResult();
+        inputs.push_back(clk);
+        inputs.push_back(areset);
+        inputs.push_back(close_signal);
+        inputs.push_back(in_valid);
+        inputs.push_back(in_bits);
+        inputs.push_back(out_ready);
 
-    // Close behavior
-    auto want_close = builder.create<sv::RegOp>(loc, i1Ty);
-    auto want_close_value =
-        builder.create<sv::ReadInOutOp>(loc, want_close.getResult());
-    // RAM
-    auto ram = builder.create<sv::RegOp>(
-        loc,
-        hw::UnpackedArrayType::get(
-            builder.getContext(),
-            dataParamTy,
-            sizeParamAttr));
-    auto placeholderReadIndex = builder.create<hw::ConstantOp>(loc, i32Ty, 0);
-    auto ram_read = builder.create<sv::ArrayIndexInOutOp>(
-        loc,
-        ram.getResult(),
-        placeholderReadIndex.getResult());
-    auto ram_read_data =
-        builder.create<sv::ReadInOutOp>(loc, ram_read.getResult());
+        SmallVector<Attribute> params;
+        // auto sizeInteger = dyn_cast<IntegerAttr>(sizeParamAttr).getInt();
+        params.push_back(hw::ParamDeclAttr::get("FIFO_DEPTH", sizeParamAttr));
+        params.push_back(hw::ParamDeclAttr::get("TDATA_WIDTH", dataParamAttr));
 
-    // Pointers
-    auto ptr_write = builder.create<sv::RegOp>(loc, i32Ty);
-    auto ptr_write_value =
-        builder.create<sv::ReadInOutOp>(loc, ptr_write.getResult());
-    auto ptr_read = builder.create<sv::RegOp>(loc, i32Ty);
-    auto ptr_read_value =
-        builder.create<sv::ReadInOutOp>(loc, ptr_read.getResult());
-    placeholderReadIndex.replaceAllUsesWith(ptr_read_value.getResult());
-    auto maybe_full = builder.create<sv::RegOp>(loc, i1Ty);
-    auto maybe_full_value =
-        builder.create<sv::ReadInOutOp>(loc, maybe_full.getResult());
-    auto ptr_last = builder.create<sv::RegOp>(loc, i32Ty);
-    auto ptr_last_value =
-        builder.create<sv::ReadInOutOp>(loc, ptr_last.getResult());
-    auto is_done = builder.create<sv::RegOp>(loc, i1Ty);
-    auto is_done_value =
-        builder.create<sv::ReadInOutOp>(loc, is_done.getResult());
-
-    // Signals
-    auto ptr_match = builder.create<comb::ICmpOp>(
-        loc,
-        comb::ICmpPredicate::eq,
-        ptr_write_value.getResult(),
-        ptr_read_value.getResult());
-    auto _empty_T = builder.create<comb::XorOp>(
-        loc,
-        maybe_full_value.getResult(),
-        c_true.getResult());
-    auto empty = builder.create<comb::AndOp>(
-        loc,
-        ptr_match.getResult(),
-        _empty_T.getResult());
-    auto full = builder.create<comb::AndOp>(
-        loc,
-        ptr_match.getResult(),
-        maybe_full_value.getResult());
-    auto placeholderNotFull = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
-    auto do_enq = builder.create<comb::AndOp>(
-        loc,
-        placeholderNotFull.getResult(),
-        in_valid);
-    auto placeholderNotEmpty = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
-    auto do_deq = builder.create<comb::AndOp>(
-        loc,
-        out_ready,
-        placeholderNotEmpty.getResult());
-    auto next_write = builder.create<comb::AddOp>(
-        loc,
-        ptr_write_value.getResult(),
-        c_one.getResult());
-    auto next_read = builder.create<comb::AddOp>(
-        loc,
-        ptr_read_value.getResult(),
-        c_one.getResult());
-    auto notSameEnqDeq = builder.create<comb::ICmpOp>(
-        loc,
-        comb::ICmpPredicate::ne,
-        do_enq.getResult(),
-        do_deq.getResult());
-    auto not_empty =
-        builder.create<comb::XorOp>(loc, empty.getResult(), c_true.getResult());
-    placeholderNotEmpty.replaceAllUsesWith(not_empty.getResult());
-    auto not_full =
-        builder.create<comb::XorOp>(loc, full.getResult(), c_true.getResult());
-    auto not_want_close = builder.create<comb::XorOp>(
-        loc,
-        want_close_value.getResult(),
-        c_true.getResult());
-    auto io_enq_ready_value = builder.create<comb::AndOp>(
-        loc,
-        not_full.getResult(),
-        not_want_close.getResult());
-    placeholderNotFull.replaceAllUsesWith(io_enq_ready_value.getResult());
-    // auto isDone = builder.create<comb::AndOp>(
-    //     loc,
-    //     want_close_value.getResult(),
-    //     empty.getResult());
-    auto last_read = builder.create<comb::ICmpOp>(
-        loc,
-        comb::ICmpPredicate::eq,
-        ptr_last_value.getResult(),
-        ptr_read_value.getResult());
-    auto last_read_want_close = builder.create<comb::AndOp>(
-        loc,
-        want_close_value.getResult(),
-        last_read.getResult());
-    auto last_read_want_close_deq = builder.create<comb::AndOp>(
-        loc,
-        last_read_want_close.getResult(),
-        do_deq.getResult());
-    auto updateClose = builder.create<comb::AndOp>(
-        loc,
-        close_signal,
-        not_want_close.getResult());
-    auto isDone = builder.create<comb::OrOp>(
-        loc,
-        last_read_want_close_deq.getResult(),
-        is_done_value.getResult());
-
-    // Clocked logic
-    builder.create<sv::AlwaysOp>(loc, sv::EventControl::AtPosEdge, clk, [&] {
-        builder.create<sv::IfOp>(
+        auto callXilinxQueue = builder.create<hw::InstanceOp>(
             loc,
-            rst,
-            [&] {
-                builder.create<sv::PAssignOp>(
-                    loc,
-                    ptr_write.getResult(),
-                    c_zero.getResult());
-                builder.create<sv::PAssignOp>(
-                    loc,
-                    ptr_read.getResult(),
-                    c_zero.getResult());
-                builder.create<sv::PAssignOp>(
-                    loc,
-                    maybe_full.getResult(),
-                    c_false.getResult());
-                builder.create<sv::PAssignOp>(
-                    loc,
-                    want_close.getResult(),
-                    c_false.getResult());
-                builder.create<sv::PAssignOp>(
-                    loc,
-                    ptr_last.getResult(),
-                    c_zero.getResult());
-                builder.create<sv::PAssignOp>(
-                    loc,
-                    is_done.getResult(),
-                    c_false.getResult());
-            },
-            [&] {
-                builder.create<sv::IfOp>(loc, do_enq.getResult(), [&] {
-                    auto ram_write = builder.create<sv::ArrayIndexInOutOp>(
-                        loc,
-                        ram.getResult(),
-                        ptr_write_value.getResult());
-                    builder.create<sv::PAssignOp>(
-                        loc,
-                        ram_write.getResult(),
-                        in_bits);
-                    auto isSizeMax = builder.create<comb::ICmpOp>(
-                        loc,
-                        comb::ICmpPredicate::eq,
-                        ptr_write_value.getResult(),
-                        sizeMaxIdx.getResult());
-                    builder.create<sv::IfOp>(
-                        loc,
-                        isSizeMax.getResult(),
-                        [&] {
-                            builder.create<sv::PAssignOp>(
-                                loc,
-                                ptr_write.getResult(),
-                                c_zero.getResult());
-                        },
-                        [&] {
-                            builder.create<sv::PAssignOp>(
-                                loc,
-                                ptr_write.getResult(),
-                                next_write.getResult());
-                        });
-                });
-                builder.create<sv::IfOp>(loc, do_deq.getResult(), [&] {
-                    auto isSizeMax = builder.create<comb::ICmpOp>(
-                        loc,
-                        comb::ICmpPredicate::eq,
-                        ptr_read_value.getResult(),
-                        sizeMaxIdx.getResult());
-                    builder.create<sv::IfOp>(
-                        loc,
-                        isSizeMax.getResult(),
-                        [&] {
-                            builder.create<sv::PAssignOp>(
-                                loc,
-                                ptr_read.getResult(),
-                                c_zero.getResult());
-                        },
-                        [&] {
-                            builder.create<sv::PAssignOp>(
-                                loc,
-                                ptr_read.getResult(),
-                                next_read.getResult());
-                        });
-                });
-                builder.create<sv::IfOp>(loc, notSameEnqDeq.getResult(), [&] {
-                    builder.create<sv::PAssignOp>(
-                        loc,
-                        maybe_full.getResult(),
-                        do_enq.getResult());
-                });
-                builder.create<sv::IfOp>(loc, updateClose.getResult(), [&] {
-                    builder.create<sv::PAssignOp>(
-                        loc,
-                        want_close.getResult(),
-                        c_true.getResult());
-                    builder.create<sv::PAssignOp>(
-                        loc,
-                        ptr_last.getResult(),
-                        ptr_write_value.getResult());
-                });
+            xilinxQueueModule,
+            "xpm_fifo_axis_inst",
+            inputs,
+            ArrayAttr::get(builder.getContext(), params));
+        builder.create<hw::OutputOp>(loc, callXilinxQueue.getResults());
+    } else {
+        // Constants
+        auto c_true = builder.create<hw::ConstantOp>(loc, i1Ty, 1);
+        auto c_false = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
+        auto c_zero = builder.create<hw::ConstantOp>(loc, i32Ty, 0);
+        auto c_one = builder.create<hw::ConstantOp>(loc, i32Ty, 1);
+        auto sizeValue =
+            builder.create<hw::ParamValueOp>(loc, i32Ty, sizeParamAttr);
+        auto sizeMaxIdx = builder.create<comb::SubOp>(
+            loc,
+            sizeValue.getResult(),
+            c_one.getResult());
+
+        // Close behavior
+        auto want_close = builder.create<sv::RegOp>(loc, i1Ty);
+        auto want_close_value =
+            builder.create<sv::ReadInOutOp>(loc, want_close.getResult());
+        // RAM
+        auto ram = builder.create<sv::RegOp>(
+            loc,
+            hw::UnpackedArrayType::get(
+                builder.getContext(),
+                dataParamTy,
+                sizeParamAttr));
+        auto placeholderReadIndex =
+            builder.create<hw::ConstantOp>(loc, i32Ty, 0);
+        auto ram_read = builder.create<sv::ArrayIndexInOutOp>(
+            loc,
+            ram.getResult(),
+            placeholderReadIndex.getResult());
+        auto ram_read_data =
+            builder.create<sv::ReadInOutOp>(loc, ram_read.getResult());
+
+        // Pointers
+        auto ptr_write = builder.create<sv::RegOp>(loc, i32Ty);
+        auto ptr_write_value =
+            builder.create<sv::ReadInOutOp>(loc, ptr_write.getResult());
+        auto ptr_read = builder.create<sv::RegOp>(loc, i32Ty);
+        auto ptr_read_value =
+            builder.create<sv::ReadInOutOp>(loc, ptr_read.getResult());
+        placeholderReadIndex.replaceAllUsesWith(ptr_read_value.getResult());
+        auto maybe_full = builder.create<sv::RegOp>(loc, i1Ty);
+        auto maybe_full_value =
+            builder.create<sv::ReadInOutOp>(loc, maybe_full.getResult());
+        auto ptr_last = builder.create<sv::RegOp>(loc, i32Ty);
+        auto ptr_last_value =
+            builder.create<sv::ReadInOutOp>(loc, ptr_last.getResult());
+        auto is_done = builder.create<sv::RegOp>(loc, i1Ty);
+        auto is_done_value =
+            builder.create<sv::ReadInOutOp>(loc, is_done.getResult());
+
+        // Signals
+        auto ptr_match = builder.create<comb::ICmpOp>(
+            loc,
+            comb::ICmpPredicate::eq,
+            ptr_write_value.getResult(),
+            ptr_read_value.getResult());
+        auto _empty_T = builder.create<comb::XorOp>(
+            loc,
+            maybe_full_value.getResult(),
+            c_true.getResult());
+        auto empty = builder.create<comb::AndOp>(
+            loc,
+            ptr_match.getResult(),
+            _empty_T.getResult());
+        auto full = builder.create<comb::AndOp>(
+            loc,
+            ptr_match.getResult(),
+            maybe_full_value.getResult());
+        auto placeholderNotFull = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
+        auto do_enq = builder.create<comb::AndOp>(
+            loc,
+            placeholderNotFull.getResult(),
+            in_valid);
+        auto placeholderNotEmpty = builder.create<hw::ConstantOp>(loc, i1Ty, 0);
+        auto do_deq = builder.create<comb::AndOp>(
+            loc,
+            out_ready,
+            placeholderNotEmpty.getResult());
+        auto next_write = builder.create<comb::AddOp>(
+            loc,
+            ptr_write_value.getResult(),
+            c_one.getResult());
+        auto next_read = builder.create<comb::AddOp>(
+            loc,
+            ptr_read_value.getResult(),
+            c_one.getResult());
+        auto notSameEnqDeq = builder.create<comb::ICmpOp>(
+            loc,
+            comb::ICmpPredicate::ne,
+            do_enq.getResult(),
+            do_deq.getResult());
+        auto not_empty = builder.create<comb::XorOp>(
+            loc,
+            empty.getResult(),
+            c_true.getResult());
+        placeholderNotEmpty.replaceAllUsesWith(not_empty.getResult());
+        auto not_full = builder.create<comb::XorOp>(
+            loc,
+            full.getResult(),
+            c_true.getResult());
+        auto not_want_close = builder.create<comb::XorOp>(
+            loc,
+            want_close_value.getResult(),
+            c_true.getResult());
+        auto io_enq_ready_value = builder.create<comb::AndOp>(
+            loc,
+            not_full.getResult(),
+            not_want_close.getResult());
+        placeholderNotFull.replaceAllUsesWith(io_enq_ready_value.getResult());
+        // auto isDone = builder.create<comb::AndOp>(
+        //     loc,
+        //     want_close_value.getResult(),
+        //     empty.getResult());
+        auto last_read = builder.create<comb::ICmpOp>(
+            loc,
+            comb::ICmpPredicate::eq,
+            ptr_last_value.getResult(),
+            ptr_read_value.getResult());
+        auto last_read_want_close = builder.create<comb::AndOp>(
+            loc,
+            want_close_value.getResult(),
+            last_read.getResult());
+        auto last_read_want_close_deq = builder.create<comb::AndOp>(
+            loc,
+            last_read_want_close.getResult(),
+            do_deq.getResult());
+        auto updateClose = builder.create<comb::AndOp>(
+            loc,
+            close_signal,
+            not_want_close.getResult());
+        auto isDone = builder.create<comb::OrOp>(
+            loc,
+            last_read_want_close_deq.getResult(),
+            is_done_value.getResult());
+
+        // Clocked logic
+        builder
+            .create<sv::AlwaysOp>(loc, sv::EventControl::AtPosEdge, clk, [&] {
                 builder.create<sv::IfOp>(
                     loc,
-                    last_read_want_close_deq.getResult(),
+                    rst,
                     [&] {
                         builder.create<sv::PAssignOp>(
                             loc,
+                            ptr_write.getResult(),
+                            c_zero.getResult());
+                        builder.create<sv::PAssignOp>(
+                            loc,
+                            ptr_read.getResult(),
+                            c_zero.getResult());
+                        builder.create<sv::PAssignOp>(
+                            loc,
+                            maybe_full.getResult(),
+                            c_false.getResult());
+                        builder.create<sv::PAssignOp>(
+                            loc,
+                            want_close.getResult(),
+                            c_false.getResult());
+                        builder.create<sv::PAssignOp>(
+                            loc,
+                            ptr_last.getResult(),
+                            c_zero.getResult());
+                        builder.create<sv::PAssignOp>(
+                            loc,
                             is_done.getResult(),
-                            c_true.getResult());
+                            c_false.getResult());
+                    },
+                    [&] {
+                        builder.create<sv::IfOp>(loc, do_enq.getResult(), [&] {
+                            auto ram_write =
+                                builder.create<sv::ArrayIndexInOutOp>(
+                                    loc,
+                                    ram.getResult(),
+                                    ptr_write_value.getResult());
+                            builder.create<sv::PAssignOp>(
+                                loc,
+                                ram_write.getResult(),
+                                in_bits);
+                            auto isSizeMax = builder.create<comb::ICmpOp>(
+                                loc,
+                                comb::ICmpPredicate::eq,
+                                ptr_write_value.getResult(),
+                                sizeMaxIdx.getResult());
+                            builder.create<sv::IfOp>(
+                                loc,
+                                isSizeMax.getResult(),
+                                [&] {
+                                    builder.create<sv::PAssignOp>(
+                                        loc,
+                                        ptr_write.getResult(),
+                                        c_zero.getResult());
+                                },
+                                [&] {
+                                    builder.create<sv::PAssignOp>(
+                                        loc,
+                                        ptr_write.getResult(),
+                                        next_write.getResult());
+                                });
+                        });
+                        builder.create<sv::IfOp>(loc, do_deq.getResult(), [&] {
+                            auto isSizeMax = builder.create<comb::ICmpOp>(
+                                loc,
+                                comb::ICmpPredicate::eq,
+                                ptr_read_value.getResult(),
+                                sizeMaxIdx.getResult());
+                            builder.create<sv::IfOp>(
+                                loc,
+                                isSizeMax.getResult(),
+                                [&] {
+                                    builder.create<sv::PAssignOp>(
+                                        loc,
+                                        ptr_read.getResult(),
+                                        c_zero.getResult());
+                                },
+                                [&] {
+                                    builder.create<sv::PAssignOp>(
+                                        loc,
+                                        ptr_read.getResult(),
+                                        next_read.getResult());
+                                });
+                        });
+                        builder.create<sv::IfOp>(
+                            loc,
+                            notSameEnqDeq.getResult(),
+                            [&] {
+                                builder.create<sv::PAssignOp>(
+                                    loc,
+                                    maybe_full.getResult(),
+                                    do_enq.getResult());
+                            });
+                        builder.create<sv::IfOp>(
+                            loc,
+                            updateClose.getResult(),
+                            [&] {
+                                builder.create<sv::PAssignOp>(
+                                    loc,
+                                    want_close.getResult(),
+                                    c_true.getResult());
+                                builder.create<sv::PAssignOp>(
+                                    loc,
+                                    ptr_last.getResult(),
+                                    ptr_write_value.getResult());
+                            });
+                        builder.create<sv::IfOp>(
+                            loc,
+                            last_read_want_close_deq.getResult(),
+                            [&] {
+                                builder.create<sv::PAssignOp>(
+                                    loc,
+                                    is_done.getResult(),
+                                    c_true.getResult());
+                            });
                     });
             });
-    });
 
-    // Clean up placeholders
-    placeholderReadIndex.erase();
-    placeholderNotEmpty.erase();
-    placeholderNotFull.erase();
+        // Clean up placeholders
+        placeholderReadIndex.erase();
+        placeholderNotEmpty.erase();
+        placeholderNotFull.erase();
 
-    // Output
-    SmallVector<Value> outputs;
-    outputs.push_back(io_enq_ready_value.getResult());
-    outputs.push_back(not_empty.getResult());
-    outputs.push_back(ram_read_data.getResult());
-    outputs.push_back(isDone.getResult());
-    builder.create<hw::OutputOp>(loc, outputs);
+        // Output
+        SmallVector<Value> outputs;
+        outputs.push_back(io_enq_ready_value.getResult());
+        outputs.push_back(not_empty.getResult());
+        outputs.push_back(ram_read_data.getResult());
+        outputs.push_back(isDone.getResult());
+        builder.create<hw::OutputOp>(loc, outputs);
+    }
     paramQueueModule = hwModule;
     return hwModule;
 }
@@ -1391,6 +1520,9 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
     {
         auto loc = op.getLoc();
         auto context = rewriter.getContext();
+        auto channelStyle = op.getOperation()
+                                ->getAttrOfType<StringAttr>("channel_style")
+                                .getValue();
         // Get connection info
         op.walk([&](HWConnectOp connect) {
             newConnections.push_back(std::make_pair(
@@ -1633,18 +1765,15 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             if (auto channelOp = dyn_cast<ChannelOp>(opInside)) {
                 auto portBit =
                     channelOp.getEncapsulatedType().getIntOrFloatBitWidth();
-                auto bufSize = channelOp.getBufferSize();
-                if (!bufSize.has_value())
-                    return rewriter.notifyMatchFailure(
-                        channelOp.getLoc(),
-                        "For hardware lowering, a channel must have a size.");
-                auto size = bufSize.value();
+                auto size = channelOp.getBufferSize().value();
 
                 OpBuilder builder(context);
                 builder.setInsertionPointToStart(
                     &moduleOp.getBodyRegion().front());
-                auto queueModule =
-                    insertQueue(builder, builder.getUnknownLoc());
+                auto queueModule = insertQueue(
+                    builder,
+                    builder.getUnknownLoc(),
+                    channelStyle == "xilinx");
                 auto newModuleArg = getNewIndexOrArg<Value, Value>(
                     channelOp.getInChan(),
                     newConnections);
