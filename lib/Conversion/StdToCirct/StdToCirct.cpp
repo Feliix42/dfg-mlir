@@ -202,7 +202,7 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
                     loc,
                     "Unsupported Channel Style Attribute");
         }
-        if (channelStyle == "xilinx") {
+        if (channelStyleStr == "xilinx") {
             for (auto type : funcTy.getInputs()) {
                 auto bitwidth = type.getIntOrFloatBitWidth();
                 if (bitwidth < 8 || bitwidth > 2048)
