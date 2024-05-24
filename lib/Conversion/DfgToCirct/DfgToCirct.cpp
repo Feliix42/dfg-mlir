@@ -185,20 +185,23 @@ fsm::MachineOp insertController(
 
     // Caculate if the machine should be shut down
     Value shouldClose;
-    for (size_t i = 0; i < closeRegs.size(); i++) {
-        auto closeReg = closeRegs[i];
-        // if (closeReg != nullptr) {
-        if (i == 0)
-            shouldClose = closeReg;
-        else {
-            auto closeResult =
-                builder.create<comb::AndOp>(loc, shouldClose, closeReg);
-            shouldClose = closeResult.getResult();
+    comb::XorOp notClose;
+    if (hasLoopOp) {
+        for (size_t i = 0; i < closeRegs.size(); i++) {
+            auto closeReg = closeRegs[i];
+            // if (closeReg != nullptr) {
+            if (i == 0)
+                shouldClose = closeReg;
+            else {
+                auto closeResult =
+                    builder.create<comb::AndOp>(loc, shouldClose, closeReg);
+                shouldClose = closeResult.getResult();
+            }
+            // }
         }
-        // }
+        notClose =
+            builder.create<comb::XorOp>(loc, shouldClose, c_true.getResult());
     }
-    auto notClose =
-        builder.create<comb::XorOp>(loc, shouldClose, c_true.getResult());
 
     // All zero vector
     std::vector<Value> outputAllZero;
