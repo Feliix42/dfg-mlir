@@ -7,6 +7,7 @@
 #ifndef DFG_OPS
 #define DFG_OPS
 
+include "dfg-mlir/Dialect/dfg/Enums.td"
 include "dfg-mlir/Dialect/dfg/IR/Types.td"
 include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
 include "dfg-mlir/Dialect/dfg/IR/HWOps.td"
@@ -16,6 +17,63 @@ include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
 
+def Dfg_RegionOp : Dfg_Op<
+        "region",
+        [
+            IsolatedFromAbove,
+            NoTerminator
+        ]>
+{
+    let summary = "Defines a region in a graph.";
+
+    let arguments = (ins SymbolNameAttr:$sym_name,
+                         TypeAttrOf<FunctionType>:$function_type);
+    let regions = (region SizedRegion<1>:$body);
+
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
+}
+
+def Dfg_EmbedOp : Dfg_Op<
+        "embed",
+        [
+            AttrSizedOperandSegments//,
+            // HasParent<"RegionOp">
+        ]>
+{
+    let summary = "Embed a region at current location.";
+
+    let arguments = (ins SymbolRefAttr:$callee,
+                         Variadic<Dfg_OutputType>:$inputs,
+                         Variadic<Dfg_InputType>:$outputs);
+
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
+}
+
+def Dfg_ConnectInputOp : Dfg_Op<
+        "connect_input",
+        []>
+{
+    let summary = "Connect region input ports with channels.";
+
+    let arguments = (ins Dfg_OutputType:$regionPort,
+                         Dfg_InputType:$channelPort);
+
+    let hasCustomAssemblyFormat = 1;
+}
+
+def Dfg_ConnectOutputOp : Dfg_Op<
+        "connect_output",
+        []>
+{
+    let summary = "Connect region output ports with channels.";
+
+    let arguments = (ins Dfg_InputType:$regionPort,
+                         Dfg_OutputType:$channelPort);
+
+    let hasCustomAssemblyFormat = 1;
+}
 
 def Dfg_ProcessOp : Dfg_Op<
         "process",
@@ -208,11 +266,26 @@ def Dfg_ChannelOp : Dfg_Op<
     let hasVerifier = 1;
 }
 
+def Dfg_SetChannelStyleOp : Dfg_Op<
+    "set_channel_style",
+    [
+        HasParent<"ModuleOp">
+    ]>
+{
+    let summary = "Set up global channel style";
+
+    let arguments = (ins Dfg_ChannelStyleDefaultAttr:$channel_style);
+
+    let assemblyFormat = [{
+        $channel_style attr-dict
+    }];
+}
 
 def Dfg_InstantiateOp : Dfg_Op<
     "instantiate",
     [
-        AttrSizedOperandSegments
+        AttrSizedOperandSegments//,
+        // HasParent<"RegionOp">
     ]> {
     let summary = "Instantiates an process with the given inputs, forming (part of) a data flow graph.";
     let description = [{
@@ -240,11 +313,8 @@ def Dfg_InstantiateOp : Dfg_Op<
                          Variadic<Dfg_InputType>:$outputs,
                          DefaultValuedAttr<BoolAttr, "false">:$offloaded);
 
-    // let assemblyFormat = [{
-    //     $callee `inputs` `(` $inputs `)` `outputs` `(` $outputs `)` attr-dict `:` functional-type($inputs, $outputs)
-    // }];
-
     let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
 }
 
 

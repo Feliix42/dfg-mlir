@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "dfg-mlir/Dialect/dfg/Enums.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"

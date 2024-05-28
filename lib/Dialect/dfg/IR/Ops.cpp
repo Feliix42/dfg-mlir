@@ -5,6 +5,7 @@
 
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 
+#include "dfg-mlir/Dialect/dfg/Enums.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/IR/Builders.h"
@@ -30,6 +31,416 @@ using namespace mlir::dfg;
 
 // -> for multiple variadic attributes
 constexpr char kOperandSegmentSizesAttr[] = "operandSegmentSizes";
+
+/// @brief Parses a function argument list for inputs or outputs
+/// @tparam T The class of the argument. Must be either InputType or OutputType
+/// @param parser The currently used parser
+/// @param arguments A list of arguments to parse
+/// @return A parse result indicating success or failure to parse.
+struct TypeId {
+    static Type get(MLIRContext* ctx, Type t) { return t; }
+};
+template<typename T>
+static ParseResult parseChannelArgumentList(
+    OpAsmParser &parser,
+    SmallVectorImpl<OpAsmParser::Argument> &arguments)
+{
+    return parser.parseCommaSeparatedList(
+        OpAsmParser::Delimiter::Paren,
+        [&]() -> ParseResult {
+            OpAsmParser::Argument argument;
+            if (parser.parseArgument(
+                    argument,
+                    /*allowType=*/true,
+                    /*allowAttrs=*/false))
+                return failure();
+
+            argument.type = T::get(argument.type.getContext(), argument.type);
+            arguments.push_back(argument);
+
+            return success();
+        });
+}
+
+//===----------------------------------------------------------------------===//
+// RegionOp
+//===----------------------------------------------------------------------===//
+
+ParseResult RegionOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    auto &builder = parser.getBuilder();
+
+    // parse the operator name
+    StringAttr nameAttr;
+    if (parser.parseSymbolName(
+            nameAttr,
+            getSymNameAttrName(result.name),
+            result.attributes))
+        return failure();
+
+    // parse the signature of the operator
+    SmallVector<OpAsmParser::Argument> inVals, outVals;
+    SMLoc signatureLocation = parser.getCurrentLocation();
+
+    // parse inputs/outputs separately for later distinction
+    if (succeeded(parser.parseOptionalKeyword("inputs"))) {
+        if (parseChannelArgumentList<OutputType>(parser, inVals))
+            return failure();
+    }
+
+    if (succeeded(parser.parseOptionalKeyword("outputs"))) {
+        if (parseChannelArgumentList<InputType>(parser, outVals))
+            return failure();
+    }
+
+    SmallVector<Type> argTypes, resultTypes;
+    argTypes.reserve(inVals.size());
+    resultTypes.reserve(outVals.size());
+
+    for (auto &arg : inVals) argTypes.push_back(arg.type);
+    for (auto &arg : outVals) resultTypes.push_back(arg.type);
+    Type type = builder.getFunctionType(argTypes, resultTypes);
+
+    if (!type) {
+        return parser.emitError(signatureLocation)
+               << "Failed to construct operator type";
+    }
+
+    result.addAttribute(
+        getFunctionTypeAttrName(result.name),
+        TypeAttr::get(type));
+
+    // merge both argument lists for the block arguments
+    inVals.append(outVals);
+
+    OptionalParseResult attrResult =
+        parser.parseOptionalAttrDictWithKeyword(result.attributes);
+    if (attrResult.has_value() && failed(*attrResult)) return failure();
+
+    // parse the attached region, if any
+    auto* body = result.addRegion();
+    SMLoc loc = parser.getCurrentLocation();
+    OptionalParseResult parseResult = parser.parseRegion(
+        *body,
+        inVals,
+        /*enableNameShadowing=*/false);
+
+    if (parseResult.has_value()) {
+        if (failed(*parseResult)) return failure();
+        if (body->empty())
+            return parser.emitError(loc, "expected non-empty operator body");
+    }
+
+    return success();
+}
+
+void RegionOp::print(OpAsmPrinter &p)
+{
+    Operation* op = getOperation();
+    Region &body = op->getRegion(0);
+    bool isExternal = body.empty();
+
+    // print the operation and function name
+    auto funcName =
+        op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName())
+            .getValue();
+
+    p << ' ';
+    p.printSymbolName(funcName);
+
+    ArrayRef<Type> inputTypes = getFunctionType().getInputs();
+    ArrayRef<Type> outputTypes = getFunctionType().getResults();
+
+    if (!inputTypes.empty()) {
+        p << " inputs(";
+        for (unsigned i = 0; i < inputTypes.size(); i++) {
+            if (i > 0) p << ", ";
+
+            if (isExternal)
+                p << "\%arg" << i;
+            else
+                p.printOperand(body.getArgument(i));
+            p << " : " << cast<OutputType>(inputTypes[i]).getElementType();
+        }
+        p << ") ";
+    }
+
+    if (!outputTypes.empty()) {
+        p << " outputs(";
+        unsigned inpSize = inputTypes.size();
+        for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
+            if (i > inpSize) p << ", ";
+
+            if (isExternal)
+                p << "\%arg" << i;
+            else
+                p.printOperand(body.getArgument(i));
+            p << " : "
+              << cast<InputType>(outputTypes[i - inpSize]).getElementType();
+        }
+        p << ") ";
+    }
+
+    // print any attributes in the attribute list into the dict
+    if (!op->getAttrs().empty())
+        p.printOptionalAttrDictWithKeyword(
+            op->getAttrs(),
+            /*elidedAttrs=*/{getFunctionTypeAttrName(), getSymNameAttrName()});
+
+    // Print the region
+    if (!isExternal) {
+        p << ' ';
+        p.printRegion(
+            body,
+            /*printEntryBlockArgs =*/false,
+            /*printBlockTerminators =*/true);
+    }
+}
+
+LogicalResult RegionOp::verify()
+{
+    auto thisRegion = dyn_cast<RegionOp>(getOperation());
+    auto moduleOp = thisRegion->getParentOfType<ModuleOp>();
+    auto ops = thisRegion.getBody().getOps();
+    auto args = thisRegion.getBody().getArguments();
+
+    RegionOp topRegion;
+    moduleOp->walk([&](RegionOp regionOp) { topRegion = regionOp; });
+    bool isTopRegion = thisRegion == topRegion;
+
+    // Check if the contents in a region is correct
+    bool isContentCorrect = true;
+    if (isTopRegion) {
+        for (auto &op : ops)
+            if (!isa<ChannelOp>(op) && !isa<InstantiateOp>(op)
+                && !isa<EmbedOp>(op) && !isa<ConnectInputOp>(op)
+                && !isa<ConnectOutputOp>(op))
+                isContentCorrect = false;
+    } else {
+        for (auto &op : ops)
+            if (!isa<ChannelOp>(op) && !isa<InstantiateOp>(op)
+                && !isa<EmbedOp>(op))
+                isContentCorrect = false;
+    }
+
+    if (!isContentCorrect) {
+        if (isTopRegion)
+            return ::emitError(getLoc(), "Unsupported ops used in top region.");
+        else
+            return ::emitError(
+                getLoc(),
+                "Only channels and instances are allowed in non-top region.");
+    }
+
+    // TODO: Check if all ports are connected and only once
+    for (auto arg : args) {
+        auto argUsers = arg.getUsers();
+        auto sizeUsers = std::distance(argUsers.begin(), argUsers.end());
+        if (sizeUsers == 0)
+            return ::emitError(getLoc(), "Detecting dangling port.");
+        else if (sizeUsers > 1)
+            return ::emitError(getLoc(), "Detecting port used more than once.");
+    }
+
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// EmbedOp
+//===----------------------------------------------------------------------===//
+
+ParseResult EmbedOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    // parse operator name
+    StringAttr calleeAttr;
+    if (parser.parseSymbolName(calleeAttr)) return failure();
+
+    result.addAttribute(
+        getCalleeAttrName(result.name),
+        SymbolRefAttr::get(calleeAttr));
+
+    // parse the operator inputs and outputs
+    SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs;
+    if (succeeded(parser.parseOptionalKeyword("inputs"))) {
+        if (parser.parseLParen() || parser.parseOperandList(inputs) ||
+            // parser.resolveOperands(inputs, opTy, result.operands)) {
+            parser.parseRParen())
+            return failure();
+    }
+
+    SmallVector<OpAsmParser::UnresolvedOperand, 4> outputs;
+    if (succeeded(parser.parseOptionalKeyword("outputs"))) {
+        if (parser.parseLParen() || parser.parseOperandList(outputs)
+            || parser.parseRParen())
+            return failure();
+    }
+
+    if (parser.parseColon()) return failure();
+
+    // parse the signature & resolve the input/output types
+    SMLoc location = parser.getCurrentLocation();
+    FunctionType signature;
+    if (parser.parseType(signature)) return failure();
+
+    ArrayRef<Type> inpTypes = signature.getInputs();
+    ArrayRef<Type> outTypes = signature.getResults();
+    int32_t numInputs = inpTypes.size();
+    int32_t numOutputs = outTypes.size();
+
+    SmallVector<Type> inChanTypes;
+    SmallVector<Type> outChanTypes;
+    for (auto &inp : inpTypes)
+        inChanTypes.push_back(OutputType::get(inp.getContext(), inp));
+    for (auto &out : outTypes)
+        outChanTypes.push_back(InputType::get(out.getContext(), out));
+
+    if (inChanTypes.size() != inputs.size()
+        || outChanTypes.size() != outputs.size()) {
+        parser.emitError(
+            location,
+            "Call signature does not match operand count");
+    }
+
+    if (parser.resolveOperands(inputs, inChanTypes, location, result.operands))
+        return failure();
+
+    if (parser
+            .resolveOperands(outputs, outChanTypes, location, result.operands))
+        return failure();
+
+    // Add derived `operand_segment_sizes` attribute based on parsed
+    // operands.
+    auto operandSegmentSizes =
+        parser.getBuilder().getDenseI32ArrayAttr({numInputs, numOutputs});
+    result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
+
+    return success();
+}
+
+void EmbedOp::print(OpAsmPrinter &p)
+{
+    // callee
+    p << ' ';
+    p.printAttributeWithoutType(getCalleeAttr());
+
+    // print `inputs (...)` if existent
+    if (!getInputs().empty()) p << " inputs(" << getInputs() << ")";
+
+    // print `outputs (...)` if existent
+    if (!getOutputs().empty()) p << " outputs(" << getOutputs() << ")";
+
+    // signature
+    SmallVector<Type> inpChans, outChans;
+
+    for (auto in : getInputs().getTypes())
+        inpChans.push_back(cast<OutputType>(in).getElementType());
+    for (auto out : getOutputs().getTypes())
+        outChans.push_back(mlir::cast<InputType>(out).getElementType());
+
+    p << " : ";
+    p.printFunctionalType(inpChans, outChans);
+}
+
+LogicalResult EmbedOp::verify()
+{
+    auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
+    auto embedRegionName = getCallee().getRootReference().str();
+    auto hasEmbeddedRegion = false;
+    auto embeddingProcessOrOperator = false;
+    RegionOp embeddedRegionOp;
+
+    // Check if there is a region which has the name of the one to be
+    // embedded
+    moduleOp->walk([&](Operation* op) {
+        if (auto processOp = dyn_cast<ProcessOp>(op)) {
+            if (processOp.getSymName().str() == embedRegionName)
+                embeddingProcessOrOperator = true;
+        } else if (auto operatorOp = dyn_cast<OperatorOp>(op)) {
+            if (operatorOp.getSymName().str() == embedRegionName)
+                embeddingProcessOrOperator = true;
+        } else if (auto regionOp = dyn_cast<RegionOp>(op)) {
+            if (regionOp.getSymName().str() == embedRegionName) {
+                hasEmbeddedRegion = true;
+                embeddedRegionOp = regionOp;
+            }
+        } else
+            WalkResult::advance();
+    });
+
+    // If there is the embedded region, check if the function type mathces
+    if (embeddingProcessOrOperator || !hasEmbeddedRegion)
+        return ::emitError(getLoc(), "Cannot find the embedded region op.");
+
+    auto inputTy = getInputs().getTypes();
+    auto outputTy = getOutputs().getTypes();
+    auto embedFuncTy = embeddedRegionOp.getFunctionType();
+    if (embedFuncTy != FunctionType::get(getContext(), inputTy, outputTy))
+        return ::emitError(
+            getLoc(),
+            "Fcuntion type mismatches the embedded region");
+
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// ConnectInputOp
+//===----------------------------------------------------------------------===//
+
+ParseResult ConnectInputOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand regionPort;
+    OpAsmParser::UnresolvedOperand channelPort;
+    Type dataTy;
+
+    if (parser.parseOperand(regionPort) || parser.parseComma()
+        || parser.parseOperand(channelPort) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    Type regionTy = OutputType::get(dataTy.getContext(), dataTy);
+    Type channelTy = InputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(regionPort, regionTy, result.operands)
+        || parser.resolveOperand(channelPort, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void ConnectInputOp::print(OpAsmPrinter &p)
+{
+    p << " " << getRegionPort() << ", " << getChannelPort() << " : "
+      << getRegionPort().getType().getElementType();
+}
+
+//===----------------------------------------------------------------------===//
+// ConnectOutputOp
+//===----------------------------------------------------------------------===//
+
+ParseResult ConnectOutputOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand regionPort;
+    OpAsmParser::UnresolvedOperand channelPort;
+    Type dataTy;
+
+    if (parser.parseOperand(regionPort) || parser.parseComma()
+        || parser.parseOperand(channelPort) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    Type regionTy = InputType::get(dataTy.getContext(), dataTy);
+    Type channelTy = OutputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(regionPort, regionTy, result.operands)
+        || parser.resolveOperand(channelPort, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void ConnectOutputOp::print(OpAsmPrinter &p)
+{
+    p << " " << getRegionPort() << ", " << getChannelPort() << " : "
+      << getRegionPort().getType().getElementType();
+}
 
 //===----------------------------------------------------------------------===//
 // ProcessOp
@@ -77,36 +488,6 @@ bool ProcessOp::isExternal()
 {
     Region &body = getRegion();
     return body.empty();
-}
-
-/// @brief Parses a function argument list for inputs or outputs
-/// @tparam T The class of the argument. Must be either InputType or OutputType
-/// @param parser The currently used parser
-/// @param arguments A list of arguments to parse
-/// @return A parse result indicating success or failure to parse.
-struct TypeId {
-    static Type get(MLIRContext* ctx, Type t) { return t; }
-};
-template<typename T>
-static ParseResult parseChannelArgumentList(
-    OpAsmParser &parser,
-    SmallVectorImpl<OpAsmParser::Argument> &arguments)
-{
-    return parser.parseCommaSeparatedList(
-        OpAsmParser::Delimiter::Paren,
-        [&]() -> ParseResult {
-            OpAsmParser::Argument argument;
-            if (parser.parseArgument(
-                    argument,
-                    /*allowType=*/true,
-                    /*allowAttrs=*/false))
-                return failure();
-
-            argument.type = T::get(argument.type.getContext(), argument.type);
-            arguments.push_back(argument);
-
-            return success();
-        });
 }
 
 ParseResult ProcessOp::parse(OpAsmParser &parser, OperationState &result)
@@ -203,7 +584,7 @@ void ProcessOp::print(OpAsmPrinter &p)
                 p << "\%arg" << i;
             else
                 p.printOperand(body.getArgument(i));
-            p << " : " << inputTypes[i].cast<OutputType>().getElementType();
+            p << " : " << cast<OutputType>(inputTypes[i]).getElementType();
         }
         p << ") ";
     }
@@ -219,7 +600,7 @@ void ProcessOp::print(OpAsmPrinter &p)
             else
                 p.printOperand(body.getArgument(i));
             p << " : "
-              << outputTypes[i - inpSize].cast<InputType>().getElementType();
+              << cast<InputType>(outputTypes[i - inpSize]).getElementType();
         }
         p << ") ";
     }
@@ -563,10 +944,7 @@ void LoopOp::print(OpAsmPrinter &p)
             if (i > 0) p << ", ";
             p.printOperand(inputs[i]);
             p << " : ";
-            p.printType(inputs[i]
-                            .getImpl()
-                            ->getType()
-                            .cast<OutputType>()
+            p.printType(cast<OutputType>(inputs[i].getImpl()->getType())
                             .getElementType());
         }
         p << ")";
@@ -580,10 +958,7 @@ void LoopOp::print(OpAsmPrinter &p)
             if (i > 0) p << ", ";
             p.printOperand(outputs[i]);
             p << " : ";
-            p.printType(outputs[i]
-                            .getImpl()
-                            ->getType()
-                            .cast<InputType>()
+            p.printType(cast<InputType>(outputs[i].getImpl()->getType())
                             .getElementType());
         }
         p << ")";
@@ -785,12 +1160,70 @@ void InstantiateOp::print(OpAsmPrinter &p)
     SmallVector<Type> inpChans, outChans;
 
     for (auto in : getInputs().getTypes())
-        inpChans.push_back(in.cast<OutputType>().getElementType());
+        inpChans.push_back(cast<OutputType>(in).getElementType());
     for (auto out : getOutputs().getTypes())
-        outChans.push_back(out.cast<InputType>().getElementType());
+        outChans.push_back(cast<InputType>(out).getElementType());
 
     p << " : ";
     p.printFunctionalType(inpChans, outChans);
+}
+
+LogicalResult InstantiateOp::verify()
+{
+    auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
+    auto calleeName = getCallee().getRootReference().str();
+    auto hasCalledProcessOrOperator = false;
+    auto callingRegion = false;
+    ProcessOp calledProcessOp;
+    OperatorOp calledOperatorOp;
+
+    // Check if there is a process or an operator which has the name of the one
+    // to be instantiated
+    moduleOp->walk([&](Operation* op) {
+        if (auto processOp = dyn_cast<ProcessOp>(op)) {
+            if (processOp.getSymName().str() == calleeName) {
+                hasCalledProcessOrOperator = true;
+                calledProcessOp = processOp;
+            }
+        } else if (auto operatorOp = dyn_cast<OperatorOp>(op)) {
+            if (operatorOp.getSymName().str() == calleeName) {
+                hasCalledProcessOrOperator = true;
+                calledOperatorOp = operatorOp;
+            }
+        } else if (auto regionOp = dyn_cast<RegionOp>(op)) {
+            if (regionOp.getSymName().str() == calleeName) callingRegion = true;
+        } else
+            WalkResult::advance();
+    });
+
+    if (callingRegion || !hasCalledProcessOrOperator)
+        return ::emitError(
+            getLoc(),
+            "Cannot find the called process or operator op.");
+
+    // If there is the called process or opereator, check if the function type
+    // mathces
+    auto inputTy = getInputs().getTypes();
+    auto outputTy = getOutputs().getTypes();
+    FunctionType calledFuncTy;
+    if (calledProcessOp != nullptr)
+        calledFuncTy = calledProcessOp.getFunctionType();
+    else {
+        auto operatorFunc = calledOperatorOp.getFunctionType();
+        SmallVector<Type> inTy, outTy;
+        // SmallVector<Type> outTy;
+        for (auto type : operatorFunc.getInputs())
+            inTy.push_back(OutputType::get(getContext(), type));
+        for (auto type : operatorFunc.getResults())
+            outTy.push_back(InputType::get(getContext(), type));
+        calledFuncTy = FunctionType::get(getContext(), inTy, outTy);
+    }
+    if (calledFuncTy != FunctionType::get(getContext(), inputTy, outputTy))
+        return ::emitError(
+            getLoc(),
+            "Fcuntion type mismatches the called process or operator");
+
+    return success();
 }
 
 //===----------------------------------------------------------------------===//
