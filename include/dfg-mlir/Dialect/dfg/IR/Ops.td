@@ -30,6 +30,11 @@ def Dfg_RegionOp : Dfg_Op<
                          TypeAttrOf<FunctionType>:$function_type);
     let regions = (region SizedRegion<1>:$body);
 
+    let skipDefaultBuilders = 1;
+    let builders = [
+        OpBuilder<(ins "StringRef":$name, "FunctionType":$function_type)>
+    ];
+
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
 }

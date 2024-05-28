@@ -66,6 +66,35 @@ static ParseResult parseChannelArgumentList(
 // RegionOp
 //===----------------------------------------------------------------------===//
 
+void RegionOp::build(
+    OpBuilder &builder,
+    OperationState &state,
+    StringRef name,
+    FunctionType function_type)
+{
+    state.addAttribute(
+        SymbolTable::getSymbolAttrName(),
+        builder.getStringAttr(name));
+    state.addAttribute(
+        RegionOp::getFunctionTypeAttrName(state.name),
+        TypeAttr::get(function_type));
+
+    Region* region = state.addRegion();
+    Block* body = new Block();
+    region->push_back(body);
+
+    SmallVector<Type> blockArgTypes;
+    blockArgTypes.append(
+        function_type.getInputs().begin(),
+        function_type.getInputs().end());
+    blockArgTypes.append(
+        function_type.getResults().begin(),
+        function_type.getResults().end());
+    body->addArguments(
+        blockArgTypes,
+        SmallVector<Location>(blockArgTypes.size(), builder.getUnknownLoc()));
+}
+
 ParseResult RegionOp::parse(OpAsmParser &parser, OperationState &result)
 {
     auto &builder = parser.getBuilder();
