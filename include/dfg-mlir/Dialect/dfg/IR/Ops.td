@@ -57,7 +57,7 @@ def Dfg_EmbedOp : Dfg_Op<
 }
 
 def Dfg_ConnectInputOp : Dfg_Op<
-        "connect_input",
+        "connect.input",
         []>
 {
     let summary = "Connect region input ports with channels.";
@@ -69,7 +69,7 @@ def Dfg_ConnectInputOp : Dfg_Op<
 }
 
 def Dfg_ConnectOutputOp : Dfg_Op<
-        "connect_output",
+        "connect.output",
         []>
 {
     let summary = "Connect region output ports with channels.";
@@ -222,6 +222,7 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"ProcessOp">, NoTerminator, AttrSized
     ];
 
     let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
 }
 
 def Dfg_ChannelOp : Dfg_Op<

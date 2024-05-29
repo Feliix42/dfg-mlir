@@ -1003,6 +1003,33 @@ void LoopOp::print(OpAsmPrinter &p)
     }
 }
 
+LogicalResult LoopOp::verify()
+{
+    auto loopOp = dyn_cast<LoopOp>(getOperation());
+    auto processOp = loopOp.getParentOp();
+    auto processFuncTy = processOp.getFunctionType();
+
+    auto loopInputSize =
+        std::distance(loopOp.getInChans().begin(), loopOp.getInChans().end());
+    auto loopOutputSize =
+        std::distance(loopOp.getOutChans().begin(), loopOp.getOutChans().end());
+
+    if (loopInputSize) {
+        if (loopInputSize != processFuncTy.getNumInputs())
+            return ::emitError(
+                getLoc(),
+                "LoopOp should monitor all input ports or none.");
+    }
+    if (loopOutputSize) {
+        if (loopOutputSize != processFuncTy.getNumResults())
+            return ::emitError(
+                getLoc(),
+                "LoopOp should monitor all output ports or none.");
+    }
+
+    return success();
+}
+
 //===----------------------------------------------------------------------===//
 // ChannelOp
 //===----------------------------------------------------------------------===//
