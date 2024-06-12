@@ -104,16 +104,6 @@ struct ConvertAnyOperatorToEquivalentProcess
                 outChanTypes));
         auto newFuncTy = processOp.getFunctionType();
         Block* processBlock = &processOp.getBody().front();
-        // SmallVector<Type> blockArgTypes;
-        // blockArgTypes.append(
-        //     newFuncTy.getInputs().begin(),
-        //     newFuncTy.getInputs().end());
-        // blockArgTypes.append(
-        //     newFuncTy.getResults().begin(),
-        //     newFuncTy.getResults().end());
-        // SmallVector<Location> locations(blockArgTypes.size(), loc);
-        // processBlock->addArguments(blockArgTypes, locations);
-        // processOp.getBody().push_back(processBlock);
 
         // Insert LoopOp in the ProcessOp
         rewriter.setInsertionPointToStart(processBlock);
@@ -123,15 +113,16 @@ struct ConvertAnyOperatorToEquivalentProcess
         auto loopOp = rewriter.create<LoopOp>(loc, inChans, outChans);
 
         // Insert number of input channels PullOps
-        // Block* loopBlock = new Block();
-        // loopOp.getBody().push_back(loopBlock);
-        // rewriter.setInsertionPointToStart(loopBlock);
         rewriter.setInsertionPointToStart(&loopOp.getBody().front());
         SmallVector<Value> newOperands;
+        SmallVector<std::pair<Value, Value>> argToPulledMap;
         for (size_t i = 0; i < newFuncTy.getNumInputs(); i++) {
             auto pullOp =
                 rewriter.create<PullOp>(loc, processBlock->getArgument(i));
             newOperands.push_back(pullOp.getResult());
+            argToPulledMap.push_back(std::make_pair(
+                pullOp.getResult(),
+                op.getBodyRegion().getArgument(i)));
         }
 
         SmallVector<std::pair<Value, Value>> oldToNewValueMap;
@@ -148,15 +139,26 @@ struct ConvertAnyOperatorToEquivalentProcess
                 // Replace the YieldOp with number of output channels PushOps
                 auto yieldOp = dyn_cast<YieldOp>(opi);
                 auto idxBias = newFuncTy.getNumInputs();
-                for (const auto operand : yieldOp.getOperands()) {
-                    rewriter.create<PushOp>(
-                        loc,
-                        getNewIndexOrArg<Value, Value>(
+                for (const auto operand : yieldOp.getOperands())
+                    if (auto newValue = getNewIndexOrArg<Value, Value>(
                             operand,
-                            oldToNewValueMap)
-                            .value(),
-                        processBlock->getArgument(idxBias++));
-                }
+                            oldToNewValueMap))
+                        rewriter.create<PushOp>(
+                            loc,
+                            newValue.value(),
+                            processBlock->getArgument(idxBias++));
+                    else if (
+                        auto newValue = getNewIndexOrArg<Value, Value>(
+                            operand,
+                            argToPulledMap))
+                        rewriter.create<PushOp>(
+                            loc,
+                            newValue.value(),
+                            processBlock->getArgument(idxBias++));
+                    else
+                        return rewriter.notifyMatchFailure(
+                            yieldOp.getLoc(),
+                            "Unknown value to be pushed.");
             }
         }
 
