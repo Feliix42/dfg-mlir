@@ -11,4 +11,5 @@ add_mlir_dialect_library(DfgDialect
         MLIRParser
         MLIRSideEffectInterfaces
         DfgEnums
+        DfgInterfaces
 )

@@ -7,6 +7,7 @@
 
 #include "dfg-mlir/Dialect/dfg/Enums.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
+#include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OpDefinition.h"

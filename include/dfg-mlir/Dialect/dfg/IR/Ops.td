@@ -9,6 +9,7 @@
 
 include "dfg-mlir/Dialect/dfg/Enums.td"
 include "dfg-mlir/Dialect/dfg/IR/Types.td"
+include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.td"
 include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
 include "dfg-mlir/Dialect/dfg/IR/HWOps.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
@@ -20,6 +21,8 @@ include "mlir/Interfaces/FunctionInterfaces.td"
 def Dfg_RegionOp : Dfg_Op<
         "region",
         [
+            Dfg_DataflowGraphOp,
+
             IsolatedFromAbove,
             NoTerminator
         ]>
@@ -37,6 +40,14 @@ def Dfg_RegionOp : Dfg_Op<
 
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
+
+    code extraClassDeclaration = [{
+        //===--------------------------------------------------------------===//
+        // DataflowGraphOp
+        //===--------------------------------------------------------------===//
+
+        void foo() { return; }
+    }];
 }
 
 def Dfg_EmbedOp : Dfg_Op<

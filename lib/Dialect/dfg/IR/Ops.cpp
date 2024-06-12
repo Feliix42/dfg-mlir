@@ -8,6 +8,7 @@
 #include "dfg-mlir/Dialect/dfg/Enums.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
+#include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -270,6 +271,14 @@ LogicalResult RegionOp::verify()
         else if (sizeUsers > 1)
             return ::emitError(getLoc(), "Detecting port used more than once.");
     }
+
+    thisRegion.walk([&](ChannelOp channelOp) {
+        auto inputUser = channelOp.getInChan().getUses().begin().getUser();
+        if (auto instantiateOp = dyn_cast<InstantiateOp>(inputUser)) {
+            auto calleeName =
+                instantiateOp.getCallee().getRootReference().str();
+        }
+    });
 
     return success();
 }
