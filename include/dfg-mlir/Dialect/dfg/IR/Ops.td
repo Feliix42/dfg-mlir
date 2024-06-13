@@ -74,8 +74,15 @@ def Dfg_OperatorOp : Dfg_Op<
 
 // TODO:
 // , RegionBranchOpInterface]>
-def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"OperatorOp">, NoTerminator, AttrSizedOperandSegments, RecursiveMemoryEffects]>
-{
+def Dfg_LoopOp : Dfg_Op<
+        "loop",
+        [
+            AutomaticAllocationScope,
+            HasParent<"OperatorOp">,
+            NoTerminator,
+            AttrSizedOperandSegments,
+            RecursiveMemoryEffects
+        ]> {
     let summary = "Defines a list of input/output ports maybe closed";
 
     let description = [{
@@ -257,6 +264,76 @@ def Dfg_PullOp : Dfg_Op<
     // }];
 
     let hasCustomAssemblyFormat = 1;
+}
+
+
+def Dfg_PushNOp : Dfg_Op<
+    "push_n",
+    []
+> {
+    let summary = "Pushes a list of values into a channel input to send it to the next operator.";
+    let description = [{
+        The `push_n` operation transfers a list of values to another operator
+        by using a channel supplied as argument. Since all channels are typed,
+        the element type of the memref must match the channel type. The shape
+        of the memref dictates how many elements will be pushed.
+
+        Syntax:
+
+        ```
+        TODO
+        ```
+
+        Examples:
+
+        ```
+        TODO
+        ```
+    }];
+
+    let arguments = (ins AnyMemRef: $inp, Dfg_InputType: $chan);
+
+    // let assemblyFormat = [{
+    //     `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
+    // }];
+
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
+}
+
+def Dfg_PullNOp : Dfg_Op<
+    "pull_n",
+    []
+> {
+    let summary = "Pulls a specific number of elements from a channel.";
+    let description = [{
+        The `pull_n` operation retrieves a list of values from another operator
+        by using a channel supplied as argument. Since all channels are typed,
+        the type of the memref must match the channel type. The number of
+        elements to be pulled is determined by the shape of the memred.
+
+        Syntax:
+
+        ```
+        TODO
+        ```
+
+        Examples:
+
+        ```
+        TODO
+        ```
+    }];
+
+    let arguments = (ins Dfg_OutputType: $chan);
+    let results = (outs AnyMemRef: $outp);
+
+    // let assemblyFormat = [{
+    //     $chan attr-dict `:` functional-type($chan, $outp)
+    // }];
+
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//

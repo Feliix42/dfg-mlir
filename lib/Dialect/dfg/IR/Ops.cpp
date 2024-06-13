@@ -583,6 +583,87 @@ void PushOp::print(OpAsmPrinter &p)
 }
 
 //===----------------------------------------------------------------------===//
+// PullNOp
+//===----------------------------------------------------------------------===//
+
+ParseResult PullNOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand inputChan;
+    Type dataTy;
+
+    if (parser.parseOperand(inputChan) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    result.addTypes(dataTy);
+
+    Type channelTy = OutputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(inputChan, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void PullNOp::print(OpAsmPrinter &p)
+{
+    p << " " << getChan() << " : " << getType();
+}
+
+LogicalResult PullNOp::verify() {
+    Type chanType = getChan().getType().getElementType();
+    Type memrefType = getType().getElementType();
+
+    if (chanType != memrefType)
+        return ::emitError(
+            getLoc(),
+            "The element types of the result memref and the channel "
+            "must match");
+
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// PushOp
+//===----------------------------------------------------------------------===//
+
+ParseResult PushNOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand inp;
+    OpAsmParser::UnresolvedOperand outputChan;
+    Type dataTy;
+
+    if (parser.parseLParen() || parser.parseOperand(inp) || parser.parseRParen()
+        || parser.parseOperand(outputChan) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    Type channelTy = InputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(inp, dataTy, result.operands)
+        || parser.resolveOperand(outputChan, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void PushNOp::print(OpAsmPrinter &p)
+{
+    p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType();
+}
+
+LogicalResult PushNOp::verify() {
+    Type chanType = getChan().getType().getElementType();
+    Type memrefType = getInp().getType().getElementType();
+
+    if (chanType != memrefType)
+        return ::emitError(
+            getLoc(),
+            "The element types of the input memref and the channel "
+            "must match");
+
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
 // Intermediate HW operations
 //===----------------------------------------------------------------------===//
 

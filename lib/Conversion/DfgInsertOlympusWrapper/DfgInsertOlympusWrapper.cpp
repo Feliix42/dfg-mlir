@@ -30,7 +30,6 @@ std::string alveoHostWrapperName = "createAlveoHostObjectWrapper";
 std::string alveoHostFunctionName = "createAlveoHost";
 std::string alveoHostCall = "olympus_wrapper";
 
-
 // ========================================================
 // Helper Functions
 // ========================================================
@@ -79,158 +78,46 @@ struct ConvertDfgInsertOlympusWrapperPass
 };
 } // namespace
 
-/// This lowering creates an olympus wrapper for each offloaded node
-/// instantiation. It creates a new Operator which contains all relevant Olympus
-/// calls
-struct OffloadedInstantiateOpLowering
-        : public OpConversionPattern<InstantiateOp> {
-    using OpConversionPattern<InstantiateOp>::OpConversionPattern;
+/// This lowering transforms push_n ops into runtime channel code, compatible
+/// with the Olympus memory layout.
+struct OlympusPushNLowering
+        : public OpConversionPattern<PushNOp> {
+    using OpConversionPattern<PushNOp>::OpConversionPattern;
 
-    OffloadedInstantiateOpLowering(
+    OlympusPushNLowering(
         TypeConverter &typeConverter,
         MLIRContext* context)
-            : OpConversionPattern<InstantiateOp>(typeConverter, context){};
+            : OpConversionPattern<PushNOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
-        InstantiateOp op,
-        InstantiateOpAdaptor adaptor,
+        PushNOp op,
+        PushNOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        // don't lower offloaded functions
-        if (!adaptor.getOffloaded()) {
-            emitError(
-                op.getLoc(),
-                "This lowering is supposed to run on offloaded instantiations "
-                "only");
-            return failure();
-        }
+        // TODO
+        
+        return success();
+    }
+};
 
-        //
-        ModuleOp parent = op->getParentOfType<ModuleOp>();
+/// This lowering transforms pull_n ops into runtime channel code, compatible
+/// with the Olympus memory layout.
+struct OlympusPullNLowering
+        : public OpConversionPattern<PullNOp> {
+    using OpConversionPattern<PullNOp>::OpConversionPattern;
 
-        // find associated OperatorOp
-        OperatorOp kernelDefinition =
-            parent.lookupSymbol<OperatorOp>(adaptor.getCallee());
+    OlympusPullNLowering(
+        TypeConverter &typeConverter,
+        MLIRContext* context)
+            : OpConversionPattern<PullNOp>(typeConverter, context){};
 
-        // verify that both argument lengths match
-        size_t kernelArgLength =
-            kernelDefinition.getFunctionType().getNumInputs()
-            + kernelDefinition.getFunctionType().getNumResults();
-        if (kernelArgLength != op.getOperands().size()) {
-            emitError(
-                kernelDefinition.getLoc(),
-                "The kernel declaration that corresponds to this instantiation "
-                "does not have a matching argument list length");
-            return failure();
-        }
-
-        // ====================================================================
-        // Olympus wrapper insertion
-        // ====================================================================
-        SymbolRefAttr kernel_name = adaptor.getCallee();
-        std::string wrapperName = kernel_name.getRootReference().str();
-        wrapperName.append("_wrapper");
-
-        // construct the function type for the wrapper
-        auto fnType = rewriter.getFunctionType(op.getOperands().getTypes(), {});
-
-        // TODO(feliix42): Fix the name generation to not error on duplicate
-        // names
-        if (parent.lookupSymbol<func::FuncOp>(wrapperName)) {
-            emitError(
-                op.getLoc(),
-                "Wrapper function name already exists. This is an issue that "
-                "needs to be addressed in the lowering code.");
-            return failure();
-        }
-
-        rewriter.setInsertionPointToStart(parent.getBody());
-        func::FuncOp olympusWrapper =
-            rewriter.create<func::FuncOp>(op.getLoc(), wrapperName, fnType);
-        Block* entryBlock = olympusWrapper.addEntryBlock();
-        rewriter.setInsertionPointToEnd(entryBlock);
-
-        // insert olympus.channels
-        StringAttr olympusDialectName =
-            StringAttr::get(op->getContext(), "olympus");
-        llvm::SmallVector<Value> chans;
-        int i = 0;
-        ArrayRef<int64_t> multiplicities = kernelDefinition.getMultiplicity();
-
-        // verify that the number of arguments matches the defined multiplicity
-        if (op.getOperands().size() != multiplicities.size()) {
-            emitError(
-                op.getLoc(),
-                "The multiplicity argument of the kernel definition does not "
-                "match the number of operands supplied to the instantiation "
-                "function");
-            return failure();
-        }
-
-        for (auto arg : op.getOperands()) {
-            OperationState chanOpState(op.getLoc(), "olympus.channel");
-            chanOpState.addAttribute(
-                "depth",
-                rewriter.getI64IntegerAttr(multiplicities[i]));
-            chanOpState.addAttribute(
-                "paramType",
-                rewriter.getStringAttr("small"));
-
-            std::string chanTy = "channel<";
-            llvm::raw_string_ostream tyStream(chanTy);
-            if (isa<OutputType>(arg.getType()))
-                tyStream << cast<OutputType>(arg.getType()).getElementType()
-                         << ">";
-            if (isa<InputType>(arg.getType()))
-                tyStream << cast<InputType>(arg.getType()).getElementType()
-                         << ">";
-            OpaqueType channelType =
-                OpaqueType::get(olympusDialectName, chanTy);
-            chanOpState.addTypes({channelType});
-
-            Operation* chan = rewriter.create(chanOpState);
-            chans.push_back(chan->getResult(0));
-            i++;
-        }
-
-        // create the olympus kernel op, supply it with all generated channels
-        // as inputs
-        OperationState kernelOpState(op.getLoc(), "olympus.kernel");
-        kernelOpState.addAttribute(
-            "callee",
-            adaptor.getCallee().getRootReference());
-        kernelOpState.addAttribute(
-            op.getOperandSegmentSizeAttr(),
-            op->getAttr(op.getOperandSegmentSizesAttrName()));
-
-        std::string pathAttrName("evp.path");
-        Attribute pathAttr = kernelDefinition->getAttr(pathAttrName);
-        if (!pathAttr) {
-            emitError(
-                kernelDefinition.getLoc(),
-                "Kernel declaration must have an `evp.path` argument pointing "
-                "to the kernel source file");
-            return failure();
-        }
-        kernelOpState.addAttribute(pathAttrName, pathAttr);
-        // add channels as arguments
-        kernelOpState.addOperands(chans);
-
-        rewriter.create(kernelOpState);
-
-        // return
-        rewriter.create<func::ReturnOp>(op.getLoc());
-
-        // ====================================================================
-        // Olympus wrapper call
-        // ====================================================================
-        rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<func::CallOp>(
-            op,
-            wrapperName,
-            op->getResultTypes(),
-            adaptor.getOperands());
-
+    LogicalResult matchAndRewrite(
+        PullNOp op,
+        PullNOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        // TODO
+        
         return success();
     }
 };
@@ -629,8 +516,11 @@ void mlir::populateDfgInsertOlympusWrapperConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns)
 {
-    // dfg.instantiate offloaded -> dfg.instantiate & dfg.operator
-    patterns.add<OffloadedInstantiateOpLowering>(
+    patterns.add<OlympusPushNLowering>(
+        typeConverter,
+        patterns.getContext());
+
+    patterns.add<OlympusPullNLowering>(
         typeConverter,
         patterns.getContext());
 }
@@ -684,6 +574,7 @@ void ConvertDfgInsertOlympusWrapperPass::runOnOperation()
 
     if (res.wasInterrupted()) signalPassFailure();
 
+    SmallVector<OperatorOp> newOps;
     if (instantiations.size() > 0) {
         topLevel = instantiations[0]->getParentOfType<func::FuncOp>();
 
@@ -692,7 +583,6 @@ void ConvertDfgInsertOlympusWrapperPass::runOnOperation()
 
         // 3. Insert an OperatorOp for each offloaded instantiate
         // TODO -> re-use the olympus lowering
-        SmallVector<OperatorOp> newOps;
         for (InstantiateOp instantiation : instantiations)
             newOps.push_back(insertOlympusWrapperOp(instantiation));
         assert(newOps.size() == instantiations.size());
@@ -711,13 +601,35 @@ void ConvertDfgInsertOlympusWrapperPass::runOnOperation()
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
-    // populateDfgInsertOlympusWrapperConversionPatterns(converter, patterns);
+    populateDfgInsertOlympusWrapperConversionPatterns(converter, patterns);
 
     target.addLegalDialect<BuiltinDialect, func::FuncDialect>();
 
     target.addLegalDialect<DfgDialect>();
     target.addDynamicallyLegalOp<InstantiateOp>(
         [](InstantiateOp op) { return !op.getOffloaded(); });
+    target.addDynamicallyLegalOp<PushNOp>(
+        [&](PushNOp op) {
+            // NOTE(feliix42): This might fail for items with parent != OperatorOp. Is that legal?
+            OperatorOp parent = op->getParentOfType<OperatorOp>();
+            bool legal = true;
+            for (OperatorOp newOp : newOps) {
+                legal = legal && (newOp != parent);
+            }
+
+            return legal;
+        });
+    target.addDynamicallyLegalOp<PullNOp>(
+        [&](PullNOp op) {
+            // NOTE(feliix42): This might fail for items with parent != OperatorOp. Is that legal?
+            OperatorOp parent = op->getParentOfType<OperatorOp>();
+            bool legal = true;
+            for (OperatorOp newOp : newOps) {
+                legal = legal && (newOp != parent);
+            }
+
+            return legal;
+        });
 
     if (failed(applyPartialConversion(
             getOperation(),
