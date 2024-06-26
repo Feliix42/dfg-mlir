@@ -41,6 +41,25 @@ using namespace circt;
 
 namespace {
 
+ChannelStyle channelStyle = ChannelStyle::Dfg;
+struct EraseSetChannelStyle : OpConversionPattern<SetChannelStyleOp> {
+public:
+    using OpConversionPattern<SetChannelStyleOp>::OpConversionPattern;
+
+    EraseSetChannelStyle(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<SetChannelStyleOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        SetChannelStyleOp op,
+        SetChannelStyleOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        channelStyle = op.getChannelStyle();
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
 // Helper to determine which new argument to use
 SmallVector<std::pair<int, Value>> oldArgsIndex;
 SmallVector<std::pair<Value, Value>> newArguments;
@@ -116,7 +135,7 @@ fsm::MachineOp insertController(
             auto loopedArgIdx = loopChanArgIdx[argIndex].second;
             if (isChanLooped) {
                 if (!isInSmallVector<Value>(pullOp.getChan(), hasClosePull)) {
-                    if (!hasHwInstance && i == numPull - 1 && numPush == 1
+                    if ((!hasHwInstance && i == numPull - 1 && numPush == 1)
                         || pullOp.getChan() == lastMultiPulledChan) {
                         if (!isInSmallVector<Value>(
                                 machine.getArgument(loopedArgIdx),
@@ -651,11 +670,11 @@ fsm::MachineOp insertController(
 
 SmallVector<std::pair<bool, std::string>> processHasLoop;
 SmallVector<std::pair<SmallVector<int>, std::string>> processPortIdx;
-struct ConvertProcess : OpConversionPattern<ProcessOp> {
+struct ConvertProcessToHWModule : OpConversionPattern<ProcessOp> {
 public:
     using OpConversionPattern<ProcessOp>::OpConversionPattern;
 
-    ConvertProcess(TypeConverter &typeConverter, MLIRContext* context)
+    ConvertProcessToHWModule(TypeConverter &typeConverter, MLIRContext* context)
             : OpConversionPattern<ProcessOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
@@ -693,23 +712,22 @@ public:
         processHasLoop.push_back(std::make_pair(hasLoopOp, opName));
         processPortIdx.push_back(std::make_pair(loopChanIdx, opName));
 
+        auto i1Ty = rewriter.getI1Type();
+        auto inDir = hw::ModulePort::Direction::Input;
+        auto outDir = hw::ModulePort::Direction::Output;
         SmallVector<hw::PortInfo> ports;
         int in_num = 1;
         int out_num = 1;
 
         // Add clock port.
-        hw::PortInfo clock;
-        clock.name = rewriter.getStringAttr("clock");
-        clock.dir = hw::ModulePort::Direction::Input;
-        clock.type = rewriter.getI1Type();
-        ports.push_back(clock);
+        ports.push_back(hw::PortInfo{
+            {rewriter.getStringAttr("clock"), i1Ty, inDir}
+        });
 
         // Add reset port.
-        hw::PortInfo reset;
-        reset.name = rewriter.getStringAttr("reset");
-        reset.dir = hw::ModulePort::Direction::Input;
-        reset.type = rewriter.getI1Type();
-        ports.push_back(reset);
+        ports.push_back(hw::PortInfo{
+            {rewriter.getStringAttr("reset"), i1Ty, inDir}
+        });
 
         for (size_t i = 0; i < size; i++) {
             const auto type = types[i];
@@ -724,83 +742,59 @@ public:
             if (const auto inTy = dyn_cast<OutputType>(type)) {
                 auto elemTy = dyn_cast<IntegerType>(inTy.getElementType());
                 assert(elemTy && "only integers are supported on hardware");
+                auto namePrefix = "in" + std::to_string(in_num) + "_";
                 // Add ready for input port
-                hw::PortInfo in_ready;
-                name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
-                       + "_ready";
-                in_ready.name = rewriter.getStringAttr(name);
-                in_ready.dir = hw::ModulePort::Direction::Output;
-                in_ready.type = rewriter.getI1Type();
-                ports.push_back(in_ready);
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr(namePrefix + "ready"),
+                     i1Ty, outDir}
+                });
                 // Add valid for input port
-                hw::PortInfo in_valid;
-                name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
-                       + "_valid";
-                in_valid.name = rewriter.getStringAttr(name);
-                in_valid.dir = hw::ModulePort::Direction::Input;
-                in_valid.type = rewriter.getI1Type();
-                ports.push_back(in_valid);
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr(namePrefix + "valid"),
+                     i1Ty, inDir}
+                });
                 // Add bits for input port
-                hw::PortInfo in_bits;
-                name = ((numInputs == 1) ? "in" : "in" + std::to_string(in_num))
-                       + "_bits";
-                in_bits.name = rewriter.getStringAttr(name);
-                in_bits.dir = hw::ModulePort::Direction::Input;
-                in_bits.type = rewriter.getIntegerType(elemTy.getWidth());
-                ports.push_back(in_bits);
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr(namePrefix + "bits"),
+                     rewriter.getIntegerType(elemTy.getWidth()),
+                     inDir}
+                });
                 // Add close for input port if it's looped
                 if (isMonitored) {
-                    hw::PortInfo in_close;
-                    name = ((numInputs == 1) ? "in"
-                                             : "in" + std::to_string(in_num))
-                           + "_close";
-                    in_close.name = rewriter.getStringAttr(name);
-                    in_close.dir = hw::ModulePort::Direction::Input;
-                    in_close.type = rewriter.getI1Type();
-                    ports.push_back(in_close);
+                    ports.push_back(hw::PortInfo{
+                        {rewriter.getStringAttr(namePrefix + "close"),
+                         i1Ty, inDir}
+                    });
                 }
                 // Index increment
                 in_num++;
             } else if (const auto outTy = dyn_cast<InputType>(type)) {
                 auto elemTy = dyn_cast<IntegerType>(outTy.getElementType());
                 assert(elemTy && "only integers are supported on hardware");
+                auto namePrefix = "out" + std::to_string(out_num);
                 // Add ready for output port
-                hw::PortInfo out_ready;
-                name = ((numOutputs == 1) ? "out"
-                                          : "out" + std::to_string(out_num))
-                       + "_ready";
-                out_ready.name = rewriter.getStringAttr(name);
-                out_ready.dir = hw::ModulePort::Direction::Input;
-                out_ready.type = rewriter.getI1Type();
-                ports.push_back(out_ready);
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr(namePrefix + "_ready"),
+                     i1Ty, inDir}
+                });
                 // Add valid for output port
-                hw::PortInfo out_valid;
-                name = ((numOutputs == 1) ? "out"
-                                          : "out" + std::to_string(out_num))
-                       + "_valid";
-                out_valid.name = rewriter.getStringAttr(name);
-                out_valid.dir = hw::ModulePort::Direction::Output;
-                out_valid.type = rewriter.getI1Type();
-                ports.push_back(out_valid);
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr(namePrefix + "_valid"),
+                     i1Ty, outDir}
+                });
                 // Add bits for output port
-                hw::PortInfo out_bits;
-                name = ((numOutputs == 1) ? "out"
-                                          : "out" + std::to_string(out_num))
-                       + "_bits";
-                out_bits.name = rewriter.getStringAttr(name);
-                out_bits.dir = hw::ModulePort::Direction::Output;
-                out_bits.type = rewriter.getIntegerType(elemTy.getWidth());
-                ports.push_back(out_bits);
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr(namePrefix + "_bits"),
+                     rewriter.getIntegerType(elemTy.getWidth()),
+                     outDir}
+                });
                 out_num++;
             }
         }
         // Add done for output port
-        hw::PortInfo out_done;
-        std::string name = "out_done";
-        out_done.name = rewriter.getStringAttr(name);
-        out_done.dir = hw::ModulePort::Direction::Output;
-        out_done.type = rewriter.getI1Type();
-        ports.push_back(out_done);
+        ports.push_back(hw::PortInfo{
+            {rewriter.getStringAttr("out_done"), i1Ty, outDir}
+        });
         // Index increment
         out_num++;
 
@@ -846,7 +840,7 @@ public:
         // The machine inputs don't contain clock and reset
         rewriter.setInsertionPointToStart(&hwModule.getBody().front());
         auto loc = rewriter.getUnknownLoc();
-        auto i1Ty = rewriter.getI1Type();
+        // auto i1Ty = rewriter.getI1Type();
         auto clock_seq = rewriter.create<seq::ToClockOp>(
             loc,
             hwModule.getBody().getArgument(0));
@@ -1008,6 +1002,8 @@ hw::HWModuleExternOp insertXilinxQueue(OpBuilder &builder, Location loc)
 {
     auto name = "xpm_fifo_axis";
     auto i1Ty = builder.getI1Type();
+    auto inDir = hw::ModulePort::Direction::Input;
+    auto outDir = hw::ModulePort::Direction::Output;
 
     SmallVector<Attribute> params;
     params.push_back(
@@ -1021,65 +1017,45 @@ hw::HWModuleExternOp insertXilinxQueue(OpBuilder &builder, Location loc)
 
     SmallVector<hw::PortInfo> ports;
     // Add clock port.
-    hw::PortInfo clock;
-    clock.name = builder.getStringAttr("s_aclk");
-    clock.dir = hw::ModulePort::Direction::Input;
-    clock.type = i1Ty;
-    ports.push_back(clock);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("s_aclk"), i1Ty, inDir}
+    });
     // Add reset port.
-    hw::PortInfo reset;
-    reset.name = builder.getStringAttr("s_aresetn");
-    reset.dir = hw::ModulePort::Direction::Input;
-    reset.type = i1Ty;
-    ports.push_back(reset);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("s_aresetn"), i1Ty, inDir}
+    });
     // Add close signal
-    hw::PortInfo close;
-    close.name = builder.getStringAttr("s_axis_tlast");
-    close.dir = hw::ModulePort::Direction::Input;
-    close.type = i1Ty;
-    ports.push_back(close);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("s_axis_tlast"), i1Ty, inDir}
+    });
     // Add io_enq_valid
-    hw::PortInfo io_enq_valid;
-    io_enq_valid.name = builder.getStringAttr("s_axis_tvalid");
-    io_enq_valid.dir = hw::ModulePort::Direction::Input;
-    io_enq_valid.type = i1Ty;
-    ports.push_back(io_enq_valid);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("s_axis_tvalid"), i1Ty, inDir}
+    });
     // Add io_enq_bits
-    hw::PortInfo io_enq_bits;
-    io_enq_bits.name = builder.getStringAttr("s_axis_tdata");
-    io_enq_bits.dir = hw::ModulePort::Direction::Input;
-    io_enq_bits.type = dataParamTy;
-    ports.push_back(io_enq_bits);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("s_axis_tdata"), dataParamTy, inDir}
+    });
     // Add io_deq_ready
-    hw::PortInfo io_deq_ready;
-    io_deq_ready.name = builder.getStringAttr("m_axis_tready");
-    io_deq_ready.dir = hw::ModulePort::Direction::Input;
-    io_deq_ready.type = i1Ty;
-    ports.push_back(io_deq_ready);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("m_axis_tready"), i1Ty, inDir}
+    });
     // Add io_enq_ready
-    hw::PortInfo io_enq_ready;
-    io_enq_ready.name = builder.getStringAttr("s_axis_tready");
-    io_enq_ready.dir = hw::ModulePort::Direction::Output;
-    io_enq_ready.type = i1Ty;
-    ports.push_back(io_enq_ready);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("s_axis_tready"), i1Ty, outDir}
+    });
     // Add io_deq_valid
-    hw::PortInfo io_deq_valid;
-    io_deq_valid.name = builder.getStringAttr("m_axis_tvalid");
-    io_deq_valid.dir = hw::ModulePort::Direction::Output;
-    io_deq_valid.type = i1Ty;
-    ports.push_back(io_deq_valid);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("m_axis_tvalid"), i1Ty, outDir}
+    });
     // Add io_deq_bits
-    hw::PortInfo io_deq_bits;
-    io_deq_bits.name = builder.getStringAttr("m_axis_tdata");
-    io_deq_bits.dir = hw::ModulePort::Direction::Output;
-    io_deq_bits.type = dataParamTy;
-    ports.push_back(io_deq_bits);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("m_axis_tdata"), dataParamTy, outDir}
+    });
     // Add done signal
-    hw::PortInfo done;
-    done.name = builder.getStringAttr("m_axis_tlast");
-    done.dir = hw::ModulePort::Direction::Output;
-    done.type = i1Ty;
-    ports.push_back(done);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("m_axis_tlast"), i1Ty, outDir}
+    });
     // Create new HWModule
     auto hwModule = builder.create<hw::HWModuleExternOp>(
         loc,
@@ -1100,6 +1076,8 @@ hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc, bool isQueueXilinx)
     if (paramQueueModule != nullptr) return paramQueueModule;
     auto i1Ty = builder.getI1Type();
     auto i32Ty = builder.getI32Type();
+    auto inDir = hw::ModulePort::Direction::Input;
+    auto outDir = hw::ModulePort::Direction::Output;
     auto name = "queue";
     SmallVector<Attribute> params;
     params.push_back(hw::ParamDeclAttr::get("bitwidth", builder.getI32Type()));
@@ -1114,65 +1092,45 @@ hw::HWModuleOp insertQueue(OpBuilder &builder, Location loc, bool isQueueXilinx)
 
     SmallVector<hw::PortInfo> ports;
     // Add clock port.
-    hw::PortInfo clock;
-    clock.name = builder.getStringAttr("clock");
-    clock.dir = hw::ModulePort::Direction::Input;
-    clock.type = i1Ty;
-    ports.push_back(clock);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("clock"), i1Ty, inDir}
+    });
     // Add reset port.
-    hw::PortInfo reset;
-    reset.name = builder.getStringAttr("reset");
-    reset.dir = hw::ModulePort::Direction::Input;
-    reset.type = i1Ty;
-    ports.push_back(reset);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("reset"), i1Ty, inDir}
+    });
     // Add close signal
-    hw::PortInfo close;
-    close.name = builder.getStringAttr("close");
-    close.dir = hw::ModulePort::Direction::Input;
-    close.type = i1Ty;
-    ports.push_back(close);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("close"), i1Ty, inDir}
+    });
     // Add io_enq_valid
-    hw::PortInfo io_enq_valid;
-    io_enq_valid.name = builder.getStringAttr("io_enq_valid");
-    io_enq_valid.dir = hw::ModulePort::Direction::Input;
-    io_enq_valid.type = i1Ty;
-    ports.push_back(io_enq_valid);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("io_enq_valid"), i1Ty, inDir}
+    });
     // Add io_enq_bits
-    hw::PortInfo io_enq_bits;
-    io_enq_bits.name = builder.getStringAttr("io_enq_bits");
-    io_enq_bits.dir = hw::ModulePort::Direction::Input;
-    io_enq_bits.type = dataParamTy;
-    ports.push_back(io_enq_bits);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("io_enq_bits"), dataParamTy, inDir}
+    });
     // Add io_deq_ready
-    hw::PortInfo io_deq_ready;
-    io_deq_ready.name = builder.getStringAttr("io_deq_ready");
-    io_deq_ready.dir = hw::ModulePort::Direction::Input;
-    io_deq_ready.type = i1Ty;
-    ports.push_back(io_deq_ready);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("io_deq_ready"), i1Ty, inDir}
+    });
     // Add io_enq_ready
-    hw::PortInfo io_enq_ready;
-    io_enq_ready.name = builder.getStringAttr("io_enq_ready");
-    io_enq_ready.dir = hw::ModulePort::Direction::Output;
-    io_enq_ready.type = i1Ty;
-    ports.push_back(io_enq_ready);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("io_enq_ready"), i1Ty, outDir}
+    });
     // Add io_deq_valid
-    hw::PortInfo io_deq_valid;
-    io_deq_valid.name = builder.getStringAttr("io_deq_valid");
-    io_deq_valid.dir = hw::ModulePort::Direction::Output;
-    io_deq_valid.type = i1Ty;
-    ports.push_back(io_deq_valid);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("io_deq_valid"), i1Ty, outDir}
+    });
     // Add io_deq_bits
-    hw::PortInfo io_deq_bits;
-    io_deq_bits.name = builder.getStringAttr("io_deq_bits");
-    io_deq_bits.dir = hw::ModulePort::Direction::Output;
-    io_deq_bits.type = dataParamTy;
-    ports.push_back(io_deq_bits);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("io_deq_bits"), dataParamTy, outDir}
+    });
     // Add done signal
-    hw::PortInfo done;
-    done.name = builder.getStringAttr("done");
-    done.dir = hw::ModulePort::Direction::Output;
-    done.type = i1Ty;
-    ports.push_back(done);
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("done"), i1Ty, outDir}
+    });
     // Create new HWModule
     auto hwModule = builder.create<hw::HWModuleOp>(
         loc,
@@ -1523,9 +1481,6 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
     {
         auto loc = op.getLoc();
         auto context = rewriter.getContext();
-        auto channelStyle = op.getOperation()
-                                ->getAttrOfType<StringAttr>("channel_style")
-                                .getValue();
         // Get connection info
         op.walk([&](HWConnectOp connect) {
             newConnections.push_back(std::make_pair(
@@ -1776,7 +1731,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
                 auto queueModule = insertQueue(
                     builder,
                     builder.getUnknownLoc(),
-                    channelStyle == "xilinx");
+                    channelStyle == ChannelStyle::Xilinx);
                 auto newModuleArg = getNewIndexOrArg<Value, Value>(
                     channelOp.getInChan(),
                     newConnections);
@@ -1949,8 +1904,151 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
             if (constOp.getResult().use_empty()) rewriter.eraseOp(constOp);
         });
 
-        rewriter.eraseOp(op);
+        // rewriter.eraseOp(op);
+        rewriter.replaceOp(op, hwModule);
 
+        return success();
+    }
+};
+
+hw::HWModuleOp getInstancedModule(ModuleOp moduleOp, StringAttr moduleName);
+
+SmallVector<std::pair<Value, Value>> moduleToQueueConnection;
+struct ConvertRegionToHWModule : OpConversionPattern<RegionOp> {
+    using OpConversionPattern<RegionOp>::OpConversionPattern;
+
+    ConvertRegionToHWModule(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<RegionOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        RegionOp op,
+        RegionOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto loc = op.getLoc();
+        auto context = rewriter.getContext();
+
+        op.walk([&](ConnectInputOp connectInputOp) {
+            moduleToQueueConnection.push_back(std::make_pair(
+                connectInputOp.getRegionPort(),
+                connectInputOp.getChannelPort()));
+        });
+
+        bool processHasLoop = false;
+        // op.walk([&](InstantiateOp instantiateOp) {
+        //     auto calleeName =
+        //         instantiateOp.getCallee().getRootReference().str();
+        //     auto inputChans = instantiateOp.getInputs();
+        //     auto loopedProcess = getNewIndexOrArg(calleeName,
+        //     processHasLoop); if (loopedProcess.value()) {
+        //         auto indices =
+        //             getNewIndexOrArg(calleeName, processPortIdx).value();
+        //         for (auto idx : indices) {
+        //             auto loopedQueue =
+        //                 dyn_cast<ChannelOp>(inputChans[idx].getDefiningOp());
+        //             auto isConnected = getNewIndexOrArg<Value, Value>(
+        //                 loopedQueue.getInChan(),
+        //                 newConnections);
+        //             if (isConnected) {
+        //                 needClosePortIdx.push_back(
+        //                     cast<BlockArgument>(isConnected.value())
+        //                         .getArgNumber());
+        //             }
+        //         }
+        //     }
+        // });
+
+        // SmallVector<hw::PortInfo> ports;
+        // int in_num = 1;
+        // int out_num = 1;
+
+        // // Add clock port.
+        // hw::PortInfo clock;
+        // // clock.name = rewriter.getStringAttr("clock");
+        // // clock.dir = hw::ModulePort::Direction::Input;
+        // // clock.type = rewriter.getI1Type();
+        // // ports.push_back(clock);
+        // ports.push_back(hw::PortInfo{
+        //     rewriter.getStringAttr("clock"),
+        //     rewriter.getI1Type(),
+        //     hw::ModulePort::Direction::Input});
+        // rewriter.create<hw::HWModuleOp>(
+        //     op.getLoc(),
+        //     op.getSymNameAttr(),
+        //     hw::ModulePortInfo(ports),
+        //     ArrayAttr{},
+        //     ArrayRef<NamedAttribute>{},
+        //     StringAttr{},
+        //     false);
+
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+struct InsertQueueAndInstantiate : OpConversionPattern<ChannelOp> {
+    using OpConversionPattern<ChannelOp>::OpConversionPattern;
+
+    InsertQueueAndInstantiate(
+        TypeConverter &typeConverter,
+        MLIRContext* context)
+            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        ChannelOp op,
+        ChannelOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+template<typename OpT>
+struct ConvertCallToInstance : OpConversionPattern<OpT> {
+    using OpConversionPattern<OpT>::OpConversionPattern;
+
+    ConvertCallToInstance(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<OpT>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        OpT op,
+        typename OpT::Adaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+struct EarseConnectInput : OpConversionPattern<ConnectInputOp> {
+    using OpConversionPattern<ConnectInputOp>::OpConversionPattern;
+
+    EarseConnectInput(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ConnectInputOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        ConnectInputOp op,
+        ConnectInputOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+struct InsertOutputToHWModule : OpConversionPattern<ConnectOutputOp> {
+    using OpConversionPattern<ConnectOutputOp>::OpConversionPattern;
+
+    InsertOutputToHWModule(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ConnectOutputOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        ConnectOutputOp op,
+        ConnectOutputOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        rewriter.eraseOp(op);
         return success();
     }
 };
@@ -1961,8 +2059,26 @@ void mlir::populateDfgToCirctConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns)
 {
-    patterns.add<ConvertProcess>(typeConverter, patterns.getContext());
+    // old patterns
+    patterns.add<ConvertProcessToHWModule>(
+        typeConverter,
+        patterns.getContext());
     patterns.add<LegalizeHWModule>(typeConverter, patterns.getContext());
+
+    // new patterns, wait for implementations
+    patterns.add<EraseSetChannelStyle>(typeConverter, patterns.getContext());
+    patterns.add<ConvertRegionToHWModule>(typeConverter, patterns.getContext());
+    patterns.add<InsertQueueAndInstantiate>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<ConvertCallToInstance<InstantiateOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<ConvertCallToInstance<EmbedOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<EarseConnectInput>(typeConverter, patterns.getContext());
+    patterns.add<InsertOutputToHWModule>(typeConverter, patterns.getContext());
 }
 
 namespace {

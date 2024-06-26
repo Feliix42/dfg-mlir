@@ -5,7 +5,8 @@
 
 #pragma once
 
-#include "dfg-mlir/Dialect/dfg/Transforms/OperatorToProcess.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/OpereatorToProcess/OperatorToProcess.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/PrintOperatorToYaml/PrintOperatorToYaml.h"
 
 namespace mlir::dfg {
 

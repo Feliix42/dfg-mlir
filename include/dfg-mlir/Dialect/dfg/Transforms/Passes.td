@@ -16,4 +16,11 @@ def DfgOperatorToProcess : Pass<"dfg-operator-to-process">
     let constructor = "mlir::dfg::createDfgOperatorToProcessPass()";
 }
 
+def DfgPrintOperatorToYaml : Pass<"print-operator-to-yaml">
+{
+    let summary = "print the inner graph within an operator to yaml file";
+
+    let constructor = "mlir::dfg::createDfgPrintOperatorToYamlPass()";
+}
+
 #endif //DFG_MLIR_TRANSFORM_PASSES

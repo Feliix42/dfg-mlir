@@ -41,137 +41,6 @@ using namespace circt;
 
 namespace {
 
-// arith -> comb
-template<typename From, typename To>
-struct OneToOneConversion : public OpConversionPattern<From> {
-    using OpConversionPattern<From>::OpConversionPattern;
-
-    OneToOneConversion(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<From>(typeConverter, context){};
-
-    LogicalResult matchAndRewrite(
-        From op,
-        typename From::Adaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        rewriter.replaceOpWithNewOp<To>(
-            op,
-            adaptor.getOperands(),
-            op->getAttrs());
-
-        return success();
-    }
-};
-
-struct ExtSConversion : public OpConversionPattern<arith::ExtSIOp> {
-    using OpConversionPattern<arith::ExtSIOp>::OpConversionPattern;
-
-    ExtSConversion(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<arith::ExtSIOp>(typeConverter, context){};
-
-    LogicalResult matchAndRewrite(
-        arith::ExtSIOp op,
-        arith::ExtSIOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        auto width = op.getType().getIntOrFloatBitWidth();
-        rewriter.replaceOp(
-            op,
-            comb::createOrFoldSExt(
-                op.getLoc(),
-                op.getOperand(),
-                rewriter.getIntegerType(width),
-                rewriter));
-
-        return success();
-    }
-};
-
-struct ExtZConversion : public OpConversionPattern<arith::ExtUIOp> {
-    using OpConversionPattern<arith::ExtUIOp>::OpConversionPattern;
-
-    ExtZConversion(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<arith::ExtUIOp>(typeConverter, context){};
-
-    LogicalResult matchAndRewrite(
-        arith::ExtUIOp op,
-        arith::ExtUIOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        auto loc = op.getLoc();
-        auto outWidth = op.getOut().getType().getIntOrFloatBitWidth();
-        auto inWidth = adaptor.getIn().getType().getIntOrFloatBitWidth();
-
-        rewriter.replaceOp(
-            op,
-            rewriter.create<comb::ConcatOp>(
-                loc,
-                rewriter.create<hw::ConstantOp>(
-                    loc,
-                    APInt(outWidth - inWidth, 0)),
-                adaptor.getIn()));
-
-        return success();
-    }
-};
-
-struct TruncConversion : public OpConversionPattern<arith::TruncIOp> {
-    using OpConversionPattern<arith::TruncIOp>::OpConversionPattern;
-
-    TruncConversion(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<arith::TruncIOp>(typeConverter, context){};
-
-    LogicalResult matchAndRewrite(
-        arith::TruncIOp op,
-        arith::TruncIOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        auto width = op.getType().getIntOrFloatBitWidth();
-        rewriter
-            .replaceOpWithNewOp<comb::ExtractOp>(op, adaptor.getIn(), 0, width);
-
-        return success();
-    }
-};
-
-struct CompConversion : public OpConversionPattern<arith::CmpIOp> {
-    using OpConversionPattern<arith::CmpIOp>::OpConversionPattern;
-
-    CompConversion(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<arith::CmpIOp>(typeConverter, context){};
-
-    static comb::ICmpPredicate
-    arithToCombPredicate(arith::CmpIPredicate predicate)
-    {
-        switch (predicate) {
-        case arith::CmpIPredicate::eq: return comb::ICmpPredicate::eq;
-        case arith::CmpIPredicate::ne: return comb::ICmpPredicate::ne;
-        case arith::CmpIPredicate::slt: return comb::ICmpPredicate::slt;
-        case arith::CmpIPredicate::ult: return comb::ICmpPredicate::ult;
-        case arith::CmpIPredicate::sle: return comb::ICmpPredicate::sle;
-        case arith::CmpIPredicate::ule: return comb::ICmpPredicate::ule;
-        case arith::CmpIPredicate::sgt: return comb::ICmpPredicate::sgt;
-        case arith::CmpIPredicate::ugt: return comb::ICmpPredicate::ugt;
-        case arith::CmpIPredicate::sge: return comb::ICmpPredicate::sge;
-        case arith::CmpIPredicate::uge: return comb::ICmpPredicate::uge;
-        }
-        llvm_unreachable("Unknown predicate");
-    }
-
-    LogicalResult matchAndRewrite(
-        arith::CmpIOp op,
-        arith::CmpIOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        rewriter.replaceOpWithNewOp<comb::ICmpOp>(
-            op,
-            arithToCombPredicate(op.getPredicate()),
-            adaptor.getLhs(),
-            adaptor.getRhs());
-        return success();
-    }
-};
-
 // func.func -> hw.module
 struct FuncConversion : public OpConversionPattern<func::FuncOp> {
     using OpConversionPattern<func::FuncOp>::OpConversionPattern;
@@ -610,65 +479,55 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         writeFuncToFile(genFuncOp, genFuncOp.getSymName());
         rewriter.setInsertionPointToStart(&moduleOp.getBodyRegion().front());
         SmallVector<hw::PortInfo> ports;
+        auto i1Ty = rewriter.getI1Type();
+        auto inDir = hw::ModulePort::Direction::Input;
+        auto outDir = hw::ModulePort::Direction::Output;
         for (size_t i = 0; i < pulledTypes.size(); i++) {
             auto type = pulledTypes[i];
-            std::string name;
-            hw::PortInfo in_data;
-            name = "in" + std::to_string(i);
-            in_data.name = rewriter.getStringAttr(name);
-            in_data.dir = hw::ModulePort::Direction::Input;
-            in_data.type = type;
-            ports.push_back(in_data);
-            hw::PortInfo in_valid;
-            name = "in" + std::to_string(i) + "_valid";
-            in_valid.name = rewriter.getStringAttr(name);
-            in_valid.dir = hw::ModulePort::Direction::Input;
-            in_valid.type = rewriter.getI1Type();
-            ports.push_back(in_valid);
-            hw::PortInfo in_ready;
-            name = "in" + std::to_string(i) + "_ready";
-            in_ready.name = rewriter.getStringAttr(name);
-            in_ready.dir = hw::ModulePort::Direction::Output;
-            in_ready.type = rewriter.getI1Type();
-            ports.push_back(in_ready);
+            auto namePrefix = "in" + std::to_string(i);
+            // data port
+            ports.push_back(hw::PortInfo{
+                {rewriter.getStringAttr(namePrefix), type, inDir}
+            });
+            // valid port
+            ports.push_back(hw::PortInfo{
+                {rewriter.getStringAttr(namePrefix + "_valid"), i1Ty, inDir}
+            });
+            // ready port
+            ports.push_back(hw::PortInfo{
+                {rewriter.getStringAttr(namePrefix + "_ready"), i1Ty, outDir}
+            });
         }
-        hw::PortInfo ctrl_valid;
-        ctrl_valid.name = rewriter.getStringAttr(
-            "in" + std::to_string(pulledTypes.size()) + "_valid");
-        ctrl_valid.dir = hw::ModulePort::Direction::Input;
-        ctrl_valid.type = rewriter.getI1Type();
-        ports.push_back(ctrl_valid);
-        hw::PortInfo clock;
-        clock.name = rewriter.getStringAttr("clock");
-        clock.dir = hw::ModulePort::Direction::Input;
-        clock.type = rewriter.getI1Type();
-        ports.push_back(clock);
-        hw::PortInfo reset;
-        reset.name = rewriter.getStringAttr("reset");
-        reset.dir = hw::ModulePort::Direction::Input;
-        reset.type = rewriter.getI1Type();
-        ports.push_back(reset);
+        // ctrl valid
+        ports.push_back(hw::PortInfo{
+            {rewriter.getStringAttr(
+                 "in" + std::to_string(pulledTypes.size()) + "_valid"),
+             i1Ty, inDir}
+        });
+        // clock port
+        ports.push_back(hw::PortInfo{
+            {rewriter.getStringAttr("clock"), i1Ty, inDir}
+        });
+        // reset port
+        ports.push_back(hw::PortInfo{
+            {rewriter.getStringAttr("reset"), i1Ty, inDir}
+        });
         for (size_t i = 0; i < pushedTypes.size(); i++) {
             auto type = pushedTypes[i];
+            auto namePrefix = "out" + std::to_string(i);
+            // ready port
             std::string name;
-            hw::PortInfo out_ready;
-            name = "out" + std::to_string(i) + "_ready";
-            out_ready.name = rewriter.getStringAttr(name);
-            out_ready.dir = hw::ModulePort::Direction::Input;
-            out_ready.type = rewriter.getI1Type();
-            ports.push_back(out_ready);
-            hw::PortInfo out_data;
-            name = "out" + std::to_string(i);
-            out_data.name = rewriter.getStringAttr(name);
-            out_data.dir = hw::ModulePort::Direction::Output;
-            out_data.type = type;
-            ports.push_back(out_data);
-            hw::PortInfo out_valid;
-            name = "out" + std::to_string(i) + "_valid";
-            out_valid.name = rewriter.getStringAttr(name);
-            out_valid.dir = hw::ModulePort::Direction::Output;
-            out_valid.type = rewriter.getI1Type();
-            ports.push_back(out_valid);
+            ports.push_back(hw::PortInfo{
+                {rewriter.getStringAttr(namePrefix + "_ready"), i1Ty, inDir}
+            });
+            // data port
+            ports.push_back(hw::PortInfo{
+                {rewriter.getStringAttr(namePrefix), type, outDir}
+            });
+            // valid port
+            ports.push_back(hw::PortInfo{
+                {rewriter.getStringAttr(namePrefix + "_valid"), i1Ty, outDir}
+            });
         }
         rewriter.create<hw::HWModuleExternOp>(
             loc,
@@ -682,68 +541,51 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
     }
 };
 
+struct LegalizeChannelSize : public OpConversionPattern<ChannelOp> {
+    using OpConversionPattern<ChannelOp>::OpConversionPattern;
+
+    LegalizeChannelSize(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+
+    LogicalResult matchAndRewrite(
+        ChannelOp op,
+        ChannelOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto buffSize = op.getBufferSize();
+        if (buffSize == std::nullopt)
+            return rewriter.notifyMatchFailure(
+                op.getLoc(),
+                "For hardware lowering, a channel must have a "
+                "size.");
+
+        auto sizeValue = buffSize.value();
+        int size =
+            sizeValue < 16 ? 16 : (sizeValue > 4194304 ? 4194304 : sizeValue);
+        rewriter.replaceOpWithNewOp<ChannelOp>(
+            op,
+            op.getEncapsulatedType(),
+            size);
+
+        return success();
+    }
+};
+
 } // namespace
 
 void mlir::populateStdToCirctConversionPatterns(
     TypeConverter typeConverter,
     RewritePatternSet &patterns)
 {
-    // arith -> comb
-    // patterns.add<OneToOneConversion<arith::ConstantOp, hw::ConstantOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::AddIOp, comb::AddOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::SubIOp, comb::SubOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::MulIOp, comb::MulOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::DivSIOp, comb::DivSOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::DivUIOp, comb::DivUOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::RemSIOp, comb::ModSOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::RemUIOp, comb::ModUOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::AndIOp, comb::AndOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::OrIOp, comb::OrOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::XOrIOp, comb::XorOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::ShLIOp, comb::ShlOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::ShRSIOp, comb::ShrSOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::ShRUIOp, comb::ShrUOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<OneToOneConversion<arith::SelectOp, comb::MuxOp>>(
-    //     typeConverter,
-    //     patterns.getContext());
-    // patterns.add<ExtSConversion>(typeConverter, patterns.getContext());
-    // patterns.add<ExtZConversion>(typeConverter, patterns.getContext());
-    // patterns.add<TruncConversion>(typeConverter, patterns.getContext());
-    // patterns.add<CompConversion>(typeConverter, patterns.getContext());
 
     // func.func -> hw.module
     patterns.add<FuncConversion>(typeConverter, patterns.getContext());
 
     // operator calc ops -> handshake.func
     patterns.add<WrapProcessOps>(typeConverter, patterns.getContext());
+
+    // channel op -> change size
+    patterns.add<LegalizeChannelSize>(typeConverter, patterns.getContext());
 }
 
 namespace {
@@ -776,11 +618,14 @@ void ConvertStdToCirctPass::runOnOperation()
         hw::HWDialect,
         sv::SVDialect,
         dfg::DfgDialect>();
-    // target.addIllegalDialect<func::FuncDialect>();
 
     func::FuncOp lastFunc;
     auto module = dyn_cast<ModuleOp>(getOperation());
     module.walk([&](func::FuncOp funcOp) { lastFunc = funcOp; });
+    ChannelStyle channelStyle;
+    module.walk([&](SetChannelStyleOp setChanStyleOp) {
+        channelStyle = setChanStyleOp.getChannelStyle();
+    });
 
     target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp funcOp) {
         // auto name = funcOp.getSymName().str();
@@ -792,6 +637,15 @@ void ConvertStdToCirctPass::runOnOperation()
         // auto name = funcOp.getSymName().str();
         // return name != "top";
         return funcOp != lastFunc;
+    });
+
+    target.addDynamicallyLegalOp<ChannelOp>([&](ChannelOp channelOp) {
+        auto buffSize = channelOp.getBufferSize();
+        if (buffSize == std::nullopt) return false;
+        if (channelStyle == ChannelStyle::Xilinx) {
+            if (buffSize < 8 || buffSize > 4194304) return false;
+        }
+        return true;
     });
 
     target.addDynamicallyLegalOp<ProcessOp>([&](ProcessOp op) {
