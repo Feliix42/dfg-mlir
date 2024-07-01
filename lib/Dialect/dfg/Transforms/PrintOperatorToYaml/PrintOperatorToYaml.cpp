@@ -13,13 +13,17 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
+
+#define DEBUG_TYPE "yaml-test"
 
 namespace mlir {
 namespace dfg {
@@ -178,12 +182,72 @@ public:
     void runOnOperation() override;
 
 private:
-    std::vector<GraphNode> getGraphNodes(OperatorOp operatorOp);
+    void getGraphNodes(OperatorOp operatorOp);
     void getGraphNodesFromOp(
         Operation* op,
         std::vector<GraphNode> &nodes,
         size_t idxBias);
-    std::vector<GraphChannel> getGraphChannels();
+    void getGraphChannels();
+    GraphNode findNode(std::string nodeName)
+    {
+        for (auto node : graphNodes)
+            if (node.name == nodeName) return node;
+    }
+    void analyseChannelLoops()
+    {
+        for (auto channel : graphChannels) {
+            adjList[channel.srcNode].push_back(channel.dstNode);
+            LLVM_DEBUG(
+                llvm::dbgs() << "\n Adding " << channel.srcNode << " <-> "
+                             << channel.dstNode << " to adjacency list.\n");
+        }
+
+        for (auto channel : graphChannels) {
+            std::unordered_set<std::string> visited;
+            auto node = channel.srcNode;
+            if (findNode(node).type == "src") {
+                LLVM_DEBUG(
+                    llvm::dbgs() << "\nNow checking from " << node << ".\n");
+                findAndAddToken(node, visited);
+            }
+        }
+
+        for (auto channel : graphChannels) {
+            LLVM_DEBUG(
+                llvm::dbgs()
+                << "\nChannel " << channel.srcNode << " <-> " << channel.dstNode
+                << " has initToken " << channel.initToken << ".\n");
+        }
+    }
+    void
+    findAndAddToken(std::string node, std::unordered_set<std::string> &visited)
+    {
+        visited.insert(node);
+        for (auto neighbor : adjList[node]) {
+            LLVM_DEBUG(
+                llvm::dbgs() << "\nChecking neighbor " << neighbor << " of "
+                             << node << ".\n");
+            if (visited.find(neighbor) == visited.end()) {
+                LLVM_DEBUG(llvm::dbgs() << "\nContinue ...\n");
+                findAndAddToken(neighbor, visited);
+            } else {
+                LLVM_DEBUG(
+                    llvm::dbgs() << "\nFound backedge " << node << " <-> "
+                                 << neighbor << "\n");
+                for (auto &channel : graphChannels)
+                    if (channel.srcNode == node
+                        && channel.dstNode == neighbor) {
+                        LLVM_DEBUG(
+                            llvm::dbgs() << "\nFound the backedge channel!\n");
+                        channel.initToken = 1;
+                        LLVM_DEBUG(
+                            llvm::dbgs()
+                            << "\ninitToken = " << channel.initToken << "\n");
+                    }
+                return;
+            }
+        }
+    }
 
     bool isConstant(Operation* op) { return (isa<arith::ConstantOp>(op)); }
     bool isArithNode(Operation* op)
@@ -206,6 +270,8 @@ private:
         }
     }
 
+    std::vector<GraphNode> graphNodes;
+    std::vector<GraphChannel> graphChannels;
     llvm::DenseMap<Value, std::vector<MappingInfo>> valueToPorts;
     SmallVector<Value> constants;
     llvm::DenseMap<Value, Value> yieldToOutput;
@@ -213,11 +279,11 @@ private:
     int muxNodeIdx = 0;
     mlir::Region::BlockArgListType blkArgs;
     SmallVector<Value> debug_results;
+    std::unordered_map<std::string, std::vector<std::string>> adjList;
 };
 } // namespace
 
-std::vector<GraphNode>
-DfgPrintOperatorToYamlPass::getGraphNodes(OperatorOp operatorOp)
+void DfgPrintOperatorToYamlPass::getGraphNodes(OperatorOp operatorOp)
 {
     std::vector<GraphNode> nodes;
     auto funcTy = operatorOp.getFunctionType();
@@ -266,7 +332,7 @@ DfgPrintOperatorToYamlPass::getGraphNodes(OperatorOp operatorOp)
         nodes.push_back(node);
     }
 
-    return nodes;
+    graphNodes = nodes;
 }
 
 void DfgPrintOperatorToYamlPass::getGraphNodesFromOp(
@@ -379,7 +445,7 @@ void DfgPrintOperatorToYamlPass::getGraphNodesFromOp(
     }
 }
 
-std::vector<GraphChannel> DfgPrintOperatorToYamlPass::getGraphChannels()
+void DfgPrintOperatorToYamlPass::getGraphChannels()
 {
     std::vector<GraphChannel> channels;
     int channelNum = 0;
@@ -401,7 +467,7 @@ std::vector<GraphChannel> DfgPrintOperatorToYamlPass::getGraphChannels()
                  0});
         }
     }
-    return channels;
+    graphChannels = channels;
 }
 
 void DfgPrintOperatorToYamlPass::runOnOperation()
@@ -413,15 +479,18 @@ void DfgPrintOperatorToYamlPass::runOnOperation()
             !operatorOp.getBody().empty()
             && "Cannot print anything out of an empty operator.");
         for (auto &op : operatorOp.getOps())
-            if (!isa<arith::ConstantOp>(op) && !isa<arith::AddIOp>(op)
-                && !isa<arith::SubIOp>(op) && !isa<arith::MulIOp>(op)
-                && !isa<arith::CmpIOp>(op) && !isa<scf::IfOp>(op)
-                && !isa<scf::YieldOp>(op) && !isa<YieldOp>(op))
-                signalPassFailure();
+            assert(
+                (isa<arith::ConstantOp>(op) || isa<arith::AddIOp>(op)
+                 || isa<arith::SubIOp>(op) || isa<arith::MulIOp>(op)
+                 || isa<arith::CmpIOp>(op) || isa<scf::IfOp>(op)
+                 || isa<scf::YieldOp>(op) || isa<YieldOp>(op))
+                && "Unsupported ops in the region");
 
         auto graphName = operatorOp.getSymName().str();
-        auto graphNodes = getGraphNodes(operatorOp);
-        auto graphChannels = getGraphChannels();
+        // auto graphNodes = getGraphNodes(operatorOp);
+        getGraphNodes(operatorOp);
+        getGraphChannels();
+        analyseChannelLoops();
         GraphYaml graph = {{graphName}, graphNodes, graphChannels};
         auto fileName = "graph_" + graphName + ".yaml";
 
