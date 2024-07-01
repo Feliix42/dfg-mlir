@@ -17,6 +17,7 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
+include "mlir/IR/RegionKindInterface.td"
 
 def Dfg_RegionOp : Dfg_Op<
         "region",
@@ -156,6 +157,7 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
             IsolatedFromAbove,
+            RegionKindInterface,
             HasParent<"ModuleOp">,
             SingleBlockImplicitTerminator<"YieldOp">
         ]> {
@@ -174,6 +176,9 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
     let extraClassDeclaration = [{
         /// Returns whether the process is externally defined
         bool isExternal();
+
+        // Implement RegionKindInterface.
+        static RegionKind getRegionKind(unsigned index) { return RegionKind::Graph;}
 
         //===------------------------------------------------------------------===//
         // SymbolOpInterface Methods
