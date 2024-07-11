@@ -219,7 +219,9 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"ProcessOp">, NoTerminator, AttrSized
         ```
         dfg.process @add inputs(%a: type) outputs(%b: type)
         {
-            dfg.loop inputs(%a: type) outputs(%b: type) {
+            %init_value = arith.constant ...
+            dfg.loop inputs(%a: type) outputs(%b: type)
+                    iter_args(%sum_iter = %init_value) {
                 ops ...
             }
         }
