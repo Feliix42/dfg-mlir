@@ -722,7 +722,7 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
         return failure();
 
     // parse the signature of the operator
-    SmallVector<OpAsmParser::Argument> inVals, outVals;
+    SmallVector<OpAsmParser::Argument> inVals, outVals, iterVals;
     SMLoc signatureLocation = parser.getCurrentLocation();
 
     // parse inputs/outputs separately for later distinction
@@ -734,12 +734,19 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
         if (parseChannelArgumentList<TypeId>(parser, outVals)) return failure();
     }
 
-    SmallVector<Type> argTypes, resultTypes;
+    if (succeeded(parser.parseOptionalKeyword("iter_args"))) {
+        if (parseChannelArgumentList<TypeId>(parser, iterVals))
+            return failure();
+    }
+
+    SmallVector<Type> argTypes, resultTypes, iterArgsTypes;
     argTypes.reserve(inVals.size());
     resultTypes.reserve(outVals.size());
+    iterArgsTypes.reserve(iterVals.size());
 
     for (auto &arg : inVals) argTypes.push_back(arg.type);
     for (auto &arg : outVals) resultTypes.push_back(arg.type);
+    for (auto &arg : iterVals) iterArgsTypes.push_back(arg.type);
     Type type = builder.getFunctionType(argTypes, resultTypes);
 
     if (!type) {
@@ -753,10 +760,24 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 
     // merge both argument lists for the block arguments
     inVals.append(outVals);
+    inVals.append(iterVals);
 
     OptionalParseResult attrResult =
         parser.parseOptionalAttrDictWithKeyword(result.attributes);
     if (attrResult.has_value() && failed(*attrResult)) return failure();
+
+    // parse the initialization region if iter_args exist
+    if (!iterVals.empty()) {
+        if (parser.parseKeyword("initialize")) return failure();
+        auto* initBody = result.addRegion();
+        SMLoc loc = parser.getCurrentLocation();
+        if (failed(parser.parseRegion(*initBody)))
+            return parser.emitError(loc, "expected an initialize region");
+        if (initBody->empty())
+            return parser.emitError(
+                loc,
+                "expected non-empty initialization body");
+    }
 
     // parse the attached region, if any
     auto* body = result.addRegion();
@@ -778,7 +799,8 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 void OperatorOp::print(OpAsmPrinter &p)
 {
     Operation* op = getOperation();
-    Region &body = op->getRegion(0);
+    Region &initBody = op->getRegion(0);
+    Region &body = op->getRegion(1);
     bool isExternal = body.empty();
 
     // print the operation and function name
@@ -791,6 +813,9 @@ void OperatorOp::print(OpAsmPrinter &p)
 
     ArrayRef<Type> inputTypes = getFunctionType().getInputs();
     ArrayRef<Type> outputTypes = getFunctionType().getResults();
+    auto numArgs = body.getArguments().size();
+    auto bias = inputTypes.size() + outputTypes.size();
+    auto hasIterArgs = numArgs != bias;
 
     if (!inputTypes.empty()) {
         p << " inputs(";
@@ -803,7 +828,7 @@ void OperatorOp::print(OpAsmPrinter &p)
                 p.printOperand(body.getArgument(i));
             p << " : " << inputTypes[i];
         }
-        p << ") ";
+        p << ")";
     }
 
     if (!outputTypes.empty()) {
@@ -818,6 +843,19 @@ void OperatorOp::print(OpAsmPrinter &p)
                 p.printOperand(body.getArgument(i));
             p << " : " << outputTypes[i - inpSize];
         }
+        p << ")";
+    }
+
+    if (hasIterArgs) {
+        p << " iter_args(";
+        // unsigned bias = inputTypes.size() + outputTypes.size();
+        for (unsigned i = bias; i < numArgs; i++) {
+            if (i > bias)
+                p << ", ";
+            else
+                p.printOperand(body.getArgument(i));
+            p << " : " << body.getArgument(i).getType();
+        }
         p << ") ";
     }
 
@@ -827,7 +865,14 @@ void OperatorOp::print(OpAsmPrinter &p)
             op->getAttrs(),
             /*elidedAttrs=*/{getFunctionTypeAttrName(), getSymNameAttrName()});
 
-    // Print the region
+    // Print the regions
+    if (hasIterArgs) {
+        p << "initialize ";
+        p.printRegion(
+            initBody,
+            /*printEntryBlockArgs =*/false,
+            /*printBlockTerminators =*/true);
+    }
     if (!isExternal) {
         p << ' ';
         p.printRegion(
@@ -839,23 +884,32 @@ void OperatorOp::print(OpAsmPrinter &p)
 
 LogicalResult OperatorOp::verify()
 {
-    // In OperatorOp, YieldOp is the only legal dfg operation
-    for (auto &op : getOps()) {
+    // In OperatorOp, YieldOp or OutputOp is the only legal dfg operation
+    for (auto &op : getInitBody().getOps()) {
         if (op.getDialect()->getNamespace() == "dfg") {
             if (!isa<YieldOp>(op))
-                return ::emitError(getLoc(), "Only yield op are allowed here.");
+                return ::emitError(getLoc(), "Only yield op is allowed here.");
+        }
+    }
+    for (auto &op : getBody().getOps()) {
+        if (op.getDialect()->getNamespace() == "dfg") {
+            if (!isa<YieldOp>(op) && !isa<OutputOp>(op))
+                return ::emitError(
+                    getLoc(),
+                    "Only yield or output op is allowed here.");
         }
     }
 
-    // Verify that all output ports are only used in YieldOp
-    for (size_t i = getFunctionType().getNumInputs();
-         i < getBody().getArguments().size();
-         i++) {
+    // Verify that all output ports are only used in OutputOp
+    // and all iter args are only used in YieldOp
+    auto numInputs = getFunctionType().getNumInputs();
+    auto numOutputs = getFunctionType().getNumResults();
+    for (size_t i = numInputs; i < numInputs + numOutputs; i++) {
         for (Operation* user : getBody().getArgument(i).getUsers())
-            if (!isa<YieldOp>(user))
+            if (!isa<OutputOp>(user))
                 return ::emitError(
                     user->getLoc(),
-                    "Output ports can only be used to yield data into them.");
+                    "Output ports can only be used to output data into them.");
     }
 
     return success();
@@ -869,21 +923,38 @@ LogicalResult OperatorOp::verify()
 // TODO: and the types, getParentOp ...
 LogicalResult YieldOp::verify()
 {
-    auto operatorOp = getParentOp<OperatorOp>();
-    auto funcTy = operatorOp.getFunctionType();
+    auto op = getOperation();
+    if (auto operatorOp = op->getParentOfType<OperatorOp>()) {
+        // auto iterArgs = operatorOp.getIterArgs();
+        // for (size_t i = 0; i < iterArgs.size(); i++)
+        //     if (iterArgs[i].getType() != getOperand(i).getType())
+        //         return ::emitError(
+        //             getLoc(),
+        //             "The type of operatnd must match the iterate arguments' "
+        //             "type");
+        // auto funcTy = operatorOp.getFunctionType();
 
-    if (funcTy.getNumResults() != getNumOperands())
-        return ::emitError(
-            getLoc(),
-            "The number of yield operands must match the number of output "
-            "channels");
+        // if (funcTy.getNumResults() != getNumOperands())
+        //     return ::emitError(
+        //         getLoc(),
+        //         "The number of yield operands must match the number of output
+        //         " "channels");
 
-    for (size_t i = 0; i < funcTy.getNumResults(); i++)
-        if (funcTy.getResult(i) != getOperand(i).getType())
-            return ::emitError(
-                getLoc(),
-                "The type of operand must match the output channel's "
-                "encapsulated type.");
+        // for (size_t i = 0; i < funcTy.getNumResults(); i++)
+        //     if (funcTy.getResult(i) != getOperand(i).getType())
+        //         return ::emitError(
+        //             getLoc(),
+        //             "The type of operand must match the output channel's "
+        //             "encapsulated type.");
+    } else if (auto loopOp = op->getParentOfType<LoopOp>()) {
+        auto iterArgs = loopOp.getIterArgs();
+        for (size_t i = 0; i < iterArgs.size(); i++)
+            if (iterArgs[i].getType() != getOperand(i).getType())
+                return ::emitError(
+                    getLoc(),
+                    "The type of operatnd must match the iterate arguments' "
+                    "type");
+    }
 
     return success();
 }
@@ -896,7 +967,8 @@ void LoopOp::build(
     OpBuilder &builder,
     OperationState &state,
     ValueRange inChans,
-    ValueRange outChans)
+    ValueRange outChans,
+    ValueRange iterArgs)
 {
     state.addOperands(inChans);
     state.addOperands(outChans);
@@ -908,13 +980,18 @@ void LoopOp::build(
     Region* region = state.addRegion();
     Block* block = new Block();
     region->push_back(block);
+
+    if (!iterArgs.empty()) {
+        state.addOperands(iterArgs);
+        for (Value v : iterArgs) block->addArgument(v.getType(), v.getLoc());
+    }
     // builder.createBlock(state.addRegion());
 }
 
 ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
 {
     // parse inputs/outputs
-    SmallVector<OpAsmParser::Argument> inVals, outVals;
+    SmallVector<OpAsmParser::Argument> inVals, outVals, iterVals;
 
     // parse inputs/outputs separately for later distinction
     SMLoc inputLocation = parser.getCurrentLocation();
@@ -929,14 +1006,23 @@ ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
             return failure();
     }
 
-    SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs, outputs;
-    SmallVector<Type> argTypes, resultTypes;
+    SMLoc iterArgsLocation = parser.getCurrentLocation();
+    if (succeeded(parser.parseOptionalKeyword("iter_args"))) {
+        if (parseChannelArgumentList<TypeId>(parser, iterVals))
+            return failure();
+    }
+
+    SmallVector<OpAsmParser::UnresolvedOperand, 4> inputs, outputs, iterArgs;
+    SmallVector<Type> argTypes, resultTypes, iterArgsTypes;
     int32_t numInputs = inVals.size();
     int32_t numOutputs = outVals.size();
+    int32_t numIterArgs = iterVals.size();
     argTypes.reserve(numInputs);
     inputs.reserve(numInputs);
     resultTypes.reserve(numOutputs);
     outputs.reserve(numOutputs);
+    iterArgs.reserve(numIterArgs);
+    iterArgsTypes.reserve(numIterArgs);
 
     for (auto &arg : inVals) {
         argTypes.push_back(arg.type);
@@ -945,6 +1031,10 @@ ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
     for (auto &arg : outVals) {
         resultTypes.push_back(arg.type);
         outputs.push_back(arg.ssaName);
+    }
+    for (auto &arg : iterVals) {
+        iterArgsTypes.push_back(arg.type);
+        iterArgs.push_back(arg.ssaName);
     }
 
     if (parser
@@ -958,10 +1048,17 @@ ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
             result.operands))
         return failure();
 
+    if (parser.resolveOperands(
+            iterArgs,
+            iterArgsTypes,
+            iterArgsLocation,
+            result.operands))
+        return failure();
+
     // Add derived `operand_segment_sizes` attribute based on parsed
     // operands.
-    auto operandSegmentSizes =
-        parser.getBuilder().getDenseI32ArrayAttr({numInputs, numOutputs});
+    auto operandSegmentSizes = parser.getBuilder().getDenseI32ArrayAttr(
+        {numInputs, numOutputs, numIterArgs});
     result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
     Region* body = result.addRegion();
@@ -998,6 +1095,18 @@ void LoopOp::print(OpAsmPrinter &p)
             p << " : ";
             p.printType(cast<InputType>(outputs[i].getImpl()->getType())
                             .getElementType());
+        }
+        p << ")";
+    }
+
+    Operation::operand_range iterArgs = getIterArgs();
+    if (!iterArgs.empty()) {
+        p << " iter_args (";
+        for (unsigned i = 0; i < iterArgs.size(); i++) {
+            if (i > 0) p << ", ";
+            p.printOperand(iterArgs[i]);
+            p << " : ";
+            p.printType(iterArgs[i].getImpl()->getType());
         }
         p << ")";
     }

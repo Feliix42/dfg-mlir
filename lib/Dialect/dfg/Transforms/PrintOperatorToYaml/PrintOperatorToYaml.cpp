@@ -313,7 +313,7 @@ void DfgPrintOperatorToYamlPass::getGraphNodes(OperatorOp operatorOp)
 
     // Each operation will be handled
     auto idxBias = funcTy.getNumInputs();
-    for (auto &op : operatorOp.getOps())
+    for (auto &op : operatorOp.getBody().getOps())
         getGraphNodesFromOp(&op, nodes, idxBias);
 
     // Each output will be a sink node
@@ -478,7 +478,7 @@ void DfgPrintOperatorToYamlPass::runOnOperation()
         assert(
             !operatorOp.getBody().empty()
             && "Cannot print anything out of an empty operator.");
-        for (auto &op : operatorOp.getOps())
+        for (auto &op : operatorOp.getBody().getOps())
             assert(
                 (isa<arith::ConstantOp>(op) || isa<arith::AddIOp>(op)
                  || isa<arith::SubIOp>(op) || isa<arith::MulIOp>(op)

@@ -157,9 +157,9 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
             IsolatedFromAbove,
-            RegionKindInterface,
             HasParent<"ModuleOp">,
-            SingleBlockImplicitTerminator<"YieldOp">
+            NoTerminator
+            // SingleBlockImplicitTerminator<"YieldOp">
         ]> {
     let summary = "define an SDF node in DFG";
 
@@ -170,15 +170,14 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
     }];
 
     let arguments = (ins SymbolNameAttr: $sym_name,
-                         TypeAttrOf<FunctionType>: $function_type);
-    let regions = (region AnyRegion: $body);
+                         TypeAttrOf<FunctionType>: $function_type,
+                         Variadic<AnyType>: $iterArgs);
+    let regions = (region AnyRegion: $initBody,
+                          AnyRegion: $body);
 
     let extraClassDeclaration = [{
         /// Returns whether the process is externally defined
         bool isExternal();
-
-        // Implement RegionKindInterface.
-        static RegionKind getRegionKind(unsigned index) { return RegionKind::Graph;}
 
         //===------------------------------------------------------------------===//
         // SymbolOpInterface Methods
@@ -191,9 +190,21 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
     let hasVerifier = 1;
 }
 
-def Dfg_YieldOp : Dfg_Op<"yield", [
-            Terminator,
+def Dfg_OutputOp : Dfg_Op<"output", [
+            // Terminator,
             HasParent<"OperatorOp">
+        ]> {
+    let summary = "Yield op for a dfg.operator";
+
+    let arguments = (ins Variadic<AnyType>:$operands);
+
+    let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
+    // let hasVerifier = 1;
+}
+
+def Dfg_YieldOp : Dfg_Op<"yield", [
+            // Terminator,
+            ParentOneOf<["OperatorOp", "LoopOp"]>
         ]> {
     let summary = "Yield op for a dfg.operator";
 
@@ -229,14 +240,16 @@ def Dfg_LoopOp : Dfg_Op<"loop", [HasParent<"ProcessOp">, NoTerminator, AttrSized
     }];
 
     let arguments = (ins Variadic<Dfg_OutputType>: $inChans,
-                         Variadic<Dfg_InputType>: $outChans);
+                         Variadic<Dfg_InputType>: $outChans,
+                         Variadic<AnyType>: $iterArgs);
 
     let regions = (region MinSizedRegion<1>: $body);
 
     let skipDefaultBuilders = 1;
     let builders = [
         OpBuilder<(ins CArg<"ValueRange", "{}">:$inChans,
-                       CArg<"ValueRange", "{}">:$outChans)>
+                       CArg<"ValueRange", "{}">:$outChans,
+                       CArg<"ValueRange", "{}">: $iterArgs)>
     ];
 
     let hasCustomAssemblyFormat = 1;

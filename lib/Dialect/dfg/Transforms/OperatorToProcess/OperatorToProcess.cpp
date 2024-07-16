@@ -122,11 +122,11 @@ struct ConvertAnyOperatorToEquivalentProcess
             newOperands.push_back(pullOp.getResult());
             argToPulledMap.push_back(std::make_pair(
                 pullOp.getResult(),
-                op.getBodyRegion().getArgument(i)));
+                op.getBody().getArgument(i)));
         }
 
         SmallVector<std::pair<Value, Value>> oldToNewValueMap;
-        for (auto &opi : op.getOps()) {
+        for (auto &opi : op.getBody().getOps()) {
             if (!isa<YieldOp>(opi)) {
                 // Insert original ops into LoopOp and replace the operand
                 auto newOpi = opi.clone();
