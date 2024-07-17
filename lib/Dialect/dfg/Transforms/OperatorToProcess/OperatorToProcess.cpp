@@ -54,6 +54,8 @@ std::optional<int> getNumBlockArg(SmallVector<Value> list, Value value)
     return std::nullopt;
 }
 
+SmallVector<std::pair<Value, Value>> oldToNewValueMap;
+SmallVector<std::pair<Value, Value>> argToPulledMap;
 void processNestedRegion(
     Operation* op,
     SmallVector<Value> src,
@@ -62,7 +64,15 @@ void processNestedRegion(
     for (size_t i = 0; i < op->getNumOperands(); i++) {
         auto operand = op->getOperand(i);
         auto numOperand = getNumBlockArg(src, operand);
+        auto newResultValue =
+            getNewIndexOrArg<Value, Value>(operand, oldToNewValueMap);
+        auto newPulledValue =
+            getNewIndexOrArg<Value, Value>(operand, argToPulledMap);
         if (numOperand.has_value()) op->setOperand(i, dest[numOperand.value()]);
+        if (newPulledValue.has_value())
+            op->setOperand(i, newPulledValue.value());
+        if (newResultValue.has_value())
+            op->setOperand(i, newResultValue.value());
     }
     if (op->getNumRegions() != 0)
         for (auto &region : op->getRegions())
@@ -82,10 +92,12 @@ struct ConvertAnyOperatorToEquivalentProcess
         auto loc = op.getLoc();
         auto name = op.getSymNameAttr();
         auto funcTy = op.getFunctionType();
+        // auto initValueOps = op.getInitBody().getOps();
         SmallVector<Value> blockArgs;
         blockArgs.append(
             op.getBody().getArguments().begin(),
-            op.getBody().getArguments().end());
+            op.getBody().getArguments().begin() + funcTy.getNumInputs()
+                + funcTy.getNumResults());
 
         SmallVector<Type> inChanTypes, outChanTypes;
         for (const auto inTy : funcTy.getInputs())
@@ -115,7 +127,6 @@ struct ConvertAnyOperatorToEquivalentProcess
         // Insert number of input channels PullOps
         rewriter.setInsertionPointToStart(&loopOp.getBody().front());
         SmallVector<Value> newOperands;
-        SmallVector<std::pair<Value, Value>> argToPulledMap;
         for (size_t i = 0; i < newFuncTy.getNumInputs(); i++) {
             auto pullOp =
                 rewriter.create<PullOp>(loc, processBlock->getArgument(i));
@@ -125,9 +136,8 @@ struct ConvertAnyOperatorToEquivalentProcess
                 op.getBody().getArgument(i)));
         }
 
-        SmallVector<std::pair<Value, Value>> oldToNewValueMap;
         for (auto &opi : op.getBody().getOps()) {
-            if (!isa<YieldOp>(opi)) {
+            if (!isa<OutputOp>(opi)) {
                 // Insert original ops into LoopOp and replace the operand
                 auto newOpi = opi.clone();
                 processNestedRegion(newOpi, blockArgs, newOperands);
@@ -136,10 +146,10 @@ struct ConvertAnyOperatorToEquivalentProcess
                     oldToNewValueMap.push_back(
                         std::make_pair(newOpi->getResult(i), opi.getResult(i)));
             } else {
-                // Replace the YieldOp with number of output channels PushOps
-                auto yieldOp = dyn_cast<YieldOp>(opi);
+                // Replace the OutputOp with number of output channels PushOps
+                auto outputOp = dyn_cast<OutputOp>(opi);
                 auto idxBias = newFuncTy.getNumInputs();
-                for (const auto operand : yieldOp.getOperands())
+                for (const auto operand : outputOp.getOperands())
                     if (auto newValue = getNewIndexOrArg<Value, Value>(
                             operand,
                             oldToNewValueMap))
@@ -157,7 +167,7 @@ struct ConvertAnyOperatorToEquivalentProcess
                             processBlock->getArgument(idxBias++));
                     else
                         return rewriter.notifyMatchFailure(
-                            yieldOp.getLoc(),
+                            outputOp.getLoc(),
                             "Unknown value to be pushed.");
             }
         }
