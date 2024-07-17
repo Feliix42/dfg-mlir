@@ -9,6 +9,7 @@
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -895,6 +896,10 @@ LogicalResult OperatorOp::verify()
         if (op.getDialect()->getNamespace() == "dfg") {
             if (!isa<YieldOp>(op))
                 return ::emitError(getLoc(), "Only yield op is allowed here.");
+        } else if (!isa<arith::ConstantOp>(op)) {
+            return ::emitError(
+                getLoc(),
+                "Only constants are allowed in initialize region.");
         }
     }
     for (auto &op : getBody().getOps()) {
@@ -1013,7 +1018,8 @@ void LoopOp::build(
     llvm::copy(
         ArrayRef<int32_t>(
             {static_cast<int32_t>(inChans.size()),
-             static_cast<int32_t>(outChans.size())}),
+             static_cast<int32_t>(outChans.size()),
+             static_cast<int32_t>(iterArgs.size())}),
         state.getOrAddProperties<Properties>().operandSegmentSizes.begin());
     Region* region = state.addRegion();
     Block* block = new Block();
