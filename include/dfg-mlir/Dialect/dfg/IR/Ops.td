@@ -172,7 +172,7 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
     let arguments = (ins SymbolNameAttr: $sym_name,
                          TypeAttrOf<FunctionType>: $function_type,
                          Variadic<AnyType>: $iterArgs);
-    let regions = (region AnyRegion: $initBody,
+    let regions = (region SizedRegion<1>: $initBody,
                           AnyRegion: $body);
 
     let extraClassDeclaration = [{
@@ -199,7 +199,7 @@ def Dfg_OutputOp : Dfg_Op<"output", [
     let arguments = (ins Variadic<AnyType>:$operands);
 
     let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
-    // let hasVerifier = 1;
+    let hasVerifier = 1;
 }
 
 def Dfg_YieldOp : Dfg_Op<"yield", [

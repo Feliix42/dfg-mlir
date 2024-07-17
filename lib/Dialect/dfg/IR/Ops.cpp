@@ -704,11 +704,6 @@ LogicalResult ProcessOp::verify()
 // OperatorOp
 //===----------------------------------------------------------------------===//
 
-// TODO: parse and print - need to solve the types, otherwise there is no way to
-// TODO: use the arguments in the region
-// TODO: maybe try add block arguments as the original types and wrap to dfg
-// TODO: types in yield type
-
 ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 {
     auto &builder = parser.getBuilder();
@@ -757,6 +752,12 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
     result.addAttribute(
         getFunctionTypeAttrName(result.name),
         TypeAttr::get(type));
+    SmallVector<Attribute> iterArgsTypeAttr;
+    for (auto type : iterArgsTypes)
+        iterArgsTypeAttr.push_back(TypeAttr::get(type));
+    result.addAttribute(
+        "iter_args_types",
+        ArrayAttr::get(builder.getContext(), iterArgsTypeAttr));
 
     // merge both argument lists for the block arguments
     inVals.append(outVals);
@@ -863,7 +864,10 @@ void OperatorOp::print(OpAsmPrinter &p)
     if (!op->getAttrs().empty())
         p.printOptionalAttrDictWithKeyword(
             op->getAttrs(),
-            /*elidedAttrs=*/{getFunctionTypeAttrName(), getSymNameAttrName()});
+            /*elidedAttrs=*/{
+                getFunctionTypeAttrName(),
+                getSymNameAttrName(),
+                StringAttr::get(getContext(), "iter_args_types")});
 
     // Print the regions
     if (hasIterArgs) {
@@ -916,44 +920,70 @@ LogicalResult OperatorOp::verify()
 }
 
 //===----------------------------------------------------------------------===//
+// OutputOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult OutputOp::verify()
+{
+    // TODO
+    auto op = getOperation();
+    auto operatorOp = getParentOp();
+    if (!isa<OperatorOp>(operatorOp))
+        return ::emitError(getLoc(), "OutputOp must be in an operator.");
+    auto* body = op->getParentRegion();
+    if (body != &operatorOp.getBody())
+        return ::emitError(
+            getLoc(),
+            "OutputOp must be in the body of an operator.");
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
 // YieldOp
 //===----------------------------------------------------------------------===//
 
-// TODO: check if the num of results matches the num of output channels
-// TODO: and the types, getParentOp ...
 LogicalResult YieldOp::verify()
 {
     auto op = getOperation();
     if (auto operatorOp = op->getParentOfType<OperatorOp>()) {
-        // auto iterArgs = operatorOp.getIterArgs();
-        // for (size_t i = 0; i < iterArgs.size(); i++)
-        //     if (iterArgs[i].getType() != getOperand(i).getType())
-        //         return ::emitError(
-        //             getLoc(),
-        //             "The type of operatnd must match the iterate arguments' "
-        //             "type");
-        // auto funcTy = operatorOp.getFunctionType();
-
-        // if (funcTy.getNumResults() != getNumOperands())
-        //     return ::emitError(
-        //         getLoc(),
-        //         "The number of yield operands must match the number of output
-        //         " "channels");
-
-        // for (size_t i = 0; i < funcTy.getNumResults(); i++)
-        //     if (funcTy.getResult(i) != getOperand(i).getType())
-        //         return ::emitError(
-        //             getLoc(),
-        //             "The type of operand must match the output channel's "
-        //             "encapsulated type.");
+        auto* region = op->getParentRegion();
+        auto yieldValueTypes = getOperandTypes();
+        SmallVector<Type> iterArgsTypes;
+        auto iterArgsTypesAttr =
+            operatorOp.getOperation()
+                ->getAttrOfType<ArrayAttr>("iter_args_types")
+                .getValue();
+        for (auto typeAttr : iterArgsTypesAttr)
+            iterArgsTypes.push_back(cast<TypeAttr>(typeAttr).getValue());
+        if (yieldValueTypes.size() != iterArgsTypes.size())
+            return ::emitError(
+                getLoc(),
+                "Yield value size mismatches iter args size.");
+        if (region == &operatorOp.getInitBody()) {
+            for (auto type : llvm::zip(yieldValueTypes, iterArgsTypes))
+                if (std::get<0>(type) != std::get<1>(type)) {
+                    return ::emitError(
+                        getLoc(),
+                        "The type of operand must match the iterate arguments' "
+                        "type in initialize region");
+                }
+        } else if (region == &operatorOp.getBody()) {
+            for (auto type : llvm::zip(yieldValueTypes, iterArgsTypes))
+                if (std::get<0>(type) != std::get<1>(type)) {
+                    return ::emitError(
+                        getLoc(),
+                        "The type of operand must match the iterate arguments' "
+                        "type in OperatorOp region");
+                }
+        }
     } else if (auto loopOp = op->getParentOfType<LoopOp>()) {
         auto iterArgs = loopOp.getIterArgs();
         for (size_t i = 0; i < iterArgs.size(); i++)
             if (iterArgs[i].getType() != getOperand(i).getType())
                 return ::emitError(
                     getLoc(),
-                    "The type of operatnd must match the iterate arguments' "
-                    "type");
+                    "The type of operand must match the iterate arguments' "
+                    "type in LoopOp region");
     }
 
     return success();
