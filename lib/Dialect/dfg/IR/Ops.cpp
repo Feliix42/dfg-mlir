@@ -817,7 +817,8 @@ void OperatorOp::print(OpAsmPrinter &p)
     ArrayRef<Type> outputTypes = getFunctionType().getResults();
     auto numArgs = body.getArguments().size();
     auto bias = inputTypes.size() + outputTypes.size();
-    auto hasIterArgs = numArgs != bias;
+    auto hasIterArgs =
+        !op->getAttrOfType<ArrayAttr>("iter_args_types").getValue().empty();
 
     if (!inputTypes.empty()) {
         p << " inputs(";
