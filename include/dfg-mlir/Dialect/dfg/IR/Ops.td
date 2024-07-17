@@ -159,7 +159,7 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
             IsolatedFromAbove,
             HasParent<"ModuleOp">,
             NoTerminator
-            // SingleBlockImplicitTerminator<"YieldOp">
+            // SingleBlockImplicitTerminator<"YieldOp">,
         ]> {
     let summary = "define an SDF node in DFG";
 
@@ -172,8 +172,13 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
     let arguments = (ins SymbolNameAttr: $sym_name,
                          TypeAttrOf<FunctionType>: $function_type,
                          Variadic<AnyType>: $iterArgs);
-    let regions = (region SizedRegion<1>: $initBody,
+    let regions = (region AnyRegion: $initBody,
                           AnyRegion: $body);
+
+    // let builders = [
+    //     OpBuilder<(ins "StringRef":$name, "FunctionType":$function_type,
+    //                    CArg<"ValueRange", "{}">: $iterArgs)>
+    // ];
 
     let extraClassDeclaration = [{
         /// Returns whether the process is externally defined

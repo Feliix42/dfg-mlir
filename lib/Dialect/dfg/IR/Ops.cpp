@@ -768,9 +768,10 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
     if (attrResult.has_value() && failed(*attrResult)) return failure();
 
     // parse the initialization region if iter_args exist
+    auto* initBody = result.addRegion();
     if (!iterVals.empty()) {
         if (parser.parseKeyword("initialize")) return failure();
-        auto* initBody = result.addRegion();
+        // auto* initBody = result.addRegion();
         SMLoc loc = parser.getCurrentLocation();
         if (failed(parser.parseRegion(*initBody)))
             return parser.emitError(loc, "expected an initialize region");
@@ -908,13 +909,15 @@ LogicalResult OperatorOp::verify()
     // and all iter args are only used in YieldOp
     auto numInputs = getFunctionType().getNumInputs();
     auto numOutputs = getFunctionType().getNumResults();
-    for (size_t i = numInputs; i < numInputs + numOutputs; i++) {
-        for (Operation* user : getBody().getArgument(i).getUsers())
-            if (!isa<OutputOp>(user))
-                return ::emitError(
-                    user->getLoc(),
-                    "Output ports can only be used to output data into them.");
-    }
+    if (!getBody().empty())
+        for (size_t i = numInputs; i < numInputs + numOutputs; i++) {
+            for (Operation* user : getBody().getArgument(i).getUsers())
+                if (!isa<OutputOp>(user))
+                    return ::emitError(
+                        user->getLoc(),
+                        "Output ports can only be used to output data into "
+                        "them.");
+        }
 
     return success();
 }
