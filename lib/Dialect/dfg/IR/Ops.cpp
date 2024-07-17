@@ -981,6 +981,10 @@ LogicalResult YieldOp::verify()
         }
     } else if (auto loopOp = op->getParentOfType<LoopOp>()) {
         auto iterArgs = loopOp.getIterArgs();
+        if (getOperands().size() != iterArgs.size())
+            return ::emitError(
+                getLoc(),
+                "The size of yielded values must match the size of iter args.");
         for (size_t i = 0; i < iterArgs.size(); i++)
             if (iterArgs[i].getType() != getOperand(i).getType())
                 return ::emitError(
