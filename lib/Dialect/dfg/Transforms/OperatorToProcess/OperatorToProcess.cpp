@@ -8,6 +8,7 @@
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -54,30 +55,47 @@ std::optional<int> getNumBlockArg(SmallVector<Value> list, Value value)
     return std::nullopt;
 }
 
-SmallVector<std::pair<Value, Value>> oldToNewValueMap;
-SmallVector<std::pair<Value, Value>> argToPulledMap;
+SmallVector<std::pair<Value, Value>> oldToNewValueMap, oldToNewIterArgs;
 void processNestedRegion(
     Operation* op,
     SmallVector<Value> src,
     SmallVector<Value> dest)
 {
     for (size_t i = 0; i < op->getNumOperands(); i++) {
+        // TODO: add new map from old iter_args to new one.
         auto operand = op->getOperand(i);
         auto numOperand = getNumBlockArg(src, operand);
         auto newResultValue =
             getNewIndexOrArg<Value, Value>(operand, oldToNewValueMap);
-        auto newPulledValue =
-            getNewIndexOrArg<Value, Value>(operand, argToPulledMap);
+        auto newIterArgValue =
+            getNewIndexOrArg<Value, Value>(operand, oldToNewIterArgs);
         if (numOperand.has_value()) op->setOperand(i, dest[numOperand.value()]);
-        if (newPulledValue.has_value())
-            op->setOperand(i, newPulledValue.value());
         if (newResultValue.has_value())
             op->setOperand(i, newResultValue.value());
+        if (newIterArgValue.has_value())
+            op->setOperand(i, newIterArgValue.value());
     }
     if (op->getNumRegions() != 0)
         for (auto &region : op->getRegions())
             for (auto &opi : region.getOps())
                 processNestedRegion(&opi, src, dest);
+}
+
+void reorderIterArgs(
+    SmallVector<Value> &values,
+    SmallVector<Value> origin,
+    YieldOp yieldOp)
+{
+    llvm::DenseMap<Value, unsigned> valueIndexMap;
+    for (unsigned i = 0; i < origin.size(); i++) valueIndexMap[origin[i]] = i;
+
+    SmallVector<Value> reorderedValues(values.size());
+    for (unsigned i = 0; i < yieldOp.getNumOperands(); i++) {
+        Value operand = yieldOp.getOperand(i);
+        assert(valueIndexMap.count(operand) && "Operand not found in values");
+        reorderedValues[i] = values[valueIndexMap[operand]];
+    }
+    values = reorderedValues;
 }
 
 struct ConvertAnyOperatorToEquivalentProcess
@@ -92,12 +110,15 @@ struct ConvertAnyOperatorToEquivalentProcess
         auto loc = op.getLoc();
         auto name = op.getSymNameAttr();
         auto funcTy = op.getFunctionType();
-        // auto initValueOps = op.getInitBody().getOps();
-        SmallVector<Value> blockArgs;
+        auto bias = funcTy.getNumInputs() + funcTy.getNumResults();
+        auto initValueOps = op.getInitBody().getOps();
+        SmallVector<Value> blockArgs, oldIterArgs;
         blockArgs.append(
             op.getBody().getArguments().begin(),
-            op.getBody().getArguments().begin() + funcTy.getNumInputs()
-                + funcTy.getNumResults());
+            op.getBody().getArguments().begin() + bias);
+        oldIterArgs.append(
+            op.getBody().getArguments().begin() + bias,
+            op.getBody().getArguments().end());
 
         SmallVector<Type> inChanTypes, outChanTypes;
         for (const auto inTy : funcTy.getInputs())
@@ -116,17 +137,34 @@ struct ConvertAnyOperatorToEquivalentProcess
                 outChanTypes));
         auto newFuncTy = processOp.getFunctionType();
         Block* processBlock = &processOp.getBody().front();
+        rewriter.setInsertionPointToEnd(processBlock);
+        SmallVector<Value> iterArgs, initConstants;
+        for (auto &opi : initValueOps) {
+            if (auto yieldOp = dyn_cast<YieldOp>(opi)) {
+                reorderIterArgs(iterArgs, initConstants, yieldOp);
+                break;
+            }
+            auto newOpi = opi.clone();
+            rewriter.insert(newOpi);
+            initConstants.push_back(opi.getResult(0));
+            iterArgs.push_back(newOpi->getResult(0));
+        }
+        for (auto iterArg : llvm::zip(iterArgs, oldIterArgs)) {
+            oldToNewIterArgs.push_back(
+                std::make_pair(std::get<0>(iterArg), std::get<1>(iterArg)));
+        }
 
         // Insert LoopOp in the ProcessOp
-        rewriter.setInsertionPointToStart(processBlock);
+        rewriter.setInsertionPointToEnd(processBlock);
         SmallVector<Value> inChans, outChans;
         for (size_t i = 0; i < newFuncTy.getNumInputs(); i++)
             inChans.push_back(processBlock->getArgument(i));
-        auto loopOp = rewriter.create<LoopOp>(loc, inChans, outChans);
+        auto loopOp = rewriter.create<LoopOp>(loc, inChans, outChans, iterArgs);
 
         // Insert number of input channels PullOps
         rewriter.setInsertionPointToStart(&loopOp.getBody().front());
         SmallVector<Value> newOperands;
+        SmallVector<std::pair<Value, Value>> argToPulledMap;
         for (size_t i = 0; i < newFuncTy.getNumInputs(); i++) {
             auto pullOp =
                 rewriter.create<PullOp>(loc, processBlock->getArgument(i));
