@@ -277,7 +277,7 @@ private:
     llvm::DenseMap<Value, Value> yieldToOutput;
     int arithNodeIdx = 0;
     int muxNodeIdx = 0;
-    mlir::Region::BlockArgListType blkArgs;
+    SmallVector<Value> blkArgs, iterArgs;
     SmallVector<Value> debug_results;
     std::unordered_map<std::string, std::vector<std::string>> adjList;
 };
@@ -287,7 +287,13 @@ void DfgPrintOperatorToYamlPass::getGraphNodes(OperatorOp operatorOp)
 {
     std::vector<GraphNode> nodes;
     auto funcTy = operatorOp.getFunctionType();
-    blkArgs = operatorOp.getBody().getArguments();
+    auto biasIterArg = funcTy.getNumInputs() + funcTy.getNumResults();
+    blkArgs.append(
+        operatorOp.getBody().getArguments().begin(),
+        operatorOp.getBody().getArguments().begin() + biasIterArg);
+    iterArgs.append(
+        operatorOp.getBody().getArguments().begin() + biasIterArg,
+        operatorOp.getBody().getArguments().end());
 
     // Each input will be a source node
     // If the input is used more than once, multiple output port will be created
@@ -439,14 +445,50 @@ void DfgPrintOperatorToYamlPass::getGraphNodesFromOp(
         debug_results.push_back(result);
     } else if (isa<scf::YieldOp>(op)) {
         return;
-    } else if (isa<YieldOp>(op)) {
+    } else if (isa<OutputOp>(op)) {
         for (size_t i = 0; i < op->getNumOperands(); i++)
             yieldToOutput[blkArgs[idxBias + i]] = op->getOperand(i);
+    } else if (isa<YieldOp>(op)) {
+        // Update the mapping info if there is value being iter args
+        for (size_t i = 0; i < iterArgs.size(); i++) {
+            auto it = valueToPorts.begin();
+            while (it != valueToPorts.end()) {
+                if (it->first == iterArgs[i]) {
+                    auto currentPorts = std::move(it->second);
+                    valueToPorts.erase(it);
+                    addValueIntoMap(op->getOperand(i), currentPorts);
+                    for (auto mapInfo : currentPorts)
+                        LLVM_DEBUG(
+                            llvm::dbgs() << "\nUpdating information of node "
+                                         << mapInfo.nodeName << "'s port "
+                                         << mapInfo.port.name << " of type "
+                                         << mapInfo.port.type << ".\n");
+                    LLVM_DEBUG(
+                        llvm::dbgs()
+                        << "  Now the value is " << op->getOperand(i)
+                        << " instead of " << iterArgs[i] << ".\n");
+                } else
+                    ++it;
+            }
+        }
     }
 }
 
 void DfgPrintOperatorToYamlPass::getGraphChannels()
 {
+    LLVM_DEBUG(llvm::dbgs() << "\nHere is the mapping information:\n");
+    for (auto map : valueToPorts) {
+        // if (isInSmallVector(map.first, iterArgs))
+        LLVM_DEBUG(
+            llvm::dbgs()
+            << "\nFor this value " << map.first << ", there is mappings:\n");
+        for (auto mapInfo : map.second) {
+            LLVM_DEBUG(
+                llvm::dbgs() << "\n  Node " << mapInfo.nodeName << " and port "
+                             << mapInfo.port.name << " of type "
+                             << mapInfo.port.type << ".\n");
+        }
+    }
     std::vector<GraphChannel> channels;
     int channelNum = 0;
     for (auto map : valueToPorts) {
@@ -483,11 +525,11 @@ void DfgPrintOperatorToYamlPass::runOnOperation()
                 (isa<arith::ConstantOp>(op) || isa<arith::AddIOp>(op)
                  || isa<arith::SubIOp>(op) || isa<arith::MulIOp>(op)
                  || isa<arith::CmpIOp>(op) || isa<scf::IfOp>(op)
-                 || isa<scf::YieldOp>(op) || isa<YieldOp>(op))
+                 || isa<scf::YieldOp>(op) || isa<YieldOp>(op)
+                 || isa<OutputOp>(op))
                 && "Unsupported ops in the region");
 
         auto graphName = operatorOp.getSymName().str();
-        // auto graphNodes = getGraphNodes(operatorOp);
         getGraphNodes(operatorOp);
         getGraphChannels();
         analyseChannelLoops();
