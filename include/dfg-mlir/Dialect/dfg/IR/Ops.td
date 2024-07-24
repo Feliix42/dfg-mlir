@@ -23,8 +23,6 @@ def Dfg_RegionOp : Dfg_Op<
         "region",
         [
             Dfg_DataflowGraphOp,
-
-            IsolatedFromAbove,
             NoTerminator
         ]>
 {
@@ -97,7 +95,6 @@ def Dfg_ProcessOp : Dfg_Op<
         [
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
-            IsolatedFromAbove,
             HasParent<"ModuleOp">,
             NoTerminator
         ]> {
@@ -156,7 +153,6 @@ def Dfg_ProcessOp : Dfg_Op<
 def Dfg_OperatorOp : Dfg_Op<"operator", [
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
-            IsolatedFromAbove,
             HasParent<"ModuleOp">,
             NoTerminator
             // SingleBlockImplicitTerminator<"YieldOp">,

@@ -2,15 +2,10 @@
   description = "An over-engineered Hello World in C";
 
   inputs = {
-    nixpkgs.url = "nixpkgs/nixos-unstable";
-    mlir = {
-      #url = "github:Feliix42/mlir.nix/main";
-      url = "github:Feliix42/mlir.nix/circt";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    nixpkgs.url = "nixpkgs/nixos-24.05";
   };
 
-  outputs = { self, nixpkgs, mlir }:
+  outputs = { self, nixpkgs }:
     let
 
       # to work with older version of flakes
@@ -20,7 +15,7 @@
       version = builtins.substring 0 8 lastModifiedDate;
 
       # System types to support.
-      supportedSystems = [ "x86_64-linux" ]; # "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
+      supportedSystems = [ "x86_64-linux" "aarch64-linux" ]; # "x86_64-darwin" "aarch64-darwin" ];
 
       # Helper function to generate an attrset '{ x86_64-linux = f "x86_64-linux"; ... }'.
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
@@ -35,7 +30,78 @@
       # A Nixpkgs overlay.
       overlay = final: prev: {
 
-        dfg_dialect = with final; final.callPackage ({ inShell ? false }: llvmPackages_17.stdenv.mkDerivation rec {
+        # a specific version of llvm is needed for CIRCT
+        llvm-custom = with final; llvmPackages_18.stdenv.mkDerivation rec {
+          name = "llvm-custom";
+          src = fetchFromGitHub {
+            owner = "llvm";
+            repo = "llvm-project";
+            rev = "2ee2b6aa7a3d9ba6ba13f6881b25e26d7d12c823";
+            sha256 = "sha256-piXv4YUf8q5Lf36my0bHtVkSJTrc+NvyZpLEwLPfV7U="; #lib.fakeSha256;
+          };
+          sourceRoot = "source/llvm";
+          nativeBuildInputs = [
+            python3
+            ninja
+            cmake
+            llvmPackages_18.bintools
+          ];
+          buildInputs = [ libxml2 ];
+          cmakeFlags = [
+            "-GNinja"
+            "-DCMAKE_BUILD_TYPE=Release"
+            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+            # from the original LLVM expr
+            "-DLLVM_LINK_LLVM_DYLIB=ON"
+            "-DLLVM_INSTALL_UTILS=ON"
+            # change this to enable the projects you need
+            "-DLLVM_ENABLE_PROJECTS=mlir"
+            "-DLLVM_TARGETS_TO_BUILD=X86;AArch64"
+            # NOTE(feliix42): THIS IS ABI BREAKING!!
+            "-DLLVM_ENABLE_ASSERTIONS=ON"
+            # Using clang and lld speeds up the build, we recomment adding:
+            "-DCMAKE_C_COMPILER=clang"
+            "-DCMAKE_CXX_COMPILER=clang++"
+            "-DLLVM_ENABLE_LLD=ON"
+          ];
+        };
+
+
+        # there are some new commits in the CIRCT repository that are needed for this project
+        circt-custom = with final; llvmPackages_18.stdenv.mkDerivation rec {
+          name = "circt-custom";
+          src = fetchFromGitHub {
+            owner = "llvm";
+            repo = "circt";
+            rev = "464f177ddcd3eb737fe8a592d20a24b15f25aef6";
+            sha256 = "sha256-gl/TGZe30GAGnVrZl+iSBLTujddz7Qs6jUOq2gZ4xVI="; #lib.fakeSha256;
+          };
+          sourceRoot = "source/";
+          nativeBuildInputs = [
+            cmake
+            ninja
+            python3
+            llvmPackages_18.bintools
+            zlib
+          ];
+          cmakeFlags = [
+            "-GNinja"
+            "-DMLIR_DIR=${llvm-custom}/lib/cmake/mlir"
+            "-DLLVM_DIR=${llvm-custom}/lib/cmake/llvm"
+            "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+            "-DLLVM_LINK_LLVM_DYLIB=ON"
+            "-DLLVM_TARGETS_TO_BUILD=X86;AArch64"
+            "-DLLVM_ENABLE_ASSERTIONS=ON"
+            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+            "-DCMAKE_C_COMPILER=clang"
+            "-DCMAKE_CXX_COMPILER=clang++"
+            "-DLLVM_ENABLE_LLD=ON"
+            "-DLLVM_EXTERNAL_LIT=${lit}/bin/lit"
+            "-DCIRCT_LLHD_SIM_ENABLED=OFF"
+          ];
+        };
+
+        dfg_dialect = with final; final.callPackage ({ inShell ? false }: llvmPackages_18.stdenv.mkDerivation rec {
           pname = "dfg-mlir";
           inherit version;
 
@@ -43,40 +109,25 @@
           src = if inShell then null else ./.;
 
           nativeBuildInputs = [
-            python3
-            ninja
             cmake
-            llvmPackages_17.clang
-            llvmPackages_17.bintools
-            llvmPackages_17.openmp
-            clang-tools_17
-            mlir.packages.x86_64-linux.mlir
-            mlir.packages.x86_64-linux.circt
-            lit
+            ninja
+            llvm-custom
+            circt-custom
+            llvmPackages_18.bintools
+            zlib
           ];
-
-          # buildInputs = (if inShell then [
-          #   # in the `nix develop` shell, we also want:
-          # ]);
 
           cmakeFlags = [
             "-GNinja"
-            "-DMLIR_DIR=${mlir}/lib/cmake/mlir"
-            "-DLLVM_DIR=${mlir}/lib/cmake/llvm"
-            "-DCIRCT_DIR=${circt}/lib/cmake/circt"
-
+            "-DMLIR_DIR=${llvm-custom}/lib/cmake/mlir"
+            "-DLLVM_DIR=${llvm-custom}/lib/cmake/llvm"
+            "-DCIRCT_DIR=${circt-custom}/lib/cmake/circt"
+            "-DMLIR_TABLEGEN_EXE=${llvm-custom}/bin/mlir-tblgen"
             # Debug for debug builds
-            #"-DCMAKE_BUILD_TYPE=RelWithDebInfo"
-            # this makes llvm only to produce code for the current platform, this saves CPU time, change it to what you need
-            #"-DLLVM_TARGETS_TO_BUILD=X86"
-            # NOTE(feliix42): THIS IS ABI BREAKING!!
-            #"-DLLVM_ENABLE_ASSERTIONS=ON"
-            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
-            # Using clang and lld speeds up the build, we recomment adding:
+            "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
             "-DCMAKE_C_COMPILER=clang"
             "-DCMAKE_CXX_COMPILER=clang++"
             "-DLLVM_ENABLE_LLD=ON"
-            "-DLLVM_EXTERNAL_LIT=${lit}/bin/lit"
           ];
         }) {};
       };

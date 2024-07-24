@@ -1,0 +1,13 @@
+../../build/bin/dfg-opt --convert-dfg-to-dpm-calls --convert-cf-to-llvm --convert-func-to-llvm sample_with_regions.mlir > sample_to_llvm_dialect.mlir
+mlir-translate sample_to_llvm_dialect.mlir --mlir-to-llvmir > sample.ll
+
+clang++ missing_parts.cpp -S -emit-llvm -o missing_parts.ll -O0
+
+# think about relocation model again
+
+llc -filetype=obj -o main.o sample.ll --relocation-model=pic
+llc -filetype=obj -o missing_parts.o missing_parts.ll --relocation-model=pic
+llc -filetype=obj -o other_externs.o multiple_return_values.ll --relocation-model=pic
+
+
+clang++ -o test_executable other_externs.o main.o missing_parts.o -L "/home/fabius/dppm_install/lib/" -L "/home/fabius/tetris_install/lib/" -ldpm -lyaml-cpp -ltetrisclient -lprotobuf -labsl_log_internal_check_op -labsl_log_internal_message -labsl_raw_logging_internal -lgcov

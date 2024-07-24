@@ -1,44 +1,22 @@
 {
   "nodes": {
-    "mlir": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1706542027,
-        "narHash": "sha256-kunu519u5RI6ZQZ3tDoDpoFeGjY/93cBTbbFi1iiRCI=",
-        "owner": "Feliix42",
-        "repo": "mlir.nix",
-        "rev": "7845731a3091da638be59cce1ca62554ce7faea3",
-        "type": "github"
-      },
-      "original": {
-        "owner": "Feliix42",
-        "ref": "circt",
-        "repo": "mlir.nix",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1709479366,
-        "narHash": "sha256-n6F0n8UV6lnTZbYPl1A9q1BS0p4hduAv1mGAP17CVd0=",
+        "lastModified": 1721226092,
+        "narHash": "sha256-UBvzVpo5sXSi2S/Av+t+Q+C2mhMIw/LBEZR+d6NMjws=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "b8697e57f10292a6165a20f03d2f42920dfaf973",
+        "rev": "c716603a63aca44f39bef1986c13402167450e0a",
         "type": "github"
       },
       "original": {
         "id": "nixpkgs",
-        "ref": "nixos-unstable",
+        "ref": "nixos-24.05",
         "type": "indirect"
       }
     },
     "root": {
       "inputs": {
-        "mlir": "mlir",
         "nixpkgs": "nixpkgs"
       }
     }

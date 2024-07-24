@@ -20,6 +20,21 @@ def ConvertDfgToAsync : Pass<"convert-dfg-to-async"> {
     ];
 }
 
+def ConvertDfgToDpmCalls : Pass<"convert-dfg-to-dpm-calls"> {
+	let summary = "Convert DFG dialect to calls to the DPM library";
+
+	let constructor = "mlir::createConvertDfgToDpmCallsPass()";
+
+	let dependentDialects = [
+        "cf::ControlFlowDialect",
+        "func::FuncDialect",
+        "LLVM::LLVMDialect",
+
+        "dfg::DfgDialect"
+    ];
+
+}
+
 def ConvertDfgToCirct : Pass<"convert-dfg-to-circt"> {
     let summary = "Convert DFG dialect to CIRCT";
 
