@@ -46,7 +46,7 @@ struct FuncConversion : public OpConversionPattern<func::FuncOp> {
     using OpConversionPattern<func::FuncOp>::OpConversionPattern;
 
     FuncConversion(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<func::FuncOp>(typeConverter, context){};
+            : OpConversionPattern<func::FuncOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         func::FuncOp op,
@@ -280,7 +280,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
     using OpConversionPattern<ProcessOp>::OpConversionPattern;
 
     WrapProcessOps(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ProcessOp>(typeConverter, context){};
+            : OpConversionPattern<ProcessOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         ProcessOp op,
@@ -290,25 +290,28 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         auto context = rewriter.getContext();
         auto operatorName = op.getSymName();
         auto funcTy = op.getFunctionType();
-        auto ops = op.getOps();
+        auto opsProcess = op.getOps();
         auto moduleOp = op->getParentOfType<ModuleOp>();
 
         LoopOp loopOp = nullptr;
         bool hasLoopOp = false;
+        bool hasIterArgs = false;
         SmallVector<int> loopInChanIdx, loopOutChanIdx;
-        if (auto oldLoop = dyn_cast<LoopOp>(*ops.begin())) {
-            ops = oldLoop.getOps();
-            loopOp = oldLoop;
-            hasLoopOp = true;
-            for (auto inChan : oldLoop.getInChans()) {
-                auto idxChan = cast<BlockArgument>(inChan).getArgNumber();
-                loopInChanIdx.push_back(idxChan);
+        for (auto &opi : ops)
+            if (auto oldLoop = dyn_cast<LoopOp>(opi)) {
+                // ops = oldLoop.getOps();
+                loopOp = oldLoop;
+                hasLoopOp = true;
+                hasIterArgs = !oldLoop.getIterArgs().empty();
+                for (auto inChan : oldLoop.getInChans()) {
+                    auto idxChan = cast<BlockArgument>(inChan).getArgNumber();
+                    loopInChanIdx.push_back(idxChan);
+                }
+                for (auto outChan : oldLoop.getOutChans()) {
+                    auto idxChan = cast<BlockArgument>(outChan).getArgNumber();
+                    loopOutChanIdx.push_back(idxChan);
+                }
             }
-            for (auto outChan : oldLoop.getOutChans()) {
-                auto idxChan = cast<BlockArgument>(outChan).getArgNumber();
-                loopOutChanIdx.push_back(idxChan);
-            }
-        }
 
         int idxPull = 0;
         int numPull = 0;
@@ -378,6 +381,30 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         SmallVector<Value> newPulledValue;
         auto loc = rewriter.getUnknownLoc();
         rewriter.setInsertionPointToStart(&newOperator.getBody().front());
+        SmallVector<Value> newIterArgs;
+        if (hasIterArgs) {
+            size_t i = 0;
+            auto iterArgsSize = loopOp.getIterArgs().size();
+            assert(iterArgsSize == 1);
+            for (auto &opi : ops) {
+                if (i == iterArgsSize) break;
+                if (auto constantOp = dyn_cast<arith::ConstantOp>(opi)) {
+                    auto constant = constantOp.clone();
+                    newIterArgs.push_back(constant.getResult());
+                    rewriter.insert(constant);
+                    i++;
+                } else {
+                    return rewriter.notifyMatchFailure(
+                        opi.getLoc(),
+                        "Wrong iter_args initialization here.");
+                }
+                // assert(isa<arith::ConstantOp>(opi));
+                // auto constant = opi.clone();
+                // newIterArgs.push_back(constant->getResult(0));
+                // rewriter.insert(constant);
+                // i++;
+            }
+        }
         if (hasLoopOp) {
             SmallVector<Value> loopInChans, loopOutChans;
             for (auto inChanIdx : loopInChanIdx) {
@@ -388,8 +415,11 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
                 loopOutChans.push_back(
                     newOperator.getBody().getArgument(outChanIdx));
             }
-            auto newLoop =
-                rewriter.create<LoopOp>(loc, loopInChans, loopOutChans);
+            auto newLoop = rewriter.create<LoopOp>(
+                loc,
+                loopInChans,
+                loopOutChans,
+                newIterArgs);
             LLVM_DEBUG(
                 llvm::dbgs()
                 << "\nInserting " << newLoop << " into new process op.\n");
@@ -545,7 +575,7 @@ struct LegalizeChannelSize : public OpConversionPattern<ChannelOp> {
     using OpConversionPattern<ChannelOp>::OpConversionPattern;
 
     LegalizeChannelSize(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+            : OpConversionPattern<ChannelOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         ChannelOp op,
@@ -650,14 +680,26 @@ void ConvertStdToCirctPass::runOnOperation()
 
     target.addDynamicallyLegalOp<ProcessOp>([&](ProcessOp op) {
         auto ops = op.getBody().getOps();
-        if (auto loopOp = dyn_cast<LoopOp>(*ops.begin()))
-            ops = loopOp.getBody().getOps();
-        for (auto &opi : ops) {
-            if (!isa<PullOp>(opi) && !isa<HWInstanceOp>(opi)
-                && !isa<PushOp>(opi)) {
+        for (auto &opi : ops)
+            if (isa<arith::ConstantOp>(opi))
+                continue;
+            else if (auto loopOp = dyn_cast<LoopOp>(opi)) {
+                for (auto &opLoop : loopOp.getBody().getOps()) {
+                    if (!isa<PullOp>(opLoop) && !isa<HWInstanceOp>(opLoop)
+                        && !isa<PushOp>(opLoop) && !isa<YieldOp>(opLoop)) {
+                        return false;
+                    }
+                }
+            } else
                 return false;
-            }
-        }
+        // if (auto loopOp = dyn_cast<LoopOp>(*ops.begin()))
+        //     ops = loopOp.getBody().getOps();
+        // for (auto &opi : ops) {
+        //     if (!isa<PullOp>(opi) && !isa<HWInstanceOp>(opi)
+        //         && !isa<PushOp>(opi)) {
+        //         return false;
+        //     }
+        // }
         return true;
     });
 
