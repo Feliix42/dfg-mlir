@@ -27,3 +27,12 @@ bool isInSmallVector(T find, SmallVector<T> vec)
         if (elem == find) return true;
     return false;
 }
+
+template<typename T>
+std::optional<int> getVectorIdx(T find, SmallVector<T> vec)
+{
+    if (vec.empty()) return std::nullopt;
+    for (size_t i = 0; i < vec.size(); i++)
+        if (vec[i] == find) return (int)i;
+    return std::nullopt;
+}

@@ -210,7 +210,10 @@ void processNestedRegions(
     SmallVector<Operation*> &newCalcOps,
     SmallVector<std::pair<int, Value>> &pulledValueIdx,
     SmallVector<std::pair<int, Operation*>> &calcOpIdx,
+    SmallVector<std::pair<int, Value>> &iterArgsIdx,
     func::FuncOp &genFuncOp,
+    size_t inputBias,
+    size_t outputBias,
     PatternRewriter &rewriter)
 {
     LLVM_DEBUG(
@@ -235,6 +238,21 @@ void processNestedRegions(
                 continue;
             }
             auto definingOp = operand.getDefiningOp();
+            if (auto idxIterArg =
+                    getNewIndexOrArg<int, Value>(operand, iterArgsIdx)) {
+                auto idx = idxIterArg.value();
+                LLVM_DEBUG(
+                    llvm::dbgs()
+                    << "Found number " << idxOperand << " operand is number "
+                    << idx << " iter_arg\n");
+                newCalcOp->setOperand(
+                    idxOperand++,
+                    genFuncOp.getBody().getArgument(idx + inputBias));
+                LLVM_DEBUG(
+                    llvm::dbgs() << "Replaced with argment " << idx + inputBias
+                                 << " of the function\n");
+                continue;
+            }
             LLVM_DEBUG(
                 llvm::dbgs()
                 << "Found number " << idxOperand << " operand's defining op "
@@ -270,7 +288,10 @@ void processNestedRegions(
                     newCalcOps,
                     pulledValueIdx,
                     calcOpIdx,
+                    iterArgsIdx,
                     genFuncOp,
+                    inputBias,
+                    outputBias,
                     rewriter);
             }
         }
@@ -297,7 +318,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         bool hasLoopOp = false;
         bool hasIterArgs = false;
         SmallVector<int> loopInChanIdx, loopOutChanIdx;
-        for (auto &opi : ops)
+        for (auto &opi : opsProcess)
             if (auto oldLoop = dyn_cast<LoopOp>(opi)) {
                 // ops = oldLoop.getOps();
                 loopOp = oldLoop;
@@ -330,6 +351,11 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         std::vector<int> pushedValueIdx;
         SmallVector<std::pair<int, Value>> calcResultIdx;
         SmallVector<std::pair<int, Operation*>> calcOpIdx;
+        SmallVector<Type> iterArgsTypes;
+        SmallVector<Type> iterArgsReturnTypes;
+        SmallVector<Value> iterArgsReturnValues;
+        SmallVector<int> iterArgsReturnIdx;
+        auto ops = loopOp.getBody().getOps();
         for (auto &opi : ops)
             if (auto pushOp = dyn_cast<PushOp>(opi))
                 pushedValueRepeat.push_back(pushOp.getInp());
@@ -343,7 +369,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
                 pulledChanIdx.push_back(idxChan);
                 pulledValueIdx.push_back(std::make_pair(idxPull++, pullValue));
                 numPull++;
-            } else if (!isa<PushOp>(opi)) {
+            } else if (!isa<PushOp>(opi) && !isa<YieldOp>(opi)) {
                 for (auto result : opi.getResults())
                     if (isInSmallVector<Value>(result, pushedValueRepeat))
                         calcResultIdx.push_back(
@@ -370,6 +396,25 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
                     pushedValueIdx.push_back(-1);
                 }
                 numPush++;
+            } else if (auto yieldOp = dyn_cast<YieldOp>(opi)) {
+                for (auto type : yieldOp.getOperandTypes())
+                    iterArgsTypes.push_back(type);
+                int bias = numResult;
+                for (auto value : yieldOp.getOperands())
+                    if (isInSmallVector<Value>(value, pushedValueNonRepeat)) {
+                        // If yield value is in the pushed values, store the idx
+                        // of the pushed value
+                        auto idx =
+                            getVectorIdx<Value>(value, pushedValueNonRepeat);
+                        iterArgsReturnIdx.push_back(idx.value());
+                    } else {
+                        // If not, store the idx from the last one in return
+                        // values of new generated func and save the type and
+                        // value for later usage
+                        iterArgsReturnTypes.push_back(value.getType());
+                        iterArgsReturnValues.push_back(value);
+                        iterArgsReturnIdx.push_back(bias++);
+                    }
             }
         }
 
@@ -379,6 +424,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
             llvm::dbgs() << "\nInserting " << newOperator << " at "
                          << newOperator.getLoc() << "\n");
         SmallVector<Value> newPulledValue;
+        SmallVector<std::pair<int, Value>> iterArgsIdx;
         auto loc = rewriter.getUnknownLoc();
         rewriter.setInsertionPointToStart(&newOperator.getBody().front());
         SmallVector<Value> newIterArgs;
@@ -386,9 +432,11 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
             size_t i = 0;
             auto iterArgsSize = loopOp.getIterArgs().size();
             assert(iterArgsSize == 1);
-            for (auto &opi : ops) {
+            for (auto &opi : opsProcess) {
                 if (i == iterArgsSize) break;
                 if (auto constantOp = dyn_cast<arith::ConstantOp>(opi)) {
+                    iterArgsIdx.push_back(
+                        std::make_pair(i, constantOp.getResult()));
                     auto constant = constantOp.clone();
                     newIterArgs.push_back(constant.getResult());
                     rewriter.insert(constant);
@@ -398,11 +446,6 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
                         opi.getLoc(),
                         "Wrong iter_args initialization here.");
                 }
-                // assert(isa<arith::ConstantOp>(opi));
-                // auto constant = opi.clone();
-                // newIterArgs.push_back(constant->getResult(0));
-                // rewriter.insert(constant);
-                // i++;
             }
         }
         if (hasLoopOp) {
@@ -436,11 +479,19 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         }
 
         auto nameExtModule = "hls_" + operatorName.str() + "_calc";
+        SmallVector<Value> hwInstanceInputs;
+        hwInstanceInputs.append(newPulledValue.begin(), newPulledValue.end());
+        hwInstanceInputs.append(newIterArgs.begin(), newIterArgs.end());
+        SmallVector<Type> hwInstanceOutputTypes;
+        hwInstanceOutputTypes.append(pushedTypes.begin(), pushedTypes.end());
+        hwInstanceOutputTypes.append(
+            iterArgsReturnTypes.begin(),
+            iterArgsReturnTypes.end());
         auto instanceOp = rewriter.create<HWInstanceOp>(
             loc,
-            pushedTypes,
+            hwInstanceOutputTypes,
             SymbolRefAttr::get(context, nameExtModule),
-            newPulledValue);
+            hwInstanceInputs);
 
         for (int i = 0; i < numPush; i++) {
             auto pushValue = pushedValueRepeat[i];
@@ -460,14 +511,24 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
                 newOperator.getBody().getArgument(idxChan));
         }
 
+        if (hasIterArgs) {
+            SmallVector<Value> newYieldValues;
+            for (auto idx : iterArgsReturnIdx)
+                newYieldValues.push_back(instanceOp.getResult(idx));
+            rewriter.create<YieldOp>(loc, newYieldValues);
+        }
+
         rewriter.setInsertionPointToStart(&moduleOp.getBodyRegion().front());
+        SmallVector<Type> funcInputTypes;
+        funcInputTypes.append(pulledTypes.begin(), pulledTypes.end());
+        funcInputTypes.append(iterArgsTypes.begin(), iterArgsTypes.end());
         auto genFuncOp = rewriter.create<func::FuncOp>(
             loc,
             nameExtModule,
-            rewriter.getFunctionType(pulledTypes, pushedTypes));
+            rewriter.getFunctionType(funcInputTypes, hwInstanceOutputTypes));
         Block* funcEntryBlock = rewriter.createBlock(&genFuncOp.getBody());
-        for (int i = 0; i < numPull; i++)
-            funcEntryBlock->addArgument(pulledTypes[i], genFuncOp.getLoc());
+        for (auto type : funcInputTypes)
+            funcEntryBlock->addArgument(type, genFuncOp.getLoc());
         LLVM_DEBUG(
             llvm::dbgs()
             << "\nInserting " << genFuncOp << " into new process op.\n");
@@ -485,7 +546,10 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
                 newCalcOps,
                 pulledValueIdx,
                 calcOpIdx,
+                iterArgsIdx,
                 genFuncOp,
+                pulledTypes.size(),
+                pushedTypes.size(),
                 rewriter);
             newCalcOps.push_back(newCalcOp);
             rewriter.insert(newCalcOp);
@@ -502,6 +566,14 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
             returnValues.push_back(
                 newCalcOps[idxCalcOp.value()]->getResult(idxResult.value()));
         }
+        for (auto value : iterArgsReturnValues) {
+            auto definingOp = value.getDefiningOp();
+            auto idxCalcOp =
+                getNewIndexOrArg<int, Operation*>(definingOp, calcOpIdx);
+            auto idxResult = getResultIdx(value, definingOp);
+            returnValues.push_back(
+                newCalcOps[idxCalcOp.value()]->getResult(idxResult.value()));
+        }
 
         rewriter.create<func::ReturnOp>(loc, returnValues);
         LLVM_DEBUG(llvm::dbgs() << "\nInserting return.\n");
@@ -512,8 +584,8 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         auto i1Ty = rewriter.getI1Type();
         auto inDir = hw::ModulePort::Direction::Input;
         auto outDir = hw::ModulePort::Direction::Output;
-        for (size_t i = 0; i < pulledTypes.size(); i++) {
-            auto type = pulledTypes[i];
+        for (size_t i = 0; i < funcInputTypes.size(); i++) {
+            auto type = funcInputTypes[i];
             auto namePrefix = "in" + std::to_string(i);
             // data port
             ports.push_back(hw::PortInfo{
@@ -531,7 +603,7 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         // ctrl valid
         ports.push_back(hw::PortInfo{
             {rewriter.getStringAttr(
-                 "in" + std::to_string(pulledTypes.size()) + "_valid"),
+                 "in" + std::to_string(funcInputTypes.size()) + "_valid"),
              i1Ty, inDir}
         });
         // clock port
@@ -542,8 +614,8 @@ struct WrapProcessOps : public OpConversionPattern<ProcessOp> {
         ports.push_back(hw::PortInfo{
             {rewriter.getStringAttr("reset"), i1Ty, inDir}
         });
-        for (size_t i = 0; i < pushedTypes.size(); i++) {
-            auto type = pushedTypes[i];
+        for (size_t i = 0; i < hwInstanceOutputTypes.size(); i++) {
+            auto type = hwInstanceOutputTypes[i];
             auto namePrefix = "out" + std::to_string(i);
             // ready port
             std::string name;
