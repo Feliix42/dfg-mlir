@@ -625,7 +625,7 @@ void ProcessOp::print(OpAsmPrinter &p)
                 p.printOperand(body.getArgument(i));
             p << " : " << cast<OutputType>(inputTypes[i]).getElementType();
         }
-        p << ") ";
+        p << ")";
     }
 
     if (!outputTypes.empty()) {
@@ -641,7 +641,7 @@ void ProcessOp::print(OpAsmPrinter &p)
             p << " : "
               << cast<InputType>(outputTypes[i - inpSize]).getElementType();
         }
-        p << ") ";
+        p << ")";
     }
 
     // print any attributes in the attribute list into the dict
