@@ -21,6 +21,7 @@
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
@@ -47,7 +48,7 @@ public:
     using OpConversionPattern<SetChannelStyleOp>::OpConversionPattern;
 
     EraseSetChannelStyle(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<SetChannelStyleOp>(typeConverter, context){};
+            : OpConversionPattern<SetChannelStyleOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         SetChannelStyleOp op,
@@ -77,6 +78,8 @@ fsm::MachineOp insertController(
     SmallVector<Operation*> ops,
     bool hasMultiOutputs,
     bool hasLoopOp = false,
+    bool hasIterArgs = false,
+    SmallVector<IntegerAttr> iterArgsAttrs = {},
     SmallVector<std::pair<bool, int>> loopChanArgIdx = {})
 {
     auto context = module.getContext();
@@ -95,6 +98,9 @@ fsm::MachineOp insertController(
     // size_t numPull = 0;
     // size_t numPush = 0;
     size_t numHWInstanceResults = 0;
+    SmallVector<Value> yieldValues;
+    SmallVector<Value> iterArgsValues;
+    SmallVector<std::pair<Value, Value>> iterArgsValueToVar;
     SmallVector<Value> hwInstanceValids;
     SmallVector<Value> pullVars;
     SmallVector<Value> closeRegs;
@@ -103,6 +109,17 @@ fsm::MachineOp insertController(
     SmallVector<std::pair<size_t, Value>> closeRegIdices;
     SmallVector<Value> calcResults;
     SmallVector<std::pair<Value, int>> zeroWidth;
+    if (hasIterArgs) {
+        int i = 0;
+        for (auto attr : iterArgsAttrs) {
+            auto variableOp = builder.create<fsm::VariableOp>(
+                loc,
+                attr.getType(),
+                attr,
+                builder.getStringAttr("iter_arg" + std::to_string(i++)));
+            iterArgsValues.push_back(variableOp.getResult());
+        }
+    }
     bool hasHwInstance =
         (funcTy.getNumResults() > size_t(numPullChan + 2 * numPushChan + 1));
     // int numCalculation = 0;
@@ -186,6 +203,14 @@ fsm::MachineOp insertController(
                     varOp.getResult(),
                     hwInstanceOp.getResult(i)));
             }
+        } else if (auto yieldOp = dyn_cast<YieldOp>(op)) {
+            // Add mapping of yield value and new fsm.variable
+            yieldValues = yieldOp.getOperands();
+            int i = 0;
+            for (auto value : yieldValues) {
+                iterArgsValueToVar.push_back(
+                    std::make_pair(iterArgsValues[i], value));
+            }
         } else {
             return fsm::MachineOp{};
         }
@@ -202,7 +227,7 @@ fsm::MachineOp insertController(
         }
     }
 
-    // Caculate if the machine should be shut down
+    // Calculate if the machine should be shut down
     Value shouldClose;
     comb::XorOp notClose;
     if (hasLoopOp) {
@@ -384,8 +409,15 @@ fsm::MachineOp insertController(
 
     if (!isNextPush) {
         // Wait until HwInstance's op are done
-        auto stateCalc =
-            builder.create<fsm::StateOp>(loc, "CALC", outputTempVec);
+        std::vector<Value> outputCalc = outputTempVec;
+        if (hasIterArgs) {
+            for (size_t i = idxBias + 2 * numPull, j = 0; i < outputCalc.size();
+                 i += 2, j++) {
+                outputCalc[i] = c_true.getResult();
+                outputCalc[i + 1] = iterArgsValues[j];
+            }
+        }
+        auto stateCalc = builder.create<fsm::StateOp>(loc, "CALC", outputCalc);
         builder.setInsertionPointToEnd(&stateCalc.getTransitions().back());
         fsm::TransitionOp transWrite;
         if (hasLoopOp || (!hasLoopOp && numPush != 1))
@@ -483,6 +515,18 @@ fsm::MachineOp insertController(
                     loc,
                     calcResults[0],
                     machine.getArgument(idxBias + 1));
+                // if (hasIterArgs) {
+                //     for (auto value : yieldValues) {
+                //         auto newIterArg = getNewIndexOrArg<Value, Value>(
+                //                               value,
+                //                               iterArgsValueToVar)
+                //                               .value();
+                //         builder.create<fsm::UpdateOp>(
+                //             loc,
+                //             newIterArg,
+                //             machine.getArgument(idxBias + 1));
+                //     }
+                // }
             }
             builder.setInsertionPointToEnd(&machine.getBody().back());
         }
@@ -515,6 +559,25 @@ fsm::MachineOp insertController(
                             calcValid,
                             newValid.getResult());
                     }
+                    // if (hasIterArgs) {
+                    //     for (auto value : yieldValues) {
+                    //         auto newIterArg = getNewIndexOrArg<Value, Value>(
+                    //                               value,
+                    //                               iterArgsValueToVar)
+                    //                               .value();
+                    //         SmallVector<Value> newResults =
+                    //             dyn_cast<HWInstanceOp>(value.getDefiningOp())
+                    //                 .getResults();
+                    //         auto newResult = machine.getArgument(
+                    //             idxBias + 1
+                    //             + 2 * getVectorIdx(value,
+                    //             newResults).value());
+                    //         builder.create<fsm::UpdateOp>(
+                    //             loc,
+                    //             newIterArg,
+                    //             newResult);
+                    //     }
+                    // }
                 });
             builder.setInsertionPointToEnd(&machine.getBody().back());
         }
@@ -523,8 +586,9 @@ fsm::MachineOp insertController(
     // Here should be all push ops
     int idxStateWrite = 0;
     size_t startIdx = isNextPush ? numPull : numPull + 1;
-    for (size_t i = startIdx; i < ops.size(); i++) {
-        if (!hasLoopOp && (numPush == 1 || i == ops.size() - 1)) break;
+    auto opsLastIdx = hasIterArgs ? ops.size() - 1 : ops.size();
+    for (size_t i = startIdx; i < opsLastIdx; i++) {
+        if (!hasLoopOp && (numPush == 1 || i == opsLastIdx - 1)) break;
         auto pushOp = dyn_cast<PushOp>(ops[i]);
         assert(pushOp && "here should be all PushOp");
         auto argIndex =
@@ -544,7 +608,7 @@ fsm::MachineOp insertController(
             "WRITE" + std::to_string(idxStateWrite),
             newOutputs);
         builder.setInsertionPointToEnd(&stateWrite.getTransitions().back());
-        if (numPush != 1 && i == ops.size() - 2) {
+        if (numPush != 1 && i == opsLastIdx - 2) {
             if (hasLoopOp) {
                 builder.create<fsm::TransitionOp>(
                     loc,
@@ -583,7 +647,7 @@ fsm::MachineOp insertController(
                             machine.getArgument(readyIdx));
                     });
             }
-        } else if (hasLoopOp && i == ops.size() - 1) {
+        } else if (hasLoopOp && i == opsLastIdx - 1) {
             builder.create<fsm::TransitionOp>(
                 loc,
                 "READ0",
@@ -632,6 +696,24 @@ fsm::MachineOp insertController(
                                 c_false.getResult());
                         }
                     }
+                    if (hasIterArgs) {
+                        for (auto value : yieldValues) {
+                            auto newIterArg = getNewIndexOrArg<Value, Value>(
+                                                  value,
+                                                  iterArgsValueToVar)
+                                                  .value();
+                            SmallVector<Value> newResults =
+                                dyn_cast<HWInstanceOp>(value.getDefiningOp())
+                                    .getResults();
+                            auto newResult =
+                                calcResults[getVectorIdx(value, newResults)
+                                                .value()];
+                            builder.create<fsm::UpdateOp>(
+                                loc,
+                                newIterArg,
+                                newResult);
+                        }
+                    }
                 });
         } else {
             builder.create<fsm::TransitionOp>(
@@ -650,7 +732,8 @@ fsm::MachineOp insertController(
     // WRITE_CLOSE state to output the last data along with the done signal,
     // this is similar to the tlast signal behaviour in Xilinx modules
     std::vector<Value> newOutputs = outputTempVec;
-    auto lastPushOp = dyn_cast<PushOp>(ops.back());
+    auto lastPushOp =
+        dyn_cast<PushOp>(hasIterArgs ? *std::prev(ops.end(), 2) : ops.back());
     auto argIndex =
         getNewIndexOrArg<int, Value>(lastPushOp.getChan(), oldArgsIndex)
             .value();
@@ -675,7 +758,7 @@ public:
     using OpConversionPattern<ProcessOp>::OpConversionPattern;
 
     ConvertProcessToHWModule(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ProcessOp>(typeConverter, context){};
+            : OpConversionPattern<ProcessOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         ProcessOp op,
@@ -694,18 +777,37 @@ public:
         // If there is a LoopOp, get ops inside and log the index of channel
         auto opsInBody = op.getBody().getOps();
         bool hasLoopOp = false;
+        bool hasIterArgs = false;
+        SmallVector<IntegerAttr> iterArgsAttrs;
         SmallVector<int> loopChanIdx;
-        if (auto loopOp = dyn_cast<LoopOp>(*opsInBody.begin())) {
-            if (!loopOp.getOutChans().empty())
-                return rewriter.notifyMatchFailure(
-                    loopOp.getLoc(),
-                    "Not supported closing on output ports yet!");
-            opsInBody = loopOp.getBody().getOps();
-            if (!loopOp.getInChans().empty()) {
-                hasLoopOp = true;
-                for (auto inChan : loopOp.getInChans()) {
-                    auto idxChan = cast<BlockArgument>(inChan).getArgNumber();
-                    loopChanIdx.push_back(idxChan);
+        for (auto &opi : opsInBody) {
+            if (auto constantOp = dyn_cast<arith::ConstantOp>(opi)) {
+                // TODO
+                auto attr = constantOp.getValueAttr();
+                if (!isa<IntegerAttr>(attr))
+                    return rewriter.notifyMatchFailure(
+                        constantOp.getLoc(),
+                        "Only integers are allowed!");
+                // Need to store these integers for later uses in the creation
+                // of fsm
+                iterArgsAttrs.push_back(dyn_cast<IntegerAttr>(attr));
+            } else if (auto loopOp = dyn_cast<LoopOp>(opi)) {
+                if (!loopOp.getOutChans().empty())
+                    return rewriter.notifyMatchFailure(
+                        loopOp.getLoc(),
+                        "Not supported closing on output ports yet!");
+                opsInBody = loopOp.getBody().getOps();
+                if (!loopOp.getInChans().empty()) {
+                    hasLoopOp = true;
+                    for (auto inChan : loopOp.getInChans()) {
+                        auto idxChan =
+                            cast<BlockArgument>(inChan).getArgNumber();
+                        loopChanIdx.push_back(idxChan);
+                    }
+                }
+                if (!loopOp.getIterArgs().empty()) {
+                    // TODO
+                    hasIterArgs = true;
                 }
             }
         }
@@ -921,6 +1023,8 @@ public:
             ops,
             hwInstanceOutTypes.size() > 1,
             hasLoopOp,
+            hasIterArgs,
+            iterArgsAttrs,
             loopChanArgIdx);
 
         auto hwInstanceOutSize = hwInstanceOutTypes.size();
@@ -962,9 +1066,11 @@ public:
             }
         auto outputs = rewriter.create<fsm::HWInstanceOp>(
             loc,
-            newMachine.getFunctionType().getResults(),
+            // newMachine.getFunctionType().getResults(),
+            fsmOutTypesVec,
             rewriter.getStringAttr("controller"),
-            newMachine.getSymNameAttr(),
+            rewriter.getStringAttr(op.getSymName().str() + "_controller"),
+            // newMachine.getSymNameAttr(),
             fsmInputs,
             clock_seq.getResult(),
             hwModule.getBody().getArgument(1));
@@ -1472,7 +1578,7 @@ struct LegalizeHWModule : OpConversionPattern<hw::HWModuleOp> {
     using OpConversionPattern<hw::HWModuleOp>::OpConversionPattern;
 
     LegalizeHWModule(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<hw::HWModuleOp>(typeConverter, context){};
+            : OpConversionPattern<hw::HWModuleOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         hw::HWModuleOp op,
@@ -1918,7 +2024,7 @@ struct ConvertRegionToHWModule : OpConversionPattern<RegionOp> {
     using OpConversionPattern<RegionOp>::OpConversionPattern;
 
     ConvertRegionToHWModule(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<RegionOp>(typeConverter, context){};
+            : OpConversionPattern<RegionOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         RegionOp op,
@@ -1992,7 +2098,7 @@ struct InsertQueueAndInstantiate : OpConversionPattern<ChannelOp> {
     InsertQueueAndInstantiate(
         TypeConverter &typeConverter,
         MLIRContext* context)
-            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+            : OpConversionPattern<ChannelOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         ChannelOp op,
@@ -2009,7 +2115,7 @@ struct ConvertCallToInstance : OpConversionPattern<OpT> {
     using OpConversionPattern<OpT>::OpConversionPattern;
 
     ConvertCallToInstance(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<OpT>(typeConverter, context){};
+            : OpConversionPattern<OpT>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         OpT op,
@@ -2025,7 +2131,7 @@ struct EarseConnectInput : OpConversionPattern<ConnectInputOp> {
     using OpConversionPattern<ConnectInputOp>::OpConversionPattern;
 
     EarseConnectInput(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ConnectInputOp>(typeConverter, context){};
+            : OpConversionPattern<ConnectInputOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         ConnectInputOp op,
@@ -2041,7 +2147,7 @@ struct InsertOutputToHWModule : OpConversionPattern<ConnectOutputOp> {
     using OpConversionPattern<ConnectOutputOp>::OpConversionPattern;
 
     InsertOutputToHWModule(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ConnectOutputOp>(typeConverter, context){};
+            : OpConversionPattern<ConnectOutputOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         ConnectOutputOp op,
