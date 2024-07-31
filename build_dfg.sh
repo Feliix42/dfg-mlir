@@ -57,7 +57,7 @@ cmake -B build -G Ninja \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=Debug \
-    -DLLVM_USE_LINKER=mold \
+    -DLLVM_USE_LINKER=lld \
     -DBUILD_SHARED_LIBS=1 \
     -DLLVM_ENABLE_ASSERTIONS=ON \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
@@ -87,7 +87,7 @@ cmake -B build -G Ninja \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_CXX_STANDARD=20 \
-    -DLLVM_USE_LINKER=mold
+    -DLLVM_USE_LINKER=lld
 
 # Building dfg-mlir
 
