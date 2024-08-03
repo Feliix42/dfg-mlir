@@ -11,15 +11,15 @@ namespace mlir {
 
 //===- Generated includes -------------------------------------------------===//
 
-#define GEN_PASS_DECL_CONVERTDFGTODPMCALLS
+#define GEN_PASS_DECL_CONVERTDFGTODPMWRAPPERS
 #include "dfg-mlir/Conversion/Passes.h.inc"
 
 //===----------------------------------------------------------------------===//
 
-void populateDfgToDpmCallsConversionPatterns(
+void populateDfgToDpmWrappersConversionPatterns(
     TypeConverter &typeConverter,
     RewritePatternSet &patterns);
 
-std::unique_ptr<Pass> createConvertDfgToDpmCallsPass();
+std::unique_ptr<Pass> createConvertDfgToDpmWrappersPass();
 
 } // namespace mlir

@@ -13,8 +13,9 @@ dfg.process @source_wrap inputs () outputs (%val_a: i64, %val_b: i64, %val_c: i6
 dfg.process @sum_wrap inputs (%a_in: i64, %b_in: i64) outputs (%res_out: i64) {
     %a = dfg.pull %a_in : i64
     %b = dfg.pull %b_in : i64
-    %res = func.call @sum(%a, %b) : (i64, i64) -> i64
-    dfg.push(%res) %res_out : i64
+    %c = arith.addi %a, %b : i64
+    //%res = func.call @sum(%a, %b) : (i64, i64) -> i64
+    dfg.push(%c) %res_out : i64
 }
 
 dfg.process @mul_wrap inputs (%c_in: i64, %d_in: i64) outputs (%res_out: i64) {

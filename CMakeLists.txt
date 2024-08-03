@@ -73,6 +73,7 @@ add_compile_options(
     # NOTE: C++20 warning adjustments for this project.
     -Wall
     -Wextra
+    -Werror=return-type
     -Wno-ambiguous-reversed-operator
     # NOTE: GDB < 10.x can't handle DWARFv5 correctly.
     $<$<CXX_COMPILER_ID:Clang>:-fdebug-default-version=4>

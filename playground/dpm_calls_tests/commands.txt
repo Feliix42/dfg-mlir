@@ -1,13 +1,38 @@
-../../build/bin/dfg-opt --convert-dfg-to-dpm-calls --convert-cf-to-llvm --convert-func-to-llvm sample_with_regions.mlir > sample_to_llvm_dialect.mlir
-mlir-translate sample_to_llvm_dialect.mlir --mlir-to-llvmir > sample.ll
 
-clang++ missing_parts.cpp -S -emit-llvm -o missing_parts.ll -O0
+../../build/bin/dfg-opt --convert-dfg-to-dpm-wrappers sample_with_regions.mlir | mlir-translate --mlir-to-cpp -o build/adapters.cpp
+
+clang++ build/adapters.cpp -S -emit-llvm -o build/adapters.ll
+
+cp sample_with_regions.mlir build/mlir_file_with_adapters.mlir
+python3 ../../scripts/extract_adapters.py build/adapters.ll >> build/mlir_file_with_adapters.mlir
+../../build/bin/dfg-opt --convert-dfg-to-dpm-calls --convert-arith-to-llvm --convert-func-to-llvm build/mlir_file_with_adapters.mlir | mlir-translate --mlir-to-llvmir -o build/adapter_calls.ll
+
+
+#clang++ build/adapters.cpp -O0 -S -emit-llvm -Xclang -disable-llvm-passes -o build/adapters.ll
+clang++ missing_parts.cpp -S -emit-llvm -o build/missing_parts.ll
+clang++ build/adapters.cpp -c -o build/adapters.o
+
+#llc -filetype=obj -o build/adapters.o build/adapter --relocation-model=pic
+llc -filetype=obj -o build/adapter_calls.o build/adapter_calls.ll --relocation-model=pic
+llc -filetype=obj -o build/missing_parts.o build/missing_parts.ll --relocation-model=pic
+llc -filetype=obj -o build/other_externs.o multiple_return_values.ll --relocation-model=pic
+
+
+clang++ build/adapters.o build/adapter_calls.o build/other_externs.o build/missing_parts.o -ldpm -lyaml-cpp -ltetrisclient -lprotobuf -o build/test_executable
+
+
+####################
+
+../../build/bin/dfg-opt --convert-dfg-to-dpm-calls --convert-cf-to-llvm --convert-func-to-llvm sample_with_regions.mlir -o build/sample_to_llvm_dialect.mlir
+mlir-translate build/sample_to_llvm_dialect.mlir --mlir-to-llvmir -o build/sample.ll
+
+clang++ missing_parts.cpp -S -emit-llvm -o build/missing_parts.ll -O0
 
 # think about relocation model again
 
-llc -filetype=obj -o main.o sample.ll --relocation-model=pic
-llc -filetype=obj -o missing_parts.o missing_parts.ll --relocation-model=pic
-llc -filetype=obj -o other_externs.o multiple_return_values.ll --relocation-model=pic
+llc -filetype=obj -o build/main.o build/sample.ll --relocation-model=pic
+llc -filetype=obj -o build/missing_parts.o build/missing_parts.ll --relocation-model=pic
+llc -filetype=obj -o build/other_externs.o multiple_return_values.ll --relocation-model=pic
 
 
-clang++ -o test_executable other_externs.o main.o missing_parts.o -L "/home/fabius/dppm_install/lib/" -L "/home/fabius/tetris_install/lib/" -ldpm -lyaml-cpp -ltetrisclient -lprotobuf -labsl_log_internal_check_op -labsl_log_internal_message -labsl_raw_logging_internal -lgcov
+clang++ -o build/test_executable build/other_externs.o build/main.o build/missing_parts.o -ldpm -lyaml-cpp -ltetrisclient -lprotobuf -labsl_log_internal_check_op -labsl_log_internal_message -labsl_raw_logging_internal -lgcov

@@ -159,6 +159,8 @@ struct ConvertAnyOperatorToEquivalentProcess
         SmallVector<Value> inChans, outChans;
         for (size_t i = 0; i < newFuncTy.getNumInputs(); i++)
             inChans.push_back(processBlock->getArgument(i));
+        for (size_t i = 0; i < newFuncTy.getNumResults(); i++)
+            outChans.push_back(processBlock->getArgument(inChans.size() + i));
         auto loopOp = rewriter.create<LoopOp>(loc, inChans, outChans, iterArgs);
 
         // Insert number of input channels PullOps

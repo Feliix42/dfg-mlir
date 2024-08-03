@@ -27,3 +27,29 @@ bool isInSmallVector(T find, SmallVector<T> vec)
         if (elem == find) return true;
     return false;
 }
+
+
+template<typename ContainerA, typename ContainerB>
+auto combine(ContainerA &&A, ContainerB &&B){
+    using NonRefContainerA = std::remove_reference_t<ContainerA>;
+    using NonRefContainerB = std::remove_reference_t<ContainerA>;
+    static_assert(std::is_same_v<typename NonRefContainerA::value_type,typename NonRefContainerB::value_type>, "Containers must have the same element type");
+    using ElementT = typename NonRefContainerA::value_type;
+    std::vector<ElementT> result;
+    result.reserve(A.size() + B.size());
+    result.insert(result.end(), A.begin(), A.end());
+    result.insert(result.end(), B.begin(), B.end());
+    return result;
+}
+
+template<typename ContainerT, typename LambdaT>
+auto map(ContainerT &&A, LambdaT &&lambda){
+    using NonRefContainer = std::remove_reference_t<ContainerT>;
+    using ReturnT = typename std::invoke_result_t<LambdaT, typename NonRefContainer::value_type>;
+    std::vector<ReturnT> result;
+    result.reserve(A.size());
+    for(const auto& element : A){
+        result.push_back(lambda(element));
+    }
+    return result;
+}

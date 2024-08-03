@@ -13,6 +13,7 @@
 #include "dfg-mlir/Conversion/DfgToLLVM/DfgToLLVM.h"
 #include "dfg-mlir/Conversion/DfgToOlympus/DfgToOlympus.h"
 #include "dfg-mlir/Conversion/DfgToDpmCalls/DfgToDpmCalls.h"
+#include "dfg-mlir/Conversion/DfgToDpmWrappers/DfgToDpmWrappers.h"
 #include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"
 
 namespace mlir::dfg {

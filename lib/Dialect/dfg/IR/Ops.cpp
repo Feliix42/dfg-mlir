@@ -250,7 +250,8 @@ LogicalResult RegionOp::verify()
     } else {
         for (auto &op : ops)
             if (!isa<ChannelOp>(op) && !isa<InstantiateOp>(op)
-                && !isa<EmbedOp>(op))
+                && !isa<EmbedOp>(op) && !isa<ConnectInputOp>(op)
+                && !isa<ConnectOutputOp>(op))
                 isContentCorrect = false;
     }
 
@@ -1106,7 +1107,7 @@ ParseResult LoopOp::parse(OpAsmParser &parser, OperationState &result)
     result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
     Region* body = result.addRegion();
-    if (parser.parseRegion(*body, {}, {})) return failure();
+    if (parser.parseRegion(*body, {}, /*enableNameShadowing*/false)) return failure();
 
     return success();
 }
@@ -1439,7 +1440,7 @@ LogicalResult InstantiateOp::verify()
     if (calledFuncTy != FunctionType::get(getContext(), inputTy, outputTy))
         return ::emitError(
             getLoc(),
-            "Fcuntion type mismatches the called process or operator");
+            "Function type mismatches the called process or operator");
 
     return success();
 }

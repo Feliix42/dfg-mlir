@@ -29,7 +29,18 @@ def ConvertDfgToDpmCalls : Pass<"convert-dfg-to-dpm-calls"> {
         "cf::ControlFlowDialect",
         "func::FuncDialect",
         "LLVM::LLVMDialect",
+        "dfg::DfgDialect"
+    ];
 
+}
+
+def ConvertDfgToDpmWrappers : Pass<"convert-dfg-to-dpm-wrappers"> {
+	let summary = "Creates C++ bindings to the DPM library";
+
+	let constructor = "mlir::createConvertDfgToDpmWrappersPass()";
+
+	let dependentDialects = [
+        "emitc::EmitCDialect",
         "dfg::DfgDialect"
     ];
 
