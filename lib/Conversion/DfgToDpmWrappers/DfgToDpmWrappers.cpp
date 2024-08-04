@@ -170,18 +170,10 @@ struct EmbedOpLowering : public mlir::OpConversionPattern<EmbedOp> {
     {
         // do nothing but update operator
         rewriter.modifyOpInPlace(embedOp, [](){});
-
         Operation* parentOp = embedOp->getParentOp();
         RegionOp parentRegionOp = llvm::cast<RegionOp>(parentOp);
-
-        std::vector<Type> inputTypes;
-        std::vector<Type> outputTypes;
-        for(auto inputValue : adaptor.getInputs()){
-            inputTypes.push_back(inputValue.getType());
-        }
-        for(auto outputValue : adaptor.getOutputs()){
-            outputTypes.push_back(outputValue.getType());
-        }
+        std::vector<Type> inputTypes = map(adaptor.getInputs(), [](auto v){ return v.getType(); });
+        std::vector<Type> outputTypes = map(adaptor.getOutputs(), [](auto v){ return v.getType(); });
         auto regionType = extractTypeFromRegionOp(parentRegionOp, typeConverter);
         collectedEmbedOps.push_back({GetAdapterName(embedOp), inputTypes, outputTypes, embedOp.getCallee(), regionType});
         return success();
@@ -254,7 +246,7 @@ struct OperatorOpLowering : public mlir::OpConversionPattern<OperatorOp> {
 
     LogicalResult matchAndRewrite(
         OperatorOp operatorOp,
-        OperatorOpAdaptor adaptor,
+        OperatorOpAdaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         // do nothing but update operator
@@ -325,15 +317,8 @@ struct InstantiateOpLowering : public mlir::OpConversionPattern<InstantiateOp> {
         Operation* parentOp = instantiateOp->getParentOp();
         RegionOp parentRegionOp = llvm::cast<RegionOp>(parentOp);
         auto regionType = extractTypeFromRegionOp(parentRegionOp, typeConverter);
-        StringRef functionName = instantiateOp.getCallee().getRootReference();
-        std::vector<Type> inputTypes;
-        std::vector<Type> outputTypes;
-        for(auto inputValue : adaptor.getInputs()){
-            inputTypes.push_back(inputValue.getType());
-        }
-        for(auto outputValue : adaptor.getOutputs()){
-            outputTypes.push_back(outputValue.getType());
-        }
+        std::vector<Type> inputTypes = map(adaptor.getInputs(), [](auto v){ return v.getType(); });
+        std::vector<Type> outputTypes = map(adaptor.getOutputs(), [](auto v){ return v.getType(); });
         collectedInstantiateOps.push_back({GetAdapterName(instantiateOp), inputTypes, outputTypes, instantiateOp.getCallee(), regionType, processName});
         rewriter.modifyOpInPlace(instantiateOp, [](){});
         return success();
@@ -362,7 +347,7 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
 
-    // to fit the conversion logic these would actually channel pointers but wrapping the element type is easier than unwrapping
+    // to fit the conversion logic these would actually be channel pointers but wrapping the element type is easier than unwrapping
     highlevelTypeConverter.addConversion([](Type t){return t;});
     highlevelTypeConverter.addConversion([&helper](InputType t){
         return helper.CreateStdArrayWithSameSize(t.getElementType());

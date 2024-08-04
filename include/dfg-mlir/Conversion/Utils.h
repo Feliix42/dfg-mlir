@@ -31,11 +31,10 @@ bool isInSmallVector(T find, SmallVector<T> vec)
 
 template<typename ContainerA, typename ContainerB>
 auto combine(ContainerA &&A, ContainerB &&B){
-    using NonRefContainerA = std::remove_reference_t<ContainerA>;
-    using NonRefContainerB = std::remove_reference_t<ContainerA>;
-    static_assert(std::is_same_v<typename NonRefContainerA::value_type,typename NonRefContainerB::value_type>, "Containers must have the same element type");
-    using ElementT = typename NonRefContainerA::value_type;
-    std::vector<ElementT> result;
+    using ElementTA = std::iter_value_t<decltype(A.begin())>;
+    using ElementTB = std::iter_value_t<decltype(B.begin())>;
+    static_assert(std::is_same_v<ElementTA, ElementTB>, "Containers must have the same element type");
+    std::vector<ElementTA> result;
     result.reserve(A.size() + B.size());
     result.insert(result.end(), A.begin(), A.end());
     result.insert(result.end(), B.begin(), B.end());
@@ -44,8 +43,8 @@ auto combine(ContainerA &&A, ContainerB &&B){
 
 template<typename ContainerT, typename LambdaT>
 auto map(ContainerT &&A, LambdaT &&lambda){
-    using NonRefContainer = std::remove_reference_t<ContainerT>;
-    using ReturnT = typename std::invoke_result_t<LambdaT, typename NonRefContainer::value_type>;
+    using ElementT = std::iter_value_t<decltype(A.begin())>;
+    using ReturnT = typename std::invoke_result_t<LambdaT, ElementT>;
     std::vector<ReturnT> result;
     result.reserve(A.size());
     for(const auto& element : A){
