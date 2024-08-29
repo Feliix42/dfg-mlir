@@ -61,7 +61,7 @@ std::string GetLocationString(Location loc){
     return "ERROR_ERROR";
 }
 
-std::string GetAdapterName(Operation *operation){
+std::string GetAdapterLocName(Operation *operation){
     std::string opName = operation->getName().getStringRef().str();
     std::replace(opName.begin(),opName.end(),'.','_');
     std::string adapterName = opName + "_at_" + GetLocationString(operation->getLoc()) + "_dpm_adapter";
@@ -89,7 +89,7 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
     {
         auto loc = channelOp.getLoc();
 
-        std::string adapterName = GetAdapterName(channelOp);
+        std::string adapterName = GetAdapterLocName(channelOp);
 
         auto parentBlock = channelOp->getBlock();
         auto regionPointer = parentBlock->getArgument(0);
@@ -112,7 +112,7 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
         ConversionPatternRewriter &rewriter) const override
     {
         auto loc = instantiateOp.getLoc();
-        auto adapterName = GetAdapterName(instantiateOp);
+        auto adapterName = GetAdapterLocName(instantiateOp);
 
         auto parentBlock = instantiateOp->getBlock();
         auto regionPointer = parentBlock->getArgument(0);
@@ -156,7 +156,7 @@ struct EmbedOpLowering : public OpConversionPattern<EmbedOp> {
         for(auto value : adaptor.getOutputs()){
             allValues.push_back(value);
         }
-        rewriter.create<LLVM::CallOp>(loc, TypeRange{}, GetAdapterName(embedOp), allValues);
+        rewriter.create<LLVM::CallOp>(loc, TypeRange{}, GetAdapterLocName(embedOp), allValues);
         rewriter.eraseOp(embedOp);
         return success();
     }
@@ -186,7 +186,7 @@ struct PushOpLowering : public OpConversionPattern<PushOp> {
 
         rewriter.create<LLVM::StoreOp>(loc,adaptor.getInp(), dataPointer);
 
-        rewriter.create<LLVM::CallOp>(loc, TypeRange{}, GetAdapterName(pushOp), ValueRange{adaptor.getChan(), dataPointer});
+        rewriter.create<LLVM::CallOp>(loc, TypeRange{}, GetAdapterLocName(pushOp), ValueRange{adaptor.getChan(), dataPointer});
 
         rewriter.eraseOp(pushOp);
         return success();
@@ -219,7 +219,7 @@ struct PullOpLowering : public OpConversionPattern<PullOp> {
 		rewriter.create<LLVM::CallOp>(
 			loc,
             TypeRange{},
-            GetAdapterName(pullOp),
+            GetAdapterLocName(pullOp),
             ValueRange{adaptor.getChan(), dataPointer});
 
         rewriter.replaceOpWithNewOp<LLVM::LoadOp>(
@@ -267,22 +267,35 @@ struct ProcessOpLowering : public OpConversionPattern<ProcessOp> {
         ConversionPatternRewriter &rewriter) const override
     {
         auto loc = processOp.getLoc();
-
+        // TODO this all only works if the bodies contain exactly one block
         auto processName = processOp.getSymName().str() + "_ORIGINAL_dpm_adapter";
-        std::vector<Type> allTypes;
-        for(auto type : adaptor.getFunctionType().getInputs()){
-            allTypes.push_back(typeConverter->convertType(type));
-        }
-        for(auto type : adaptor.getFunctionType().getResults()){
-            allTypes.push_back(typeConverter->convertType(type));
-        }
+		auto functionType = adaptor.getFunctionType();
+        std::vector<Type> allTypes = map(combine(functionType.getInputs(), functionType.getResults()), [this](auto t){ return (Type)typeConverter->convertType(t);});
         auto functionHolder = rewriter.create<LLVM::LLVMFuncOp>(loc, processName, LLVM::LLVMFunctionType::get(rewriter.getContext(), voidType(rewriter.getContext()), allTypes, false));
-        rewriter.inlineRegionBefore(adaptor.getBody(), functionHolder.getBody(), functionHolder.end());
+		bool hasLoop = false;
+		// lower loopOps because SSA operands are linked to the process and not to the loopOp
+		// if there is a loopOp but the body at the end of the function and add required arguments
+		processOp.walk([&](LoopOp loopOp){
+			hasLoop = true;
+			for(auto &block : loopOp.getBody()){
+				for(auto arg : adaptor.getBody().front().getArguments()){
+					block.addArgument(arg.getType(), loc);
+				}
+			}
+			rewriter.inlineRegionBefore(loopOp.getBody(), functionHolder.getBody(), functionHolder.getBody().end());
+			rewriter.eraseOp(loopOp);
+		});
+        rewriter.inlineRegionBefore(adaptor.getBody(), functionHolder.getBody(), functionHolder.begin());
         rewriter.convertRegionTypes(&functionHolder.getBody(), *typeConverter);
-
-        rewriter.setInsertionPointToEnd(&functionHolder.getBody().back());
-        rewriter.create<LLVM::ReturnOp>(loc, (Value)0);
-
+		if(hasLoop){
+			rewriter.setInsertionPointToEnd(&functionHolder.getBody().front());
+	        rewriter.create<LLVM::BrOp>(loc, functionHolder.getBody().front().getArguments(), &functionHolder.getBody().back());
+			rewriter.setInsertionPointToEnd(&functionHolder.getBody().back());
+	        rewriter.create<LLVM::BrOp>(loc, functionHolder.getBody().back().getArguments(), &functionHolder.getBody().back());
+		} else {
+    	    rewriter.setInsertionPointToEnd(&functionHolder.getBody().back());
+	        rewriter.create<LLVM::ReturnOp>(loc, (Value)0);
+		}
         rewriter.eraseOp(processOp);
         return success();
     }
@@ -310,7 +323,7 @@ struct OperatorOpLowering : public OpConversionPattern<OperatorOp> {
         auto outputTypes = functionType.getResults();
         auto processName = operatorOp.getSymName().str() + "_ORIGINAL_dpm_adapter";
         auto allTypes = combine(inputTypes, outputTypes);
-        auto pointerTypes = map(allTypes, [&rewriter](auto t){ return genericPointer(rewriter.getContext()); });
+        auto pointerTypes = map(allTypes, [&rewriter](auto){ return genericPointer(rewriter.getContext()); });
         auto functionHolder = rewriter.create<LLVM::LLVMFuncOp>(loc, processName, LLVM::LLVMFunctionType::get(rewriter.getContext(), voidType(rewriter.getContext()), pointerTypes, false));
         auto entryBlock = functionHolder.addEntryBlock(rewriter);
         rewriter.setInsertionPointToEnd(entryBlock);
@@ -378,53 +391,6 @@ struct RegionOpLowering : public OpConversionPattern<RegionOp> {
         return success();
     }
 };
-
-
-struct LoopOpLowering : public OpConversionPattern<LoopOp> {
-    using OpConversionPattern<LoopOp>::OpConversionPattern;
-
-    LoopOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<LoopOp>(typeConverter, context) {};
-
-    LogicalResult matchAndRewrite(
-        LoopOp loopOp,
-        LoopOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-
-        auto loc = loopOp.getLoc();
-
-        rewriter.eraseOp(loopOp);
-
-
-        Block* secondBlock = rewriter.splitBlock(loopOp->getBlock(), loopOp->getIterator());
-        Block &firstBlock = *std::prev(secondBlock->getIterator());
-
-        //rewriter.setInsertionPointToEnd(&firstBlock);
-        //rewriter.create<LLVM::BrOp>(loc, secondBlock);
-
-        auto &bodyBlock = loopOp.getBody().front();
-        for(auto inChan : loopOp.getInChans()){
-            bodyBlock.addArgument(inChan.getType(), loc);
-        }
-        for(auto outChan : loopOp.getOutChans()){
-            bodyBlock.addArgument(outChan.getType(), loc);
-        }
-        rewriter.setInsertionPointToEnd(&firstBlock);
-        rewriter.create<LLVM::BrOp>(loc, firstBlock.getArguments(), &adaptor.getBody().front());
-        rewriter.inlineRegionBefore(loopOp.getBody(), secondBlock);
-
-
-        for(auto &b : *loopOp->getParentRegion()){
-            llvm::errs() << b << "\n";
-        }
-
-
-
-        return success();
-    }
-};
-
 
 void ConvertDfgToDpmCallsPass::runOnOperation()
 {

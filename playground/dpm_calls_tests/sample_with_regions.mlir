@@ -14,7 +14,7 @@ dfg.process @source_wrap inputs () outputs (%val_a: i64, %val_b: i64, %val_c: i6
     dfg.push(%res3) %val_c : i64
 }
 
-dfg.process @sum_wrap inputs (%a_in: i64, %b_in: i64) outputs (%res_out: i64) {
+dfg.process @sum inputs (%a_in: i64, %b_in: i64) outputs (%res_out: i64) {
     %a = dfg.pull %a_in : i64
     %b = dfg.pull %b_in : i64
     %res = arith.addi %a, %b : i64
@@ -38,7 +38,7 @@ dfg.region @mainRegion inputs() outputs() {
     %res_in, %res_out = dfg.channel() : i64
 
     dfg.instantiate @source_wrap inputs() outputs(%a_in, %b_in, %d_in) : () -> (i64, i64, i64)
-    dfg.instantiate @sum_wrap inputs(%a_out, %b_out) outputs(%c_in) : (i64, i64) -> i64
+    dfg.instantiate @sum inputs(%a_out, %b_out) outputs(%c_in) : (i64, i64) -> i64
 
     dfg.embed @multiplyRegion inputs(%c_out, %d_out) outputs(%res_in) : (i64, i64) -> i64
 

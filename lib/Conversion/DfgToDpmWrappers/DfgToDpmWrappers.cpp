@@ -53,7 +53,7 @@ struct ConvertDfgToDpmWrappersPass : public mlir::impl::ConvertDfgToDpmWrappersB
 
 std::vector<std::tuple<std::string, std::vector<Type>, std::vector<Type>, SymbolRefAttr, emitc::PointerType, std::string>> collectedInstantiateOps;
 std::vector<std::tuple<std::string, std::vector<Type>, std::vector<Type>, SymbolRefAttr, emitc::PointerType>> collectedEmbedOps;
-std::vector<std::tuple<std::string, Type, emitc::PointerType>> collectedChannelOps;
+std::map<std::string, std::tuple<Type, emitc::PointerType>> collectedChannelOps;
 std::vector<std::tuple<std::string, FunctionType>> collectedProcessOps;
 std::vector<std::tuple<std::string, FunctionType>> collectedOperatorOps;
 std::vector<std::tuple<std::string, FunctionType>> collectedRegionOps;
@@ -77,7 +77,7 @@ std::string GetLocationString(Location loc){
     return "ERROR_ERROR";
 }
 
-std::string GetAdapterName(Operation *operation){
+std::string GetAdapterLocName(Operation *operation){
     std::string opName = operation->getName().getStringRef().str();
     std::replace(opName.begin(),opName.end(),'.','_');
     std::string adapterName = opName + "_at_" + GetLocationString(operation->getLoc()) + "_dpm_adapter";
@@ -123,10 +123,6 @@ emitc::OpaqueType wrapInTemplate(MLIRContext *context, std::string templateName,
     return emitc::OpaqueType::get(context, (templateName + "<" + castedOp.getValue() + ">").str());
 }
 
-emitc::PointerType getChannelPointer(MLIRContext *context, Type elementType){
-    return emitc::PointerType::get(wrapInTemplate(context, "Dppm::Channel", elementType));
-}
-
 emitc::PointerType getRTChannelPointer(MLIRContext *context, Type elementType){
     return emitc::PointerType::get(wrapInTemplate(context, "Dppm::RTChannel", elementType));
 }
@@ -150,7 +146,9 @@ public:
     emitc::PointerType getRTChannelPointer(Type elementType){
         return emitc::PointerType::get(wrapInTemplate(context, "Dppm::RTChannel", elementType));
     }
-
+    emitc::PointerType getChannelPointer(Type elementType){
+        return emitc::PointerType::get(wrapInTemplate(context, "Dppm::Channel", elementType));
+    }
 private:
     MLIRContext* context;
     const ModuleOp* globalModuleOp;
@@ -175,7 +173,7 @@ struct EmbedOpLowering : public mlir::OpConversionPattern<EmbedOp> {
         std::vector<Type> inputTypes = map(adaptor.getInputs(), [](auto v){ return v.getType(); });
         std::vector<Type> outputTypes = map(adaptor.getOutputs(), [](auto v){ return v.getType(); });
         auto regionType = extractTypeFromRegionOp(parentRegionOp, typeConverter);
-        collectedEmbedOps.push_back({GetAdapterName(embedOp), inputTypes, outputTypes, embedOp.getCallee(), regionType});
+        collectedEmbedOps.push_back({GetAdapterLocName(embedOp), inputTypes, outputTypes, embedOp.getCallee(), regionType});
         return success();
     }
 };
@@ -193,7 +191,7 @@ struct PushOpLowering : public mlir::OpConversionPattern<PushOp> {
     {
         // do nothing but update operator
         rewriter.modifyOpInPlace(pushOp, [](){});
-        collectedPushOps.push_back({GetAdapterName(pushOp), adaptor.getChan().getType()});
+        collectedPushOps.push_back({GetAdapterLocName(pushOp), adaptor.getChan().getType()});
         return success();
     }
 };
@@ -211,7 +209,7 @@ struct PullOpLowering : public mlir::OpConversionPattern<PullOp> {
         ConversionPatternRewriter &rewriter) const override
     {
         rewriter.modifyOpInPlace(pullOp, [](){});
-        collectedPullOps.push_back({GetAdapterName(pullOp), adaptor.getChan().getType()});
+        collectedPullOps.push_back({GetAdapterLocName(pullOp), adaptor.getChan().getType()});
         return success();
     }
 };
@@ -227,12 +225,13 @@ struct ChannelOpLowering : public mlir::OpConversionPattern<ChannelOp> {
         ChannelOpAdaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        std::string adapterName = GetAdapterName(channelOp);
         Operation* parentOp = channelOp->getParentOp();
         RegionOp parentRegionOp = llvm::cast<RegionOp>(parentOp);
         auto regionType = extractTypeFromRegionOp(parentRegionOp, typeConverter);
+        auto channelType = typeConverter->convertType(channelOp.getInChan().getType());
+        std::string adapterName = GetAdapterLocName(channelOp);
+        collectedChannelOps[adapterName] =  {channelType, regionType};
         rewriter.modifyOpInPlace(channelOp, [](){});
-        collectedChannelOps.push_back({adapterName, typeConverter->convertType(channelOp.getInChan().getType()), regionType});
         return success();
     }
 };
@@ -319,7 +318,7 @@ struct InstantiateOpLowering : public mlir::OpConversionPattern<InstantiateOp> {
         auto regionType = extractTypeFromRegionOp(parentRegionOp, typeConverter);
         std::vector<Type> inputTypes = map(adaptor.getInputs(), [](auto v){ return v.getType(); });
         std::vector<Type> outputTypes = map(adaptor.getOutputs(), [](auto v){ return v.getType(); });
-        collectedInstantiateOps.push_back({GetAdapterName(instantiateOp), inputTypes, outputTypes, instantiateOp.getCallee(), regionType, processName});
+        collectedInstantiateOps.push_back({GetAdapterLocName(instantiateOp), inputTypes, outputTypes, instantiateOp.getCallee(), regionType, processName});
         rewriter.modifyOpInPlace(instantiateOp, [](){});
         return success();
     }
@@ -374,7 +373,7 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
     rewriter.setInsertionPointToStart(globalModuleOp.getBody());
 
     rewriter.create<emitc::IncludeOp>(loc,"Dpm/Manager.h");
-    rewriter.create<emitc::IncludeOp>(loc,"includes.h");
+    rewriter.create<emitc::IncludeOp>(loc,"Dpm/StaticBindings.h");
 
 
     for(auto [funcName, functionType] : collectedOperatorOps){
@@ -447,28 +446,17 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
         auto inputChannelsTupleType = wrapAllInTemplate(rewriter.getContext(), "Dppm::InputChannels", loweredInputTypes);
         auto outputChannelsTupleType = wrapAllInTemplate(rewriter.getContext(), "Dppm::OutputChannels", loweredOutputTypes);
         auto regionType = getRegionType(rewriter.getContext(), inputChannelsTupleType, outputChannelsTupleType);
-        std::vector<Type> declFuncTypes = {regionType};
-        for(auto type : loweredInputTypes){
-            declFuncTypes.push_back(getChannelPointer(rewriter.getContext(), type));
-        }
-        for(auto type : loweredOutputTypes){
-            declFuncTypes.push_back(getChannelPointer(rewriter.getContext(), type));
-        }
-        auto originalFunc = rewriter.create<emitc::FuncOp>(loc, "init_" + funcName, FunctionType::get(rewriter.getContext(), declFuncTypes, {}));
+        std::vector<Type> declFuncTypes = map(combine(loweredInputTypes, loweredOutputTypes), [&helper](auto t){ return (Type)helper.getChannelPointer(t); });
+        declFuncTypes.insert(declFuncTypes.begin(), regionType);
+        rewriter.create<emitc::FuncOp>(loc, "init_" + funcName, FunctionType::get(rewriter.getContext(), declFuncTypes, {}));
         rewriter.restoreInsertionPoint(savedPosition);
     }
 
     for(auto [funcName, inputTypes, outputTypes, symbolRefAttr, regionType, processOpName] : collectedInstantiateOps){
         auto savedPosition = rewriter.saveInsertionPoint();
         size_t inputTypesAmount = inputTypes.size();
-        size_t outputTypesAmount = outputTypes.size();
-        std::vector<Type> functionInputTypes = {regionType};
-        for (auto inType : inputTypes){
-            functionInputTypes.push_back(getChannelPointer(rewriter.getContext(), inType));
-        }
-        for (auto outType : outputTypes){
-            functionInputTypes.push_back(getChannelPointer(rewriter.getContext(), outType));
-        }
+        std::vector<Type> functionInputTypes = map(combine(inputTypes, outputTypes), [&helper](auto t){ return (Type)helper.getChannelPointer(t); });
+        functionInputTypes.insert(functionInputTypes.begin(), regionType);
         auto functionType = FunctionType::get(&getContext(), functionInputTypes, {});
         auto functionHolder = rewriter.create<emitc::FuncOp>(loc, funcName, functionType);
         auto entryBlock = functionHolder.addEntryBlock();
@@ -496,14 +484,8 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
     for(auto [funcName, inputTypes, outputTypes, symbolRefAttr, regionType] : collectedEmbedOps){
         auto savedPosition = rewriter.saveInsertionPoint();
         size_t inputTypesAmount = inputTypes.size();
-        size_t outputTypesAmount = outputTypes.size();
-        std::vector<Type> functionInputTypes = {regionType};
-        for (auto inType : inputTypes){
-            functionInputTypes.push_back(getChannelPointer(rewriter.getContext(), inType));
-        }
-        for (auto outType : outputTypes){
-            functionInputTypes.push_back(getChannelPointer(rewriter.getContext(), outType));
-        }
+        std::vector<Type> functionInputTypes = map(combine(inputTypes, outputTypes), [&helper](auto t) { return (Type)helper.getChannelPointer(t); });
+        functionInputTypes.insert(functionInputTypes.begin(),regionType);
         auto regionInputType = wrapAllInTemplate(rewriter.getContext(), "Dppm::InputChannels", inputTypes);
         auto regionOutputType = wrapAllInTemplate(rewriter.getContext(), "Dppm::OutputChannels", outputTypes);
         auto newRegionType = getRegionType(rewriter.getContext(), regionInputType, regionOutputType);
@@ -522,16 +504,16 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
             passToNextInit.push_back(entryBlock->getArgument(i));
         }
         auto functionName = ("init_" + StringRef{symbolRefAttr.getRootReference()}).str();
-        auto functionValue = rewriter.create<emitc::ConstantOp>(loc, autoType, emitc::OpaqueAttr::get(&getContext(), functionName));
+        rewriter.create<emitc::ConstantOp>(loc, autoType, emitc::OpaqueAttr::get(&getContext(), functionName));
         rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, functionName, passToNextInit);
         rewriter.create<emitc::ReturnOp>(loc, (Value)0);
         rewriter.restoreInsertionPoint(savedPosition);
     }
 
-    for(auto [funcName, channelElementType, regionType] : collectedChannelOps){
+    for(auto [funcName, value] : collectedChannelOps){
+		auto [channelElementType, regionType] = value;
         auto savedPosition = rewriter.saveInsertionPoint();
-        auto castedchannelElementType = llvm::cast<emitc::OpaqueType>(channelElementType);
-        auto channelType = getChannelPointer(rewriter.getContext(), channelElementType);
+        auto channelType = helper.getChannelPointer(channelElementType);
         auto functionHolder = rewriter.create<emitc::FuncOp>(loc, funcName, FunctionType::get(&getContext(), {regionType}, {channelType}));
         auto entryBlock = functionHolder.addEntryBlock();
         Value inputRegion = entryBlock->getArgument(0);
