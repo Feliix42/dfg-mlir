@@ -10,6 +10,7 @@
 #include "dfg-mlir/Conversion/DfgToAsync/DfgToAsync.h"
 #include "dfg-mlir/Conversion/DfgToCirct/DfgToCirct.h"
 #include "dfg-mlir/Conversion/DfgToFunc/DfgToFunc.h"
+#include "dfg-mlir/Conversion/DfgToHw/DfgToHw.h"
 #include "dfg-mlir/Conversion/DfgToLLVM/DfgToLLVM.h"
 #include "dfg-mlir/Conversion/DfgToOlympus/DfgToOlympus.h"
 #include "dfg-mlir/Conversion/StdToCirct/StdToCirct.h"

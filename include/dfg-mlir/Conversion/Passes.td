@@ -35,6 +35,21 @@ def ConvertDfgToCirct : Pass<"convert-dfg-to-circt"> {
     ];
 }
 
+def ConvertDfgToHW : Pass<"convert-dfg-to-hw"> {
+    let summary = "Convert DFG dialect to CIRCT HW";
+
+    let constructor = "mlir::createConvertDfgToHWPass()";
+
+    let dependentDialects = [
+        "circt::handshake::HandshakeDialect",
+        "circt::comb::CombDialect",
+        "circt::hw::HWDialect",
+        "circt::sv::SVDialect",
+
+        "dfg::DfgDialect"
+    ];
+}
+
 def ConvertStdToCirct : Pass<"convert-std-to-circt"> {
     let summary = "Convert Std dialect to CIRCT";
 

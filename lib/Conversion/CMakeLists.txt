@@ -1,5 +1,6 @@
 add_subdirectory(DfgToAsync)
 add_subdirectory(DfgToCirct)
+add_subdirectory(DfgToHw)
 add_subdirectory(StdToCirct)
 add_subdirectory(DfgToFunc)
 add_subdirectory(DfgToOlympus)
