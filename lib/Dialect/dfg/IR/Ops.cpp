@@ -1388,58 +1388,62 @@ void InstantiateOp::print(OpAsmPrinter &p)
 
 LogicalResult InstantiateOp::verify()
 {
-    auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
-    auto calleeName = getCallee().getRootReference().str();
-    auto hasCalledProcessOrOperator = false;
-    auto callingRegion = false;
-    ProcessOp calledProcessOp;
-    OperatorOp calledOperatorOp;
+    // For debug use, remember to uncomment
+    // auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
+    // auto calleeName = getCallee().getRootReference().str();
+    // auto hasCalledProcessOrOperator = false;
+    // auto callingRegion = false;
+    // ProcessOp calledProcessOp;
+    // OperatorOp calledOperatorOp;
 
-    // Check if there is a process or an operator which has the name of the one
-    // to be instantiated
-    moduleOp->walk([&](Operation* op) {
-        if (auto processOp = dyn_cast<ProcessOp>(op)) {
-            if (processOp.getSymName().str() == calleeName) {
-                hasCalledProcessOrOperator = true;
-                calledProcessOp = processOp;
-            }
-        } else if (auto operatorOp = dyn_cast<OperatorOp>(op)) {
-            if (operatorOp.getSymName().str() == calleeName) {
-                hasCalledProcessOrOperator = true;
-                calledOperatorOp = operatorOp;
-            }
-        } else if (auto regionOp = dyn_cast<RegionOp>(op)) {
-            if (regionOp.getSymName().str() == calleeName) callingRegion = true;
-        } else
-            WalkResult::advance();
-    });
+    // // Check if there is a process or an operator which has the name of the
+    // one
+    // // to be instantiated
+    // moduleOp->walk([&](Operation* op) {
+    //     if (auto processOp = dyn_cast<ProcessOp>(op)) {
+    //         if (processOp.getSymName().str() == calleeName) {
+    //             hasCalledProcessOrOperator = true;
+    //             calledProcessOp = processOp;
+    //         }
+    //     } else if (auto operatorOp = dyn_cast<OperatorOp>(op)) {
+    //         if (operatorOp.getSymName().str() == calleeName) {
+    //             hasCalledProcessOrOperator = true;
+    //             calledOperatorOp = operatorOp;
+    //         }
+    //     } else if (auto regionOp = dyn_cast<RegionOp>(op)) {
+    //         if (regionOp.getSymName().str() == calleeName) callingRegion =
+    //         true;
+    //     } else
+    //         WalkResult::advance();
+    // });
 
-    if (callingRegion || !hasCalledProcessOrOperator)
-        return ::emitError(
-            getLoc(),
-            "Cannot find the called process or operator op.");
+    // if (callingRegion || !hasCalledProcessOrOperator)
+    //     return ::emitError(
+    //         getLoc(),
+    //         "Cannot find the called process or operator op.");
 
-    // If there is the called process or opereator, check if the function type
-    // mathces
-    auto inputTy = getInputs().getTypes();
-    auto outputTy = getOutputs().getTypes();
-    FunctionType calledFuncTy;
-    if (calledProcessOp != nullptr)
-        calledFuncTy = calledProcessOp.getFunctionType();
-    else {
-        auto operatorFunc = calledOperatorOp.getFunctionType();
-        SmallVector<Type> inTy, outTy;
-        // SmallVector<Type> outTy;
-        for (auto type : operatorFunc.getInputs())
-            inTy.push_back(OutputType::get(getContext(), type));
-        for (auto type : operatorFunc.getResults())
-            outTy.push_back(InputType::get(getContext(), type));
-        calledFuncTy = FunctionType::get(getContext(), inTy, outTy);
-    }
-    if (calledFuncTy != FunctionType::get(getContext(), inputTy, outputTy))
-        return ::emitError(
-            getLoc(),
-            "Fcuntion type mismatches the called process or operator");
+    // // If there is the called process or opereator, check if the function
+    // type
+    // // mathces
+    // auto inputTy = getInputs().getTypes();
+    // auto outputTy = getOutputs().getTypes();
+    // FunctionType calledFuncTy;
+    // if (calledProcessOp != nullptr)
+    //     calledFuncTy = calledProcessOp.getFunctionType();
+    // else {
+    //     auto operatorFunc = calledOperatorOp.getFunctionType();
+    //     SmallVector<Type> inTy, outTy;
+    //     // SmallVector<Type> outTy;
+    //     for (auto type : operatorFunc.getInputs())
+    //         inTy.push_back(OutputType::get(getContext(), type));
+    //     for (auto type : operatorFunc.getResults())
+    //         outTy.push_back(InputType::get(getContext(), type));
+    //     calledFuncTy = FunctionType::get(getContext(), inTy, outTy);
+    // }
+    // if (calledFuncTy != FunctionType::get(getContext(), inputTy, outputTy))
+    //     return ::emitError(
+    //         getLoc(),
+    //         "Fcuntion type mismatches the called process or operator");
 
     return success();
 }
@@ -1613,6 +1617,28 @@ void HWConnectOp::print(OpAsmPrinter &p)
 {
     p << " " << getPortArgument() << ", " << getPortQueue() << " : "
       << getPortArgument().getType().getElementType();
+}
+
+//===----------------------------------------------------------------------===//
+// HWLoopOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult HWLoopOp::verify()
+{
+    if (getDone().getType().getWidth() != 1)
+        return ::emitError(getLoc(), "The type of the result must be i1.");
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// HWWaitOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult HWWaitOp::verify()
+{
+    if (getDone().getType().getWidth() != 1)
+        return ::emitError(getLoc(), "The type of the result must be i1.");
+    return success();
 }
 
 //===----------------------------------------------------------------------===//

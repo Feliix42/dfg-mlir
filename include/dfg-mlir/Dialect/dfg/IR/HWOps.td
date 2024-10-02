@@ -48,4 +48,42 @@ def Dfg_HWInstanceOp
     }];
 }
 
+def Dfg_HWCastOp
+        : Dfg_HWOpBase<"cast", []>
+{
+    let summary = "";
+    let description = [{}];
+    let arguments = (ins Variadic<AnyType>:$inputs);
+    let results = (outs Variadic<AnyType>:$outputs);
+    let assemblyFormat = [{
+        ($inputs^ `:` type($inputs))? `to` type($outputs) attr-dict
+    }];
+}
+
+def Dfg_HWLoopOp
+        : Dfg_HWOpBase<"loop", []>
+{
+    let summary = "";
+    let description = [{}];
+    let arguments = (ins Variadic<Dfg_OutputType>:$input_ports);
+    let results = (outs Builtin_Integer:$done);
+    let assemblyFormat = [{
+        ($input_ports^ `:` type($input_ports))? `to` type($done) attr-dict
+    }];
+    let hasVerifier = 1;
+}
+
+def Dfg_HWWaitOp
+        : Dfg_HWOpBase<"wait", []>
+{
+    let summary = "";
+    let description = [{}];
+    let arguments = (ins Variadic<Dfg_InputType>:$output_ports);
+    let results = (outs Builtin_Integer:$done);
+    let assemblyFormat = [{
+        ($output_ports^ `:` type($output_ports))? `to` type($done) attr-dict
+    }];
+    let hasVerifier = 1;
+}
+
 #endif // DFG_HWOPS
