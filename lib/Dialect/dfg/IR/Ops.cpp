@@ -1636,6 +1636,16 @@ LogicalResult HWLoopOp::verify()
 
 LogicalResult HWWaitOp::verify()
 {
+    for (auto operand : getOutputPorts()) {
+        auto type = operand.getType();
+        if (isa<InputType>(type) || isa<IntegerType>(type))
+            continue;
+        else
+            return ::emitError(
+                getLoc(),
+                "The type of the waiting values must be either a output "
+                "channel or an integer.");
+    }
     if (getDone().getType().getWidth() != 1)
         return ::emitError(getLoc(), "The type of the result must be i1.");
     return success();

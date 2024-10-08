@@ -23,6 +23,7 @@
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinDialect.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
@@ -134,7 +135,7 @@ getReplaceValuesFromCasts(
             hwModuleBlkArgs.push_back(hwModuleRegion.getArgument(2 * i + 2));
             hwModuleBlkArgs.push_back(hwModuleRegion.getArgument(2 * i + 3));
         }
-        auto hwCastOp = builder.create<HWCastOp>(
+        auto hwCastOp = builder.create<UnrealizedConversionCastOp>(
             loc,
             TypeRange{i1Ty, OutputType::get(builder.getContext(), inputTy)},
             hwModuleBlkArgs);
@@ -143,7 +144,7 @@ getReplaceValuesFromCasts(
     }
     for (size_t i = 0; i < funcTyNumOutputs; i++) {
         auto outputTy = dyn_cast<IntegerType>(funcTy.getResult(i));
-        auto hwCastOp = builder.create<HWCastOp>(
+        auto hwCastOp = builder.create<UnrealizedConversionCastOp>(
             loc,
             TypeRange{
                 i1Ty,
@@ -228,10 +229,13 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
             if (auto loopOp = dyn_cast<LoopOp>(opi)) {
                 SmallVector<Value> loopedPorts;
                 auto loopOpInChans = loopOp.getInChans();
-                if (loopOpInChans.size() == 0)
-                    for (auto map : argumentMap)
-                        loopedPorts.push_back(map.second);
-                else {
+                if (loopOpInChans.size() == 0) {
+                    for (auto map : argumentMap) {
+                        auto inChan = map.second;
+                        if (dyn_cast<OutputType>(inChan.getType()))
+                            loopedPorts.push_back(inChan);
+                    }
+                } else {
                     for (auto inChan : loopOpInChans)
                         if (argumentMap.count(inChan))
                             loopedPorts.push_back(argumentMap[inChan]);
@@ -246,12 +250,7 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
                 kernelOps.push_back(&opi);
             }
         }
-        // If there is no LoopOp in the ProcessOp, insert an empty HWLoopOp
-        if (!hasLoop) {
-            auto hwLoopOp =
-                rewriter.create<HWLoopOp>(hwModuleLoc, i1Ty, ValueRange{});
-            loopOpResult = hwLoopOp.getResult();
-        }
+
         // Wrap every operations into a new module
         rewriter.setInsertionPoint(hwModule);
         auto kernelPorts = getHWPorts(
@@ -294,8 +293,26 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
                     newOp->setOperand(i, kernelResultMap[operand]);
             }
         }
-        auto waitOp =
-            rewriter.create<HWWaitOp>(hwKernelModuleLoc, i1Ty, ValueRange{});
+        // By default, the last push to each channel should be waited to
+        // generate the done signal for the kernel module
+        // TODO: now it only monitor the last push, add last push to each output
+        // channel support
+        auto lastPush = dyn_cast<PushOp>(kernelOps.back());
+        if (!lastPush)
+            return rewriter.notifyMatchFailure(
+                hwKernelModuleLoc,
+                "The last operation in the kernel must be push.");
+        auto waitOp = rewriter.create<HWWaitOp>(
+            hwKernelModuleLoc,
+            i1Ty,
+            ValueRange{kernelResultMap[lastPush.getInp()]});
+        auto kernelOutReady = kernelArgumentMap[lastPush.getChan()]
+                                  .getDefiningOp<UnrealizedConversionCastOp>()
+                                  .getOperand(0);
+        auto kernelDoneOutput = rewriter.create<comb::AndOp>(
+            hwKernelModuleLoc,
+            waitOp.getResult(),
+            kernelOutReady);
         SmallVector<Value> kernelOutputs;
         kernelOutputs.append(
             kernelInReadySignals.begin(),
@@ -303,10 +320,10 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
         kernelOutputs.append(
             kernelOutValidDataSignals.begin(),
             kernelOutValidDataSignals.end());
-        kernelOutputs.push_back(waitOp.getResult());
+        kernelOutputs.push_back(kernelDoneOutput.getResult());
         rewriter.create<hw::OutputOp>(hwKernelModuleLoc, kernelOutputs);
 
-        // Insert an instance to the kernel
+        // Insert an instance to the kernel module
         rewriter.setInsertionPointToEnd(&hwModuleRegion.front());
         SmallVector<Value> filteredArgs;
         filteredArgs.push_back(hwModuleRegion.getArgument(0));
@@ -330,14 +347,17 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
         outputs.append(
             instanceKernel.getResults().begin(),
             std::prev(instanceKernel.getResults().end()));
-        auto doneSignal = rewriter.create<comb::AndOp>(
-            hwModuleLoc,
-            instanceKernel.getResults().back(),
-            loopOpResult);
-        // outputs.append(inReadySignals.begin(), inReadySignals.end());
-        // outputs.append(outValidDataSignals.begin(),
-        // outValidDataSignals.end());
-        outputs.push_back(doneSignal.getResult());
+        Value doneSignal;
+        if (hasLoop)
+            doneSignal = rewriter
+                             .create<comb::AndOp>(
+                                 hwModuleLoc,
+                                 instanceKernel.getResults().back(),
+                                 loopOpResult)
+                             .getResult();
+        else
+            doneSignal = instanceKernel.getResults().back();
+        outputs.push_back(doneSignal);
         rewriter.create<hw::OutputOp>(hwModuleLoc, outputs);
 
         rewriter.eraseOp(op);
@@ -420,15 +440,215 @@ struct LowerRegionToHWModule : OpConversionPattern<RegionOp> {
             }
         }
 
+        // Insert wait output channels here
+        SmallVector<Value> waitOutputs;
+        for (auto map : argumentMap) {
+            auto outChan = map.second;
+            if (dyn_cast<InputType>(outChan.getType()))
+                waitOutputs.push_back(outChan);
+        }
+        auto waitOp = rewriter.create<HWWaitOp>(hwModuleLoc, i1Ty, waitOutputs);
         // OutputOp
-        auto waitOp =
-            rewriter.create<HWWaitOp>(hwModuleLoc, i1Ty, ValueRange{});
         SmallVector<Value> outputs;
         outputs.append(inReadySignals.begin(), inReadySignals.end());
         outputs.append(outValidDataSignals.begin(), outValidDataSignals.end());
         outputs.push_back(waitOp.getResult());
         rewriter.create<hw::OutputOp>(hwModuleLoc, outputs);
 
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+struct LowerLoopToLogic : OpConversionPattern<HWLoopOp> {
+    using OpConversionPattern<HWLoopOp>::OpConversionPattern;
+
+    LowerLoopToLogic(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<HWLoopOp>(typeConverter, context) {};
+
+    LogicalResult matchAndRewrite(
+        HWLoopOp op,
+        HWLoopOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto operation = op.getOperation();
+        auto loc = op.getLoc();
+        auto ctx = rewriter.getContext();
+        auto i1Ty = rewriter.getI1Type();
+        BackedgeBuilder bb(rewriter, loc);
+
+        // Get the clock and reset signal from parent module
+        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
+        auto clock = hwModule.getBody().getArgument(0);
+        auto reset = hwModule.getBody().getArgument(1);
+        // Replace reset signal usage with a later defined restart value in this
+        // module. The reset signal should only be used once in the
+        // instantiation of the kernel module
+        Backedge placeholderRestart = bb.get(i1Ty);
+        reset.replaceAllUsesWith(placeholderRestart);
+
+        // Get close signals
+        SmallVector<Value> close;
+        for (auto channel : op.getOperands()) {
+            auto castOp = channel.getDefiningOp<UnrealizedConversionCastOp>();
+            if (!castOp)
+                return rewriter.notifyMatchFailure(
+                    loc,
+                    "Cannot find the defining operation of this channel in the "
+                    "loop.");
+            close.push_back(castOp.getOperands().back());
+        }
+        // Get the done signal of the instantiated kernel module, which is the
+        // only comb::AndOp in this module
+        auto resultUser = *op.getResult().getUsers().begin();
+        auto done = cast<comb::AndOp>(resultUser).getOperand(0);
+
+        // true and false constants
+        auto cstTrue = rewriter.create<hw::ConstantOp>(loc, i1Ty, 1);
+        auto cstFalse = rewriter.create<hw::ConstantOp>(loc, i1Ty, 0);
+        // register for restart signal
+        auto restart = rewriter.create<sv::RegOp>(
+            loc,
+            i1Ty,
+            StringAttr::get(ctx, "restart"));
+        auto restartValue =
+            rewriter.create<sv::ReadInOutOp>(loc, restart.getResult());
+        auto notRestart = rewriter.create<comb::XorOp>(
+            loc,
+            restartValue.getResult(),
+            cstTrue.getResult());
+        auto shouldRestart =
+            rewriter.create<comb::AndOp>(loc, done, notRestart.getResult());
+        // Merge the close signals to one
+        Value wantClose;
+        for (size_t i = 0; i < close.size(); i++) {
+            if (i == 0)
+                wantClose = close[i];
+            else {
+                auto closeResult =
+                    rewriter.create<comb::OrOp>(loc, wantClose, close[i]);
+                wantClose = closeResult.getResult();
+            }
+        }
+        op.getResult().replaceAllUsesWith(wantClose);
+        auto notWantClose =
+            rewriter.create<comb::XorOp>(loc, wantClose, cstTrue.getResult());
+        auto reboot =
+            rewriter.create<comb::OrOp>(loc, reset, restartValue.getResult());
+        auto stopReboot = rewriter.create<comb::AndOp>(
+            loc,
+            restartValue.getResult(),
+            notWantClose.getResult());
+        placeholderRestart.setValue(reboot.getResult());
+        // Create the always block to update restart reg
+        rewriter
+            .create<sv::AlwaysOp>(loc, sv::EventControl::AtPosEdge, clock, [&] {
+                rewriter.create<sv::IfOp>(loc, reset, [&] {
+                    rewriter.create<sv::PAssignOp>(
+                        loc,
+                        restart.getResult(),
+                        cstFalse.getResult());
+                });
+                rewriter.create<sv::IfOp>(
+                    loc,
+                    shouldRestart.getResult(),
+                    [&] {
+                        rewriter.create<sv::PAssignOp>(
+                            loc,
+                            restart.getResult(),
+                            cstTrue.getResult());
+                    },
+                    [&] {
+                        rewriter.create<sv::IfOp>(
+                            loc,
+                            stopReboot.getResult(),
+                            [&] {
+                                rewriter.create<sv::PAssignOp>(
+                                    loc,
+                                    restart.getResult(),
+                                    cstFalse.getResult());
+                            });
+                    });
+            });
+
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+struct LowerPullToInstance : OpConversionPattern<PullOp> {
+    using OpConversionPattern<PullOp>::OpConversionPattern;
+
+    LowerPullToInstance(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PullOp>(typeConverter, context) {};
+
+    LogicalResult matchAndRewrite(
+        PullOp op,
+        PullOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto operation = op.getOperation();
+        auto loc = op.getLoc();
+        auto ctx = rewriter.getContext();
+
+        // Get the pull_channel module
+        auto module = operation->getParentOfType<ModuleOp>();
+        std::optional<hw::HWModuleOp> pullModule = std::nullopt;
+        module.walk([&](hw::HWModuleOp op) {
+            if (op.getSymNameAttr().str() == "pull_channel") pullModule = op;
+        });
+        if (!pullModule.has_value())
+            return rewriter.notifyMatchFailure(
+                loc,
+                "Cannot find pull channel module.");
+
+        // Inputs of the instance
+        SmallVector<Value> inputs;
+        // Get the clock and reset signal from parent module
+        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
+        inputs.push_back(hwModule.getBody().getArgument(0));
+        inputs.push_back(hwModule.getBody().getArgument(1));
+
+        // Get the input channel valid and data port
+        auto castOp = op.getChan().getDefiningOp();
+        inputs.push_back(castOp->getOperand(0));
+        auto inData = castOp->getOperand(1);
+        inputs.push_back(inData);
+        auto dataBitwidth = dyn_cast<IntegerType>(inData.getType()).getWidth();
+        auto ready = castOp->getResult(0);
+
+        // Create an instance to the pull_channel module
+        SmallVector<Attribute> params;
+        params.push_back(hw::ParamDeclAttr::get(
+            "bitwidth",
+            rewriter.getI32IntegerAttr(dataBitwidth)));
+        auto pullInstance = rewriter.create<hw::InstanceOp>(
+            loc,
+            pullModule.value().getOperation(),
+            StringAttr::get(ctx, "pull_channel"),
+            inputs,
+            ArrayAttr::get(ctx, params));
+        op.getResult().replaceAllUsesWith(pullInstance.getResult(2));
+        castOp->getResult(0).replaceAllUsesWith(pullInstance.getResult(1));
+
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+struct LowerPushToInstance : OpConversionPattern<PushOp> {
+    using OpConversionPattern<PushOp>::OpConversionPattern;
+
+    LowerPushToInstance(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PushOp>(typeConverter, context) {};
+
+    LogicalResult matchAndRewrite(
+        PushOp op,
+        PushOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        // TODO: can only be done after figuring out the actual HLS part: arith
+        // ops -> hw.modules
         rewriter.eraseOp(op);
         return success();
     }
@@ -458,12 +678,9 @@ void mlir::populateDfgToHWConversionPatterns(
 {
     patterns.add<LowerProcessToHWModule>(typeConverter, patterns.getContext());
     patterns.add<LowerRegionToHWModule>(typeConverter, patterns.getContext());
-    patterns.add<PruneUnusedHWOps<HWCastOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<PruneUnusedHWOps<HWLoopOp>>(
-        typeConverter,
-        patterns.getContext());
+    patterns.add<LowerLoopToLogic>(typeConverter, patterns.getContext());
+    patterns.add<LowerPullToInstance>(typeConverter, patterns.getContext());
+    patterns.add<LowerPushToInstance>(typeConverter, patterns.getContext());
     patterns.add<PruneUnusedHWOps<HWWaitOp>>(
         typeConverter,
         patterns.getContext());
@@ -958,24 +1175,22 @@ void ConvertDfgToHWPass::runOnOperation()
     target.addIllegalDialect<dfg::DfgDialect, arith::ArithDialect>();
     // Implementing RegionOp lowering, all other ops are legal
     target.addLegalOp<
-        LoopOp,
-        PullOp,
         PushOp,
         ChannelOp,
         ConnectInputOp,
         ConnectOutputOp,
         InstantiateOp,
         arith::AddIOp>();
-    target.addDynamicallyLegalOp<HWCastOp, HWLoopOp, HWWaitOp>(
-        [&](Operation* op) {
-            for (auto result : op->getResults()) {
-                auto resultUses = result.getUses();
-                if (std::distance(resultUses.begin(), resultUses.end()) == 0)
-                    return false;
-                else
-                    return true;
-            }
-        });
+    target.addDynamicallyLegalOp<HWWaitOp>([&](Operation* op) {
+        for (auto result : op->getResults()) {
+            auto resultUses = result.getUses();
+            if (std::distance(resultUses.begin(), resultUses.end()) == 0)
+                return false;
+            else
+                return true;
+        }
+        return false;
+    });
 
     if (failed(applyPartialConversion(
             getOperation(),
