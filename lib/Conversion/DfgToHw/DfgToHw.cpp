@@ -43,6 +43,11 @@ using namespace circt;
 
 namespace {
 
+// Helpers, which contain backedges for the lowrring of ChannelOp and
+// InstantiateOp
+SmallVector<std::pair<Value, SmallVector<Value>>> channelInputToInstanceOutput;
+SmallVector<std::pair<Value, Value>> channelOutputToInstanceInput;
+
 SmallVector<hw::PortInfo> getHWPorts(
     OpBuilder builder,
     FunctionType funcTy,
@@ -115,7 +120,8 @@ getReplaceValuesFromCasts(
     OpBuilder builder,
     hw::HWModuleOp hwModule,
     FunctionType funcTy,
-    bool hasClose = false)
+    bool hasClose = false,
+    MutableArrayRef<BlockArgument> originalBlkArgs = {})
 {
     auto loc = hwModule.getLoc();
     auto i1Ty = builder.getI1Type();
@@ -139,6 +145,13 @@ getReplaceValuesFromCasts(
             loc,
             TypeRange{i1Ty, OutputType::get(builder.getContext(), inputTy)},
             hwModuleBlkArgs);
+        if (!originalBlkArgs.empty())
+            if (auto instantiateOp = dyn_cast<InstantiateOp>(
+                    *originalBlkArgs[i].getUsers().begin())) {
+                channelOutputToInstanceInput.push_back(std::make_pair(
+                    hwCastOp.getResult(1),
+                    hwCastOp.getResult(0)));
+            }
         inReadySignals.push_back(hwCastOp.getResult(0));
         replacePorts.push_back(hwCastOp.getResult(1));
     }
@@ -152,8 +165,16 @@ getReplaceValuesFromCasts(
                 InputType::get(builder.getContext(), outputTy)},
             hasClose ? hwModuleRegion.getArgument(i + 3 * funcTyNumInputs + 2)
                      : hwModuleRegion.getArgument(i + 2 * funcTyNumInputs + 2));
-        outValidDataSignals.push_back(hwCastOp.getResult(0));
-        outValidDataSignals.push_back(hwCastOp.getResult(1));
+        SmallVector<Value> validData;
+        validData.push_back(hwCastOp.getResult(0));
+        validData.push_back(hwCastOp.getResult(1));
+        if (!originalBlkArgs.empty())
+            if (auto instantiateOp = dyn_cast<InstantiateOp>(
+                    *originalBlkArgs[i + funcTyNumInputs].getUsers().begin())) {
+                channelInputToInstanceOutput.push_back(
+                    std::make_pair(hwCastOp.getResult(2), validData));
+            }
+        outValidDataSignals.append(validData.begin(), validData.end());
         replacePorts.push_back(hwCastOp.getResult(2));
     }
     return std::make_tuple(inReadySignals, outValidDataSignals, replacePorts);
@@ -379,8 +400,6 @@ struct LowerRegionToHWModule : OpConversionPattern<RegionOp> {
         auto ctx = rewriter.getContext();
         auto args = op.getBody().getArguments();
         auto funcTy = op.getFunctionType();
-        auto funcTyNumInputs = funcTy.getNumInputs();
-        auto funcTyNumOutputs = funcTy.getNumResults();
         auto i1Ty = rewriter.getI1Type();
         SmallVector<Type> inElemTy, outElemty;
         for (auto inTy : funcTy.getInputs()) {
@@ -421,7 +440,8 @@ struct LowerRegionToHWModule : OpConversionPattern<RegionOp> {
                 OpBuilder(ctx),
                 hwModule,
                 intergerFuncTy,
-                true);
+                true,
+                args);
 
         // Insert the ops here and replace values
         llvm::DenseMap<Value, Value> argumentMap, resultMap;
@@ -594,8 +614,9 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
         // Get the pull_channel module
         auto module = operation->getParentOfType<ModuleOp>();
         std::optional<hw::HWModuleOp> pullModule = std::nullopt;
-        module.walk([&](hw::HWModuleOp op) {
-            if (op.getSymNameAttr().str() == "pull_channel") pullModule = op;
+        module.walk([&](hw::HWModuleOp hwModuleOp) {
+            if (hwModuleOp.getSymNameAttr().str() == "pull_channel")
+                pullModule = hwModuleOp;
         });
         if (!pullModule.has_value())
             return rewriter.notifyMatchFailure(
@@ -614,8 +635,7 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
         inputs.push_back(castOp->getOperand(0));
         auto inData = castOp->getOperand(1);
         inputs.push_back(inData);
-        auto dataBitwidth = dyn_cast<IntegerType>(inData.getType()).getWidth();
-        auto ready = castOp->getResult(0);
+        auto dataBitwidth = inData.getType().getIntOrFloatBitWidth();
 
         // Create an instance to the pull_channel module
         SmallVector<Attribute> params;
@@ -654,6 +674,250 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
     }
 };
 
+struct LowerChannelToInstance : OpConversionPattern<ChannelOp> {
+    using OpConversionPattern<ChannelOp>::OpConversionPattern;
+
+    LowerChannelToInstance(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<ChannelOp>(typeConverter, context) {};
+
+    LogicalResult matchAndRewrite(
+        ChannelOp op,
+        ChannelOpAdaptor adaptop,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto operation = op.getOperation();
+        auto loc = op.getLoc();
+        auto ctx = rewriter.getContext();
+        auto channelInputPort = op.getInChan();
+        auto channelOutputPort = op.getOutChan();
+        auto i1Ty = rewriter.getI1Type();
+
+        // Get the queue module
+        auto module = operation->getParentOfType<ModuleOp>();
+        std::optional<hw::HWModuleOp> queueModule = std::nullopt;
+        module.walk([&](hw::HWModuleOp hwModuleOp) {
+            if (hwModuleOp.getSymNameAttr().str() == "queue")
+                queueModule = hwModuleOp;
+        });
+        if (!queueModule.has_value())
+            return rewriter.notifyMatchFailure(
+                loc,
+                "Cannot find queue module.");
+
+        SmallVector<Attribute> params;
+        auto channelType = op.getEncapsulatedType();
+        params.push_back(hw::ParamDeclAttr::get(
+            "bitwidth",
+            rewriter.getI32IntegerAttr(channelType.getIntOrFloatBitWidth())));
+        auto size = op.getBufferSize();
+        if (!size.has_value() || size.value() == 0)
+            return rewriter.notifyMatchFailure(
+                loc,
+                "Size-0 channel will be supported later.");
+        params.push_back(hw::ParamDeclAttr::get(
+            "size",
+            rewriter.getI32IntegerAttr(size.value())));
+
+        // Inputs of the instance
+        SmallVector<Value> inputs;
+        // Get the clock and reset signal from parent module
+        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
+        inputs.push_back(hwModule.getBody().getArgument(0));
+        inputs.push_back(hwModule.getBody().getArgument(1));
+
+        auto channelInputUser = *channelInputPort.getUsers().begin();
+        // If the channel's input port is connected to the region, connect
+        // to the valid, data and close signals
+        if (auto connectOp = dyn_cast<ConnectInputOp>(channelInputUser)) {
+            auto castOp = dyn_cast<UnrealizedConversionCastOp>(
+                connectOp.getRegionPort().getDefiningOp());
+            inputs.push_back(castOp.getOperand(0));
+            inputs.push_back(castOp.getOperand(1));
+            inputs.push_back(castOp.getOperand(2));
+            rewriter.eraseOp(connectOp);
+        }
+        // If the channel's input port is connected to the instance, create the
+        // backedge for the done/valid/data signal and store it in the helper
+        else if (
+            auto instantiateOp = dyn_cast<InstantiateOp>(channelInputUser)) {
+            SmallVector<Value> instanceOutputs;
+            auto placeholderInstanceValid =
+                rewriter.create<hw::ConstantOp>(loc, i1Ty, 0).getResult();
+            inputs.push_back(placeholderInstanceValid);
+            instanceOutputs.push_back(placeholderInstanceValid);
+            auto placeholderInstanceData =
+                rewriter.create<hw::ConstantOp>(loc, channelType, 0)
+                    .getResult();
+            inputs.push_back(placeholderInstanceData);
+            instanceOutputs.push_back(placeholderInstanceData);
+            auto placeholderInstanceDone =
+                rewriter.create<hw::ConstantOp>(loc, i1Ty, 0).getResult();
+            inputs.push_back(placeholderInstanceDone);
+            instanceOutputs.push_back(placeholderInstanceDone);
+            channelInputToInstanceOutput.push_back(
+                std::make_pair(channelInputPort, instanceOutputs));
+        }
+
+        auto channelOutputUser = *channelOutputPort.getUsers().begin();
+        // If the channel's output port is connected to the region, connect
+        // to the valid, data and close signals
+        if (auto connectOp = dyn_cast<ConnectOutputOp>(channelOutputUser)) {
+            auto castOp = dyn_cast<UnrealizedConversionCastOp>(
+                connectOp.getRegionPort().getDefiningOp());
+            inputs.push_back(castOp.getOperand(0));
+            rewriter.eraseOp(connectOp);
+        }
+        // If the channel's output port is connected to the instance, create the
+        // backedge for the close signal and store it in the helper
+        else if (
+            auto instantiateOp = dyn_cast<InstantiateOp>(channelOutputUser)) {
+            auto placeholderInstanceReady =
+                rewriter.create<hw::ConstantOp>(loc, i1Ty, 0).getResult();
+            inputs.push_back(placeholderInstanceReady);
+            channelOutputToInstanceInput.push_back(
+                std::make_pair(channelOutputPort, placeholderInstanceReady));
+        }
+
+        // Create the instance to the queue module
+        auto queueInstance = rewriter.create<hw::InstanceOp>(
+            loc,
+            queueModule.value().getOperation(),
+            StringAttr::get(ctx, "queue"),
+            inputs,
+            ArrayAttr::get(ctx, params));
+
+        // If the channel's input port is connected to the region, replace the
+        // output ready signal with the generated one from this instance
+        if (auto connectOp = dyn_cast<ConnectInputOp>(channelInputUser)) {
+            auto castOp = dyn_cast<UnrealizedConversionCastOp>(
+                connectOp.getRegionPort().getDefiningOp());
+            castOp.getResult(0).replaceAllUsesWith(queueInstance.getResult(0));
+        }
+        // If the channel's input port is connected to the isntance, create an
+        // unrealized cast and update the usage of input port value
+        else if (
+            auto instantiateOp = dyn_cast<InstantiateOp>(channelInputUser)) {
+            auto castOp = rewriter.create<UnrealizedConversionCastOp>(
+                loc,
+                TypeRange{InputType::get(ctx, channelType)},
+                ValueRange{queueInstance.getResult(0)});
+            auto newChannelInputPort = castOp.getResult(0);
+            // Update the content of helper
+            for (auto &pair : channelInputToInstanceOutput)
+                if (pair.first == channelInputPort)
+                    pair.first = newChannelInputPort;
+            channelInputPort.replaceAllUsesWith(newChannelInputPort);
+        }
+        // If the channel's output port is connected to the region, replace the
+        // output valid and data signals with the genereated one from this
+        // instance
+        if (auto connectOp = dyn_cast<ConnectOutputOp>(channelOutputUser)) {
+            auto castOp = dyn_cast<UnrealizedConversionCastOp>(
+                connectOp.getRegionPort().getDefiningOp());
+            castOp.getResult(0).replaceAllUsesWith(queueInstance.getResult(1));
+            castOp.getResult(1).replaceAllUsesWith(queueInstance.getResult(2));
+            // If the output port is connected to the region, it must be also
+            // waited in HWWaitOp, so replace the waited channel value to the
+            // done signal from this instance
+            castOp.getResult(2).replaceAllUsesWith(queueInstance.getResult(3));
+        }
+        // If the channel's output port is connected to the instance
+        else if (
+            auto instantiateOp = dyn_cast<InstantiateOp>(channelOutputUser)) {
+            auto castOp = rewriter.create<UnrealizedConversionCastOp>(
+                loc,
+                TypeRange{OutputType::get(ctx, channelType)},
+                ValueRange{
+                    queueInstance.getResult(1),
+                    queueInstance.getResult(2),
+                    queueInstance.getResult(3)});
+            auto newChannelOutputPort = castOp.getResult(0);
+            // Update the content of helper
+            for (auto &pair : channelOutputToInstanceInput)
+                if (pair.first == channelOutputPort)
+                    pair.first = newChannelOutputPort;
+            channelOutputPort.replaceAllUsesWith(newChannelOutputPort);
+        }
+
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+struct LowerInstantiateToInstance : OpConversionPattern<InstantiateOp> {
+    using OpConversionPattern<InstantiateOp>::OpConversionPattern;
+
+    LowerInstantiateToInstance(
+        TypeConverter &typeConverter,
+        MLIRContext* context)
+            : OpConversionPattern<InstantiateOp>(typeConverter, context) {};
+
+    LogicalResult matchAndRewrite(
+        InstantiateOp op,
+        InstantiateOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto operation = op.getOperation();
+        auto loc = op.getLoc();
+        auto ctx = rewriter.getContext();
+        auto calleeName = op.getCallee().getRootReference().str();
+
+        // Get the instantiated module
+        auto module = operation->getParentOfType<ModuleOp>();
+        std::optional<hw::HWModuleOp> instaceModule = std::nullopt;
+        module.walk([&](hw::HWModuleOp hwModuleOp) {
+            if (hwModuleOp.getSymNameAttr().str() == calleeName)
+                instaceModule = hwModuleOp;
+        });
+        if (!instaceModule.has_value())
+            return rewriter.notifyMatchFailure(
+                loc,
+                "Cannot find module to be instantiated.");
+
+        SmallVector<Value> inputs, replaceValue;
+        // Get the clock and reset signal from parent module
+        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
+        inputs.push_back(hwModule.getBody().getArgument(0));
+        inputs.push_back(hwModule.getBody().getArgument(1));
+        // Get valid, data, close inputs from input channels
+        for (auto inChan : op.getInputs()) {
+            auto castOp =
+                dyn_cast<UnrealizedConversionCastOp>(inChan.getDefiningOp());
+            inputs.append(
+                castOp.getOperands().begin(),
+                castOp.getOperands().end());
+            for (auto &pair : channelOutputToInstanceInput)
+                if (pair.first == inChan) replaceValue.push_back(pair.second);
+        }
+        // Get ready inputs from output channels
+        for (auto outChan : op.getOutputs()) {
+            auto castOp =
+                dyn_cast<UnrealizedConversionCastOp>(outChan.getDefiningOp());
+            inputs.append(
+                castOp.getOperands().begin(),
+                castOp.getOperands().end());
+            for (auto &pair : channelInputToInstanceOutput)
+                if (pair.first == outChan)
+                    replaceValue.append(pair.second.begin(), pair.second.end());
+        }
+
+        // Create the instance
+        auto instance = rewriter.create<hw::InstanceOp>(
+            loc,
+            instaceModule.value().getOperation(),
+            StringAttr::get(ctx, calleeName),
+            inputs);
+
+        // Replace the value with the actual connected value
+        for (auto [placeholder, instanceOutput] :
+             llvm::zip(replaceValue, instance.getResults())) {
+            placeholder.replaceAllUsesWith(instanceOutput);
+        }
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
 template<typename OpT>
 struct PruneUnusedHWOps : OpConversionPattern<OpT> {
     using OpConversionPattern<OpT>::OpConversionPattern;
@@ -681,6 +945,10 @@ void mlir::populateDfgToHWConversionPatterns(
     patterns.add<LowerLoopToLogic>(typeConverter, patterns.getContext());
     patterns.add<LowerPullToInstance>(typeConverter, patterns.getContext());
     patterns.add<LowerPushToInstance>(typeConverter, patterns.getContext());
+    patterns.add<LowerChannelToInstance>(typeConverter, patterns.getContext());
+    patterns.add<LowerInstantiateToInstance>(
+        typeConverter,
+        patterns.getContext());
     patterns.add<PruneUnusedHWOps<HWWaitOp>>(
         typeConverter,
         patterns.getContext());
@@ -844,13 +1112,13 @@ void ConvertDfgToHWPass::insertQueueModule(OpBuilder builder)
         {builder.getStringAttr("reset"), i1Ty, inDir}
     });
     ports.push_back(hw::PortInfo{
-        {builder.getStringAttr("close"), i1Ty, inDir}
-    });
-    ports.push_back(hw::PortInfo{
         {builder.getStringAttr("in_valid"), i1Ty, inDir}
     });
     ports.push_back(hw::PortInfo{
         {builder.getStringAttr("in"), dataParamTy, inDir}
+    });
+    ports.push_back(hw::PortInfo{
+        {builder.getStringAttr("close"), i1Ty, inDir}
     });
     ports.push_back(hw::PortInfo{
         {builder.getStringAttr("out_ready"), i1Ty, inDir}
@@ -878,9 +1146,9 @@ void ConvertDfgToHWPass::insertQueueModule(OpBuilder builder)
         false);
     auto clk = hwModule.getBody().getArgument(0);
     auto rst = hwModule.getBody().getArgument(1);
-    auto close = hwModule.getBody().getArgument(2);
-    auto inValid = hwModule.getBody().getArgument(3);
-    auto inData = hwModule.getBody().getArgument(4);
+    auto inValid = hwModule.getBody().getArgument(2);
+    auto inData = hwModule.getBody().getArgument(3);
+    auto close = hwModule.getBody().getArgument(4);
     auto outReady = hwModule.getBody().getArgument(5);
     builder.setInsertionPointToStart(&hwModule.getBodyRegion().front());
 
@@ -1175,11 +1443,12 @@ void ConvertDfgToHWPass::runOnOperation()
     target.addIllegalDialect<dfg::DfgDialect, arith::ArithDialect>();
     // Implementing RegionOp lowering, all other ops are legal
     target.addLegalOp<
+        UnrealizedConversionCastOp,
         PushOp,
-        ChannelOp,
-        ConnectInputOp,
-        ConnectOutputOp,
-        InstantiateOp,
+        // ChannelOp,
+        // ConnectInputOp,
+        // ConnectOutputOp,
+        // InstantiateOp,
         arith::AddIOp>();
     target.addDynamicallyLegalOp<HWWaitOp>([&](Operation* op) {
         for (auto result : op->getResults()) {
