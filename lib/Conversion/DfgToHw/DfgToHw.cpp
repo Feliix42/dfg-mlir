@@ -30,7 +30,9 @@
 
 #include "llvm/ADT/APInt.h"
 
+#include <algorithm>
 #include <iostream>
+#include <string>
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTDFGTOHW
@@ -43,6 +45,8 @@ using namespace circt;
 
 namespace {
 
+// Helper, whcih stores the modules for arith with parameters
+SmallVector<hw::HWModuleOp> arithModules;
 // Helpers, which contain backedges for the lowrring of ChannelOp and
 // InstantiateOp
 SmallVector<std::pair<Value, SmallVector<Value>>> channelInputToInstanceOutput;
@@ -322,24 +326,37 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
         }
         // By default, the last push to each channel should be waited to
         // generate the done signal for the kernel module
-        // TODO: now it only monitor the last push, add last push to each output
-        // channel support
-        auto lastPush = dyn_cast<PushOp>(kernelOps.back());
-        if (!lastPush)
+        if (!isa<PushOp>(kernelOps.back()))
             return rewriter.notifyMatchFailure(
                 hwKernelModuleLoc,
                 "The last operation in the kernel must be push.");
-        auto waitOp = rewriter.create<HWWaitOp>(
-            hwKernelModuleLoc,
-            i1Ty,
-            ValueRange{kernelResultMap[lastPush.getInp()]});
-        auto kernelOutReady = kernelArgumentMap[lastPush.getChan()]
-                                  .getDefiningOp<UnrealizedConversionCastOp>()
-                                  .getOperand(0);
+        SmallVector<PushOp> lastPushes;
+        for (auto it = kernelOps.rbegin(); it != kernelOps.rend(); ++it) {
+            if (auto pushOp = dyn_cast<PushOp>(*it)) {
+                if (!isInSmallVector(pushOp, lastPushes))
+                    lastPushes.push_back(pushOp);
+            }
+        }
+        SmallVector<Value> waitedValues;
+        for (auto pushOp : lastPushes) {
+            auto waitedValue = kernelResultMap[pushOp.getInp()];
+            if (!isInSmallVector(waitedValue, waitedValues))
+                waitedValues.push_back(waitedValue);
+        }
+        auto waitOp =
+            rewriter.create<HWWaitOp>(hwKernelModuleLoc, i1Ty, waitedValues);
+        SmallVector<Value> kernelOutReadys;
+        kernelOutReadys.push_back(waitOp.getResult());
+        for (auto pushOp : lastPushes) {
+            auto pushChan = kernelArgumentMap[pushOp.getChan()];
+            kernelOutReadys.push_back(
+                pushChan.getDefiningOp<UnrealizedConversionCastOp>().getOperand(
+                    0));
+        }
         auto kernelDoneOutput = rewriter.create<comb::AndOp>(
             hwKernelModuleLoc,
-            waitOp.getResult(),
-            kernelOutReady);
+            i1Ty,
+            kernelOutReadys);
         SmallVector<Value> kernelOutputs;
         kernelOutputs.append(
             kernelInReadySignals.begin(),
@@ -674,6 +691,128 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
     }
 };
 
+struct CreateAndInstanceArithOps : OpConversionPattern<arith::AddIOp> {
+    using OpConversionPattern<arith::AddIOp>::OpConversionPattern;
+
+    CreateAndInstanceArithOps(
+        TypeConverter &typeConverter,
+        MLIRContext* context)
+            : OpConversionPattern<arith::AddIOp>(typeConverter, context) {};
+
+    LogicalResult matchAndRewrite(
+        arith::AddIOp op,
+        arith::AddIOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto loc = op.getLoc();
+        auto i1Ty = rewriter.getI1Type();
+        auto i32Ty = rewriter.getI32Type();
+        auto opName = op.getOperationName().str();
+        std::replace(opName.begin(), opName.end(), '.', '_');
+        auto opResult = op.getResult();
+
+        // Check if the module is already created
+        hw::HWModuleOp hwModule;
+        for (auto arithModule : arithModules) {
+            auto name = arithModule.getSymName().str();
+            if (name == opName) hwModule = arithModule;
+        }
+        // If the hw.module is not created yet, create and instance it
+        if (hwModule == nullptr) {
+            auto hwParentModule =
+                op.getOperation()->getParentOfType<hw::HWModuleOp>();
+            auto inDir = hw::ModulePort::Direction::Input;
+            auto outDir = hw::ModulePort::Direction::Output;
+            SmallVector<Attribute> params;
+            params.push_back(hw::ParamDeclAttr::get("bitwidth", i32Ty));
+            auto dataParamAttr = hw::ParamDeclRefAttr::get(
+                rewriter.getStringAttr("bitwidth"),
+                i32Ty);
+            auto dataParamTy = hw::IntType::get(dataParamAttr);
+            SmallVector<hw::PortInfo> ports;
+            for (size_t i = 0; i < op.getOperands().size(); i++) {
+                auto namePrefix = "in" + std::to_string(i);
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr(namePrefix + "_valid"),
+                     i1Ty, inDir}
+                });
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr(namePrefix), dataParamTy, inDir}
+                });
+            }
+            ports.push_back(hw::PortInfo{
+                {rewriter.getStringAttr("out_valid"), i1Ty, outDir}
+            });
+            ports.push_back(hw::PortInfo{
+                {rewriter.getStringAttr("out"), dataParamTy, outDir}
+            });
+            rewriter.setInsertionPoint(hwParentModule);
+            hwModule = rewriter.create<hw::HWModuleOp>(
+                hwParentModule.getLoc(),
+                rewriter.getStringAttr(opName),
+                hw::ModulePortInfo(ports),
+                rewriter.getArrayAttr(params),
+                ArrayRef<NamedAttribute>{},
+                StringAttr{},
+                false);
+            auto hwModuleLoc = hwModule.getLoc();
+            Region &hwModuleRegion = hwModule.getBody();
+            SmallVector<Value> newValids, newOperands;
+            for (size_t i = 0; i < hwModuleRegion.getArguments().size();
+                 i += 2) {
+                newValids.push_back(hwModuleRegion.getArgument(i));
+                newOperands.push_back(hwModuleRegion.getArgument(i + 1));
+            }
+            rewriter.setInsertionPointToStart(&hwModuleRegion.front());
+            auto validOutput =
+                rewriter.create<comb::AndOp>(hwModuleLoc, i1Ty, newValids);
+            auto dataOutput = rewriter.create<comb::AddOp>(
+                hwModuleLoc,
+                dataParamTy,
+                newOperands);
+            rewriter.create<hw::OutputOp>(
+                hwModuleLoc,
+                ValueRange{validOutput.getResult(), dataOutput.getResult()});
+        }
+
+        // The inputs of the instance to the module should be the value and the
+        // valid signal, which is defined by the same operaiton that defines the
+        // value
+        SmallVector<Value> inputs;
+        for (auto operand : op.getOperands()) {
+            auto definition = operand.getDefiningOp<hw::InstanceOp>();
+            inputs.push_back(definition.getResult(0));
+            inputs.push_back(operand);
+        }
+        // Create the instance to the hw.module
+        rewriter.setInsertionPoint(op);
+        auto bitwidth = opResult.getType().getIntOrFloatBitWidth();
+        SmallVector<Attribute> instanceParams;
+        instanceParams.push_back(hw::ParamDeclAttr::get(
+            "bitwidth",
+            rewriter.getI32IntegerAttr(bitwidth)));
+        auto instance = rewriter.create<hw::InstanceOp>(
+            loc,
+            hwModule.getOperation(),
+            rewriter.getStringAttr(opName + "_i" + std::to_string(bitwidth)),
+            inputs,
+            rewriter.getArrayAttr(instanceParams));
+
+        // Replace the original result of arith op with the valid and data
+        // generated from the instance
+        for (auto user : opResult.getUsers())
+            // If it's used in wait operation, replace it with the valid signal
+            if (isa<HWWaitOp>(user))
+                user->replaceUsesOfWith(opResult, instance.getResult(0));
+        // Else such as used by push or any other arith ops, replace it with
+        // the data
+        opResult.replaceAllUsesWith(instance.getResult(1));
+
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
 struct LowerPushToInstance : OpConversionPattern<PushOp> {
     using OpConversionPattern<PushOp>::OpConversionPattern;
 
@@ -685,8 +824,53 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
         PushOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        // TODO: can only be done after figuring out the actual HLS part: arith
-        // ops -> hw.modules
+        auto operation = op.getOperation();
+        auto loc = op.getLoc();
+        auto ctx = rewriter.getContext();
+
+        // Get the pull_channel module
+        auto module = operation->getParentOfType<ModuleOp>();
+        std::optional<hw::HWModuleOp> pushModule = std::nullopt;
+        module.walk([&](hw::HWModuleOp hwModuleOp) {
+            if (hwModuleOp.getSymNameAttr().str() == "push_channel")
+                pushModule = hwModuleOp;
+        });
+        if (!pushModule.has_value())
+            return rewriter.notifyMatchFailure(
+                loc,
+                "Cannot find push channel module.");
+
+        // Inputs of the instance
+        SmallVector<Value> inputs;
+        // Get the clock and reset signal from parent module
+        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
+        inputs.push_back(hwModule.getBody().getArgument(0));
+        inputs.push_back(hwModule.getBody().getArgument(1));
+
+        // Get the input channel ready port
+        auto data = op.getInp();
+        auto castOp = op.getChan().getDefiningOp();
+        auto ready = castOp->getOperand(0);
+        auto valid = data.getDefiningOp()->getResult(0);
+        auto validInput = rewriter.create<comb::AndOp>(loc, valid, ready);
+        inputs.push_back(validInput.getResult());
+        auto dataBitwidth = data.getType().getIntOrFloatBitWidth();
+        inputs.push_back(data);
+
+        // Create an instance to the push_channel module
+        SmallVector<Attribute> params;
+        params.push_back(hw::ParamDeclAttr::get(
+            "bitwidth",
+            rewriter.getI32IntegerAttr(dataBitwidth)));
+        auto pullInstance = rewriter.create<hw::InstanceOp>(
+            loc,
+            pushModule.value().getOperation(),
+            StringAttr::get(ctx, "push_channel"),
+            inputs,
+            ArrayAttr::get(ctx, params));
+        castOp->getResult(0).replaceAllUsesWith(pullInstance.getResult(1));
+        castOp->getResult(1).replaceAllUsesWith(pullInstance.getResult(2));
+
         rewriter.eraseOp(op);
         return success();
     }
@@ -882,6 +1066,10 @@ struct LowerInstantiateOrEmbed : OpConversionPattern<OpT> {
         auto loc = op.getLoc();
         auto ctx = rewriter.getContext();
         auto calleeName = op.getCallee().getRootReference().str();
+        auto numInputs =
+            std::distance(op.getInputs().begin(), op.getInputs().end());
+        auto numOutputs =
+            std::distance(op.getOutputs().begin(), op.getOutputs().end());
 
         // Get the instantiated module
         auto module = operation->template getParentOfType<ModuleOp>();
@@ -932,8 +1120,17 @@ struct LowerInstantiateOrEmbed : OpConversionPattern<OpT> {
             inputs);
 
         // Replace the value with the actual connected value
+        SmallVector<Value> instanceOutputs;
+        for (auto i = 0; i < numInputs; i++)
+            instanceOutputs.push_back(instance.getResult(i));
+        for (auto i = 0; i < numOutputs; i++) {
+            instanceOutputs.push_back(instance.getResult(2 * i + numInputs));
+            instanceOutputs.push_back(
+                instance.getResult(2 * i + numInputs + 1));
+            instanceOutputs.push_back(instance.getResults().back());
+        }
         for (auto [placeholder, instanceOutput] :
-             llvm::zip(replaceValue, instance.getResults())) {
+             llvm::zip(replaceValue, instanceOutputs)) {
             placeholder.replaceAllUsesWith(instanceOutput);
         }
         for (auto placeholder : replaceWait)
@@ -943,18 +1140,40 @@ struct LowerInstantiateOrEmbed : OpConversionPattern<OpT> {
     }
 };
 
-template<typename OpT>
-struct PruneUnusedHWOps : OpConversionPattern<OpT> {
-    using OpConversionPattern<OpT>::OpConversionPattern;
+struct CombineWaitedSignal : OpConversionPattern<HWWaitOp> {
+    using OpConversionPattern<HWWaitOp>::OpConversionPattern;
 
-    PruneUnusedHWOps(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<OpT>(typeConverter, context) {};
+    CombineWaitedSignal(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<HWWaitOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
-        OpT op,
-        OpT::Adaptor adaptor,
+        HWWaitOp op,
+        HWWaitOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        auto loc = op.getLoc();
+        auto operands = op.getOperands();
+
+        // Check if all operands is i1
+        for (auto operand : operands)
+            if (operand.getType().getIntOrFloatBitWidth() != 1)
+                return rewriter.notifyMatchFailure(
+                    loc,
+                    "Something is wrong and ask yourself.");
+
+        // Replace the usage of the result with the i1 value
+        Value replaceValue;
+        if (operands.size() == 1)
+            replaceValue = op.getOperand(0);
+        else {
+            auto andOp = rewriter.create<comb::AndOp>(
+                loc,
+                rewriter.getI1Type(),
+                operands);
+            replaceValue = andOp.getResult();
+        }
+        op.getResult().replaceAllUsesWith(replaceValue);
+
         rewriter.eraseOp(op);
         return success();
     }
@@ -977,9 +1196,10 @@ void mlir::populateDfgToHWConversionPatterns(
     patterns.add<LowerInstantiateOrEmbed<EmbedOp>>(
         typeConverter,
         patterns.getContext());
-    patterns.add<PruneUnusedHWOps<HWWaitOp>>(
+    patterns.add<CreateAndInstanceArithOps>(
         typeConverter,
         patterns.getContext());
+    patterns.add<CombineWaitedSignal>(typeConverter, patterns.getContext());
 }
 
 namespace {
@@ -1470,24 +1690,17 @@ void ConvertDfgToHWPass::runOnOperation()
         sv::SVDialect>();
     target.addIllegalDialect<dfg::DfgDialect, arith::ArithDialect>();
     // Implementing RegionOp lowering, all other ops are legal
-    target.addLegalOp<
-        UnrealizedConversionCastOp,
-        PushOp,
-        // ChannelOp,
-        // ConnectInputOp,
-        // ConnectOutputOp,
-        // InstantiateOp,
-        arith::AddIOp>();
-    target.addDynamicallyLegalOp<HWWaitOp>([&](Operation* op) {
-        for (auto result : op->getResults()) {
-            auto resultUses = result.getUses();
-            if (std::distance(resultUses.begin(), resultUses.end()) == 0)
-                return false;
-            else
-                return true;
-        }
-        return false;
-    });
+    target.addLegalOp<UnrealizedConversionCastOp>();
+    // target.addDynamicallyLegalOp<HWWaitOp>([&](Operation* op) {
+    //     for (auto result : op->getResults()) {
+    //         auto resultUses = result.getUses();
+    //         if (std::distance(resultUses.begin(), resultUses.end()) == 0)
+    //             return false;
+    //         else
+    //             return true;
+    //     }
+    //     return false;
+    // });
 
     if (failed(applyPartialConversion(
             getOperation(),
