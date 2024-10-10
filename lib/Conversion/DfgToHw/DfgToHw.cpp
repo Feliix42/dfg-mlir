@@ -47,6 +47,7 @@ namespace {
 // InstantiateOp
 SmallVector<std::pair<Value, SmallVector<Value>>> channelInputToInstanceOutput;
 SmallVector<std::pair<Value, Value>> channelOutputToInstanceInput;
+SmallVector<std::pair<Value, Value>> regionOutputToInstanceOutput;
 
 SmallVector<hw::PortInfo> getHWPorts(
     OpBuilder builder,
@@ -145,13 +146,15 @@ getReplaceValuesFromCasts(
             loc,
             TypeRange{i1Ty, OutputType::get(builder.getContext(), inputTy)},
             hwModuleBlkArgs);
-        if (!originalBlkArgs.empty())
-            if (auto instantiateOp = dyn_cast<InstantiateOp>(
-                    *originalBlkArgs[i].getUsers().begin())) {
+        if (!originalBlkArgs.empty()) {
+            auto user = *originalBlkArgs[i].getUsers().begin();
+            if (auto instantiateOp =
+                    dyn_cast<InstantiateOp>(user) ?: dyn_cast<EmbedOp>(user)) {
                 channelOutputToInstanceInput.push_back(std::make_pair(
                     hwCastOp.getResult(1),
                     hwCastOp.getResult(0)));
             }
+        }
         inReadySignals.push_back(hwCastOp.getResult(0));
         replacePorts.push_back(hwCastOp.getResult(1));
     }
@@ -168,12 +171,15 @@ getReplaceValuesFromCasts(
         SmallVector<Value> validData;
         validData.push_back(hwCastOp.getResult(0));
         validData.push_back(hwCastOp.getResult(1));
-        if (!originalBlkArgs.empty())
-            if (auto instantiateOp = dyn_cast<InstantiateOp>(
-                    *originalBlkArgs[i + funcTyNumInputs].getUsers().begin())) {
+        if (!originalBlkArgs.empty()) {
+            auto user =
+                *originalBlkArgs[i + funcTyNumInputs].getUsers().begin();
+            if (auto instantiateOp =
+                    dyn_cast<InstantiateOp>(user) ?: dyn_cast<EmbedOp>(user)) {
                 channelInputToInstanceOutput.push_back(
                     std::make_pair(hwCastOp.getResult(2), validData));
             }
+        }
         outValidDataSignals.append(validData.begin(), validData.end());
         replacePorts.push_back(hwCastOp.getResult(2));
     }
@@ -464,8 +470,20 @@ struct LowerRegionToHWModule : OpConversionPattern<RegionOp> {
         SmallVector<Value> waitOutputs;
         for (auto map : argumentMap) {
             auto outChan = map.second;
-            if (dyn_cast<InputType>(outChan.getType()))
-                waitOutputs.push_back(outChan);
+            if (dyn_cast<InputType>(outChan.getType())) {
+                auto user = *outChan.getUsers().begin();
+                if (auto instantiateOp = dyn_cast<InstantiateOp>(user)
+                                             ?: dyn_cast<EmbedOp>(user)) {
+                    auto placeholder =
+                        rewriter.create<hw::ConstantOp>(hwModuleLoc, i1Ty, 0)
+                            .getResult();
+                    waitOutputs.push_back(placeholder);
+                    regionOutputToInstanceOutput.push_back(
+                        std::make_pair(outChan, placeholder));
+                } else {
+                    waitOutputs.push_back(outChan);
+                }
+            }
         }
         auto waitOp = rewriter.create<HWWaitOp>(hwModuleLoc, i1Ty, waitOutputs);
         // OutputOp
@@ -739,7 +757,8 @@ struct LowerChannelToInstance : OpConversionPattern<ChannelOp> {
         // If the channel's input port is connected to the instance, create the
         // backedge for the done/valid/data signal and store it in the helper
         else if (
-            auto instantiateOp = dyn_cast<InstantiateOp>(channelInputUser)) {
+            auto instantiateOp = dyn_cast<InstantiateOp>(channelInputUser)
+                                     ?: dyn_cast<EmbedOp>(channelInputUser)) {
             SmallVector<Value> instanceOutputs;
             auto placeholderInstanceValid =
                 rewriter.create<hw::ConstantOp>(loc, i1Ty, 0).getResult();
@@ -770,7 +789,8 @@ struct LowerChannelToInstance : OpConversionPattern<ChannelOp> {
         // If the channel's output port is connected to the instance, create the
         // backedge for the close signal and store it in the helper
         else if (
-            auto instantiateOp = dyn_cast<InstantiateOp>(channelOutputUser)) {
+            auto instantiateOp = dyn_cast<InstantiateOp>(channelOutputUser)
+                                     ?: dyn_cast<EmbedOp>(channelOutputUser)) {
             auto placeholderInstanceReady =
                 rewriter.create<hw::ConstantOp>(loc, i1Ty, 0).getResult();
             inputs.push_back(placeholderInstanceReady);
@@ -796,7 +816,8 @@ struct LowerChannelToInstance : OpConversionPattern<ChannelOp> {
         // If the channel's input port is connected to the isntance, create an
         // unrealized cast and update the usage of input port value
         else if (
-            auto instantiateOp = dyn_cast<InstantiateOp>(channelInputUser)) {
+            auto instantiateOp = dyn_cast<InstantiateOp>(channelInputUser)
+                                     ?: dyn_cast<EmbedOp>(channelInputUser)) {
             auto castOp = rewriter.create<UnrealizedConversionCastOp>(
                 loc,
                 TypeRange{InputType::get(ctx, channelType)},
@@ -823,7 +844,8 @@ struct LowerChannelToInstance : OpConversionPattern<ChannelOp> {
         }
         // If the channel's output port is connected to the instance
         else if (
-            auto instantiateOp = dyn_cast<InstantiateOp>(channelOutputUser)) {
+            auto instantiateOp = dyn_cast<InstantiateOp>(channelOutputUser)
+                                     ?: dyn_cast<EmbedOp>(channelOutputUser)) {
             auto castOp = rewriter.create<UnrealizedConversionCastOp>(
                 loc,
                 TypeRange{OutputType::get(ctx, channelType)},
@@ -844,17 +866,16 @@ struct LowerChannelToInstance : OpConversionPattern<ChannelOp> {
     }
 };
 
-struct LowerInstantiateToInstance : OpConversionPattern<InstantiateOp> {
-    using OpConversionPattern<InstantiateOp>::OpConversionPattern;
+template<typename OpT>
+struct LowerInstantiateOrEmbed : OpConversionPattern<OpT> {
+    using OpConversionPattern<OpT>::OpConversionPattern;
 
-    LowerInstantiateToInstance(
-        TypeConverter &typeConverter,
-        MLIRContext* context)
-            : OpConversionPattern<InstantiateOp>(typeConverter, context) {};
+    LowerInstantiateOrEmbed(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<OpT>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
-        InstantiateOp op,
-        InstantiateOpAdaptor adaptor,
+        OpT op,
+        OpT::Adaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto operation = op.getOperation();
@@ -863,7 +884,7 @@ struct LowerInstantiateToInstance : OpConversionPattern<InstantiateOp> {
         auto calleeName = op.getCallee().getRootReference().str();
 
         // Get the instantiated module
-        auto module = operation->getParentOfType<ModuleOp>();
+        auto module = operation->template getParentOfType<ModuleOp>();
         std::optional<hw::HWModuleOp> instaceModule = std::nullopt;
         module.walk([&](hw::HWModuleOp hwModuleOp) {
             if (hwModuleOp.getSymNameAttr().str() == calleeName)
@@ -874,9 +895,9 @@ struct LowerInstantiateToInstance : OpConversionPattern<InstantiateOp> {
                 loc,
                 "Cannot find module to be instantiated.");
 
-        SmallVector<Value> inputs, replaceValue;
+        SmallVector<Value> inputs, replaceValue, replaceWait;
         // Get the clock and reset signal from parent module
-        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
+        auto hwModule = operation->template getParentOfType<hw::HWModuleOp>();
         inputs.push_back(hwModule.getBody().getArgument(0));
         inputs.push_back(hwModule.getBody().getArgument(1));
         // Get valid, data, close inputs from input channels
@@ -899,6 +920,8 @@ struct LowerInstantiateToInstance : OpConversionPattern<InstantiateOp> {
             for (auto &pair : channelInputToInstanceOutput)
                 if (pair.first == outChan)
                     replaceValue.append(pair.second.begin(), pair.second.end());
+            for (auto &pair : regionOutputToInstanceOutput)
+                if (pair.first == outChan) replaceWait.push_back(pair.second);
         }
 
         // Create the instance
@@ -913,6 +936,8 @@ struct LowerInstantiateToInstance : OpConversionPattern<InstantiateOp> {
              llvm::zip(replaceValue, instance.getResults())) {
             placeholder.replaceAllUsesWith(instanceOutput);
         }
+        for (auto placeholder : replaceWait)
+            placeholder.replaceAllUsesWith(instance.getResults().back());
         rewriter.eraseOp(op);
         return success();
     }
@@ -946,7 +971,10 @@ void mlir::populateDfgToHWConversionPatterns(
     patterns.add<LowerPullToInstance>(typeConverter, patterns.getContext());
     patterns.add<LowerPushToInstance>(typeConverter, patterns.getContext());
     patterns.add<LowerChannelToInstance>(typeConverter, patterns.getContext());
-    patterns.add<LowerInstantiateToInstance>(
+    patterns.add<LowerInstantiateOrEmbed<InstantiateOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<LowerInstantiateOrEmbed<EmbedOp>>(
         typeConverter,
         patterns.getContext());
     patterns.add<PruneUnusedHWOps<HWWaitOp>>(
