@@ -691,17 +691,18 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
     }
 };
 
-struct CreateAndInstanceArithOps : OpConversionPattern<arith::AddIOp> {
-    using OpConversionPattern<arith::AddIOp>::OpConversionPattern;
+template<typename OpFrom, typename OpTo>
+struct CreateAndInstanceArithOps : OpConversionPattern<OpFrom> {
+    using OpConversionPattern<OpFrom>::OpConversionPattern;
 
     CreateAndInstanceArithOps(
         TypeConverter &typeConverter,
         MLIRContext* context)
-            : OpConversionPattern<arith::AddIOp>(typeConverter, context) {};
+            : OpConversionPattern<OpFrom>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
-        arith::AddIOp op,
-        arith::AddIOpAdaptor adaptor,
+        OpFrom op,
+        OpFrom::Adaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto loc = op.getLoc();
@@ -710,6 +711,8 @@ struct CreateAndInstanceArithOps : OpConversionPattern<arith::AddIOp> {
         auto opName = op.getOperationName().str();
         std::replace(opName.begin(), opName.end(), '.', '_');
         auto opResult = op.getResult();
+        auto hwParentModule =
+            op.getOperation()->template getParentOfType<hw::HWModuleOp>();
 
         // Check if the module is already created
         hw::HWModuleOp hwModule;
@@ -719,8 +722,6 @@ struct CreateAndInstanceArithOps : OpConversionPattern<arith::AddIOp> {
         }
         // If the hw.module is not created yet, create and instance it
         if (hwModule == nullptr) {
-            auto hwParentModule =
-                op.getOperation()->getParentOfType<hw::HWModuleOp>();
             auto inDir = hw::ModulePort::Direction::Input;
             auto outDir = hw::ModulePort::Direction::Output;
             SmallVector<Attribute> params;
@@ -730,6 +731,9 @@ struct CreateAndInstanceArithOps : OpConversionPattern<arith::AddIOp> {
                 i32Ty);
             auto dataParamTy = hw::IntType::get(dataParamAttr);
             SmallVector<hw::PortInfo> ports;
+            ports.push_back(hw::PortInfo{
+                {rewriter.getStringAttr("reset"), i1Ty, inDir}
+            });
             for (size_t i = 0; i < op.getOperands().size(); i++) {
                 auto namePrefix = "in" + std::to_string(i);
                 ports.push_back(hw::PortInfo{
@@ -758,29 +762,82 @@ struct CreateAndInstanceArithOps : OpConversionPattern<arith::AddIOp> {
             auto hwModuleLoc = hwModule.getLoc();
             Region &hwModuleRegion = hwModule.getBody();
             SmallVector<Value> newValids, newOperands;
-            for (size_t i = 0; i < hwModuleRegion.getArguments().size();
+            for (size_t i = 1; i < hwModuleRegion.getArguments().size();
                  i += 2) {
                 newValids.push_back(hwModuleRegion.getArgument(i));
                 newOperands.push_back(hwModuleRegion.getArgument(i + 1));
             }
             rewriter.setInsertionPointToStart(&hwModuleRegion.front());
-            auto validOutput =
+            auto cstFalse =
+                rewriter.create<hw::ConstantOp>(hwModuleLoc, i1Ty, 0);
+            auto cstTrue =
+                rewriter.create<hw::ConstantOp>(hwModuleLoc, i1Ty, 1);
+            auto validInput =
                 rewriter.create<comb::AndOp>(hwModuleLoc, i1Ty, newValids);
-            auto dataOutput = rewriter.create<comb::AddOp>(
+            auto dataInput =
+                rewriter.create<OpTo>(hwModuleLoc, dataParamTy, newOperands);
+            auto regValid = rewriter.create<sv::RegOp>(
+                hwModuleLoc,
+                i1Ty,
+                rewriter.getStringAttr("valid_reg"));
+            auto regValidValue = rewriter.create<sv::ReadInOutOp>(
+                hwModuleLoc,
+                regValid.getResult());
+            auto regData = rewriter.create<sv::RegOp>(
                 hwModuleLoc,
                 dataParamTy,
-                newOperands);
+                rewriter.getStringAttr("data_reg"));
+            auto regDataValue = rewriter.create<sv::ReadInOutOp>(
+                hwModuleLoc,
+                regData.getResult());
+            auto notValidOnce = rewriter.create<comb::XorOp>(
+                hwModuleLoc,
+                regValidValue.getResult(),
+                cstTrue.getResult());
+            auto updateReg = rewriter.create<comb::AndOp>(
+                hwModuleLoc,
+                notValidOnce.getResult(),
+                validInput.getResult());
+            rewriter.create<sv::AlwaysCombOp>(hwModuleLoc, [&] {
+                rewriter.create<sv::IfOp>(
+                    hwModuleLoc,
+                    hwModuleRegion.getArgument(0),
+                    [&] {
+                        rewriter.create<sv::PAssignOp>(
+                            hwModuleLoc,
+                            regValid.getResult(),
+                            cstFalse.getResult());
+                    },
+                    [&] {
+                        rewriter.create<sv::IfOp>(
+                            hwModuleLoc,
+                            updateReg.getResult(),
+                            [&] {
+                                rewriter.create<sv::PAssignOp>(
+                                    hwModuleLoc,
+                                    regValid.getResult(),
+                                    cstTrue.getResult());
+                                rewriter.create<sv::PAssignOp>(
+                                    hwModuleLoc,
+                                    regData.getResult(),
+                                    dataInput.getResult());
+                            });
+                    });
+            });
             rewriter.create<hw::OutputOp>(
                 hwModuleLoc,
-                ValueRange{validOutput.getResult(), dataOutput.getResult()});
+                ValueRange{
+                    regValidValue.getResult(),
+                    regDataValue.getResult()});
         }
 
         // The inputs of the instance to the module should be the value and the
         // valid signal, which is defined by the same operaiton that defines the
         // value
         SmallVector<Value> inputs;
+        inputs.push_back(hwParentModule.getRegion().getArgument(0));
         for (auto operand : op.getOperands()) {
-            auto definition = operand.getDefiningOp<hw::InstanceOp>();
+            auto definition = operand.template getDefiningOp<hw::InstanceOp>();
             inputs.push_back(definition.getResult(0));
             inputs.push_back(operand);
         }
@@ -1132,9 +1189,12 @@ struct LowerInstantiateOrEmbed : OpConversionPattern<OpT> {
         for (auto [placeholder, instanceOutput] :
              llvm::zip(replaceValue, instanceOutputs)) {
             placeholder.replaceAllUsesWith(instanceOutput);
+            rewriter.eraseOp(placeholder.getDefiningOp());
         }
-        for (auto placeholder : replaceWait)
+        for (auto placeholder : replaceWait) {
             placeholder.replaceAllUsesWith(instance.getResults().back());
+            rewriter.eraseOp(placeholder.getDefiningOp());
+        }
         rewriter.eraseOp(op);
         return success();
     }
@@ -1196,7 +1256,43 @@ void mlir::populateDfgToHWConversionPatterns(
     patterns.add<LowerInstantiateOrEmbed<EmbedOp>>(
         typeConverter,
         patterns.getContext());
-    patterns.add<CreateAndInstanceArithOps>(
+    patterns.add<CreateAndInstanceArithOps<arith::AddIOp, comb::AddOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::SubIOp, comb::SubOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::MulIOp, comb::MulOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::DivUIOp, comb::DivSOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::DivSIOp, comb::DivUOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::RemUIOp, comb::ModUOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::RemSIOp, comb::ModSOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::AndIOp, comb::AndOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::OrIOp, comb::OrOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::XOrIOp, comb::XorOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::ShLIOp, comb::ShlOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::ShRUIOp, comb::ShrUOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::ShRSIOp, comb::ShrSOp>>(
         typeConverter,
         patterns.getContext());
     patterns.add<CombineWaitedSignal>(typeConverter, patterns.getContext());
@@ -1689,18 +1785,7 @@ void ConvertDfgToHWPass::runOnOperation()
         seq::SeqDialect,
         sv::SVDialect>();
     target.addIllegalDialect<dfg::DfgDialect, arith::ArithDialect>();
-    // Implementing RegionOp lowering, all other ops are legal
     target.addLegalOp<UnrealizedConversionCastOp>();
-    // target.addDynamicallyLegalOp<HWWaitOp>([&](Operation* op) {
-    //     for (auto result : op->getResults()) {
-    //         auto resultUses = result.getUses();
-    //         if (std::distance(resultUses.begin(), resultUses.end()) == 0)
-    //             return false;
-    //         else
-    //             return true;
-    //     }
-    //     return false;
-    // });
 
     if (failed(applyPartialConversion(
             getOperation(),
