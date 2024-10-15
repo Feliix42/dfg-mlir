@@ -838,10 +838,58 @@ struct CreateAndInstanceArithOps : OpConversionPattern<OpFrom> {
         auto i32Ty = rewriter.getI32Type();
         auto opName = op.getOperationName().str();
         std::replace(opName.begin(), opName.end(), '.', '_');
+        auto opOperandType = op.getOperands().back().getType();
         auto opResult = op.getResult();
         bool isSelectOp = isa<arith::SelectOp>(op);
+        bool isCompareOp = isa<arith::CmpIOp>(op);
+        comb::ICmpPredicate predicate;
         auto hwParentModule =
             op.getOperation()->template getParentOfType<hw::HWModuleOp>();
+        if (isCompareOp) {
+            auto cmpOp = dyn_cast<arith::CmpIOp>(op.getOperation());
+            switch (cmpOp.getPredicate()) {
+            case arith::CmpIPredicate::eq:
+                predicate = comb::ICmpPredicate::eq;
+                opName += "_eq";
+                break;
+            case arith::CmpIPredicate::ne:
+                predicate = comb::ICmpPredicate::ne;
+                opName += "_ne";
+                break;
+            case arith::CmpIPredicate::slt:
+                predicate = comb::ICmpPredicate::slt;
+                opName += "_slt";
+                break;
+            case arith::CmpIPredicate::ult:
+                predicate = comb::ICmpPredicate::ult;
+                opName += "_ult";
+                break;
+            case arith::CmpIPredicate::sle:
+                predicate = comb::ICmpPredicate::sle;
+                opName += "_sle";
+                break;
+            case arith::CmpIPredicate::ule:
+                predicate = comb::ICmpPredicate::ule;
+                opName += "_ule";
+                break;
+            case arith::CmpIPredicate::sgt:
+                predicate = comb::ICmpPredicate::sgt;
+                opName += "_sgt";
+                break;
+            case arith::CmpIPredicate::ugt:
+                predicate = comb::ICmpPredicate::ugt;
+                opName += "_ugt";
+                break;
+            case arith::CmpIPredicate::sge:
+                predicate = comb::ICmpPredicate::sge;
+                opName += "_sge";
+                break;
+            case arith::CmpIPredicate::uge:
+                predicate = comb::ICmpPredicate::uge;
+                opName += "_uge";
+                break;
+            }
+        }
 
         // Check if the module is already created
         hw::HWModuleOp hwModule;
@@ -879,9 +927,15 @@ struct CreateAndInstanceArithOps : OpConversionPattern<OpFrom> {
             ports.push_back(hw::PortInfo{
                 {rewriter.getStringAttr("out_valid"), i1Ty, outDir}
             });
-            ports.push_back(hw::PortInfo{
-                {rewriter.getStringAttr("out"), dataParamTy, outDir}
-            });
+            if (isCompareOp) {
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr("out"), i1Ty, outDir}
+                });
+            } else {
+                ports.push_back(hw::PortInfo{
+                    {rewriter.getStringAttr("out"), dataParamTy, outDir}
+                });
+            }
             rewriter.setInsertionPoint(hwParentModule);
             hwModule = rewriter.create<hw::HWModuleOp>(
                 hwParentModule.getLoc(),
@@ -906,8 +960,21 @@ struct CreateAndInstanceArithOps : OpConversionPattern<OpFrom> {
                 rewriter.create<hw::ConstantOp>(hwModuleLoc, i1Ty, 1);
             auto validInput =
                 rewriter.create<comb::AndOp>(hwModuleLoc, i1Ty, newValids);
-            auto dataInput =
-                rewriter.create<OpTo>(hwModuleLoc, dataParamTy, newOperands);
+            Value dataInput;
+            if (isCompareOp) {
+                dataInput = rewriter
+                                .create<comb::ICmpOp>(
+                                    hwModuleLoc,
+                                    i1Ty,
+                                    predicate,
+                                    newOperands[0],
+                                    newOperands[1])
+                                .getResult();
+            } else {
+                dataInput =
+                    rewriter.create<OpTo>(hwModuleLoc, dataParamTy, newOperands)
+                        .getResult();
+            }
             auto regValid = rewriter.create<sv::RegOp>(
                 hwModuleLoc,
                 i1Ty,
@@ -915,10 +982,18 @@ struct CreateAndInstanceArithOps : OpConversionPattern<OpFrom> {
             auto regValidValue = rewriter.create<sv::ReadInOutOp>(
                 hwModuleLoc,
                 regValid.getResult());
-            auto regData = rewriter.create<sv::RegOp>(
-                hwModuleLoc,
-                dataParamTy,
-                rewriter.getStringAttr("data_reg"));
+            sv::RegOp regData;
+            if (isCompareOp) {
+                regData = rewriter.create<sv::RegOp>(
+                    hwModuleLoc,
+                    i1Ty,
+                    rewriter.getStringAttr("data_reg"));
+            } else {
+                regData = rewriter.create<sv::RegOp>(
+                    hwModuleLoc,
+                    dataParamTy,
+                    rewriter.getStringAttr("data_reg"));
+            }
             auto regDataValue = rewriter.create<sv::ReadInOutOp>(
                 hwModuleLoc,
                 regData.getResult());
@@ -952,7 +1027,7 @@ struct CreateAndInstanceArithOps : OpConversionPattern<OpFrom> {
                                 rewriter.create<sv::PAssignOp>(
                                     hwModuleLoc,
                                     regData.getResult(),
-                                    dataInput.getResult());
+                                    dataInput);
                             });
                     });
             });
@@ -984,7 +1059,7 @@ struct CreateAndInstanceArithOps : OpConversionPattern<OpFrom> {
         }
         // Create the instance to the hw.module
         rewriter.setInsertionPoint(op);
-        auto bitwidth = opResult.getType().getIntOrFloatBitWidth();
+        auto bitwidth = opOperandType.getIntOrFloatBitWidth();
         SmallVector<Attribute> instanceParams;
         instanceParams.push_back(hw::ParamDeclAttr::get(
             "bitwidth",
@@ -1645,6 +1720,9 @@ void mlir::populateDfgToHWConversionPatterns(
         typeConverter,
         patterns.getContext());
     patterns.add<CreateAndInstanceArithOps<arith::SelectOp, comb::MuxOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<CreateAndInstanceArithOps<arith::CmpIOp, comb::ICmpOp>>(
         typeConverter,
         patterns.getContext());
     patterns.add<CreateAndInstanceArithExtTrunc<arith::ExtUIOp, false, false>>(
