@@ -54,7 +54,9 @@ SmallVector<std::pair<Value, Value>> channelOutputToInstanceInput;
 SmallVector<std::pair<Value, Value>> regionOutputToInstanceOutput;
 SmallVector<Value> processIterArgs;
 DenseMap<Value, SmallVector<Value>> pullGroups;
+DenseMap<Value, SmallVector<Value>> pullFinish;
 DenseMap<Value, SmallVector<Value>> pushGroups;
+DenseMap<Value, SmallVector<Value>> pushFinish;
 DenseMap<Value, SmallVector<std::pair<Value, Value>>> newPushGroups;
 
 SmallVector<hw::PortInfo> getHWPorts(
@@ -377,6 +379,8 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
                     results.push_back(pulledResult);
                     pullGroups[pulledChannel] = results;
                 }
+                if (!pullFinish.count(pulledChannel))
+                    pullFinish[pulledChannel] = SmallVector<Value>{};
             }
             // Similar as code above for pulls, but push groups need two values
             // to store, aka valid and data
@@ -391,6 +395,8 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
                     results.push_back(pushedValue);
                     pushGroups[pushedChannel] = results;
                 }
+                if (!pushFinish.count(pushedChannel))
+                    pushFinish[pushedChannel] = SmallVector<Value>{};
                 if (!newPushGroups.count(pushedChannel))
                     newPushGroups[pushedChannel] =
                         SmallVector<std::pair<Value, Value>>{};
@@ -399,10 +405,14 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
         // By default, the last push to each channel should be waited to
         // generate the done signal for the kernel module
         SmallVector<PushOp> lastPushes;
+        SmallVector<Value> lastPushValues;
         for (auto it = kernelOps.rbegin(); it != kernelOps.rend(); ++it) {
             if (auto pushOp = dyn_cast<PushOp>(*it)) {
-                if (!isInSmallVector(pushOp, lastPushes))
+                auto pushedChan = cast<Value>(pushOp.getChan());
+                if (!isInSmallVector(pushedChan, lastPushValues)) {
                     lastPushes.push_back(pushOp);
+                    lastPushValues.push_back(pushedChan);
+                }
             }
         }
         SmallVector<Value> waitedValues;
@@ -1057,7 +1067,7 @@ struct CreateAndInstanceArithOps : OpConversionPattern<OpFrom> {
         for (auto user : opResult.getUsers())
             // If it's used in wait operation, replace it with the valid signal
             if (isa<HWWaitOp>(user))
-                user->replaceUsesOfWith(opResult, instance.getResult(0));
+                user->replaceUsesOfWith(opResult, instance.getResult(1));
         // Else such as used by push or any other arith ops, replace it with
         // the data
         opResult.replaceAllUsesWith(instance.getResult(1));
@@ -1268,7 +1278,7 @@ struct CreateAndInstanceArithExtTrunc : OpConversionPattern<OpT> {
         for (auto user : opResult.getUsers())
             // If it's used in wait operation, replace it with the valid signal
             if (isa<HWWaitOp>(user))
-                user->replaceUsesOfWith(opResult, instance.getResult(0));
+                user->replaceUsesOfWith(opResult, instance.getResult(1));
         // Else such as used by push or any other arith ops, replace it with
         // the data
         opResult.replaceAllUsesWith(instance.getResult(1));
@@ -1323,6 +1333,7 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
         // so, the valid signal should be a result of logical AND between the
         // input valid signal and the finish signal from that pull.
         auto &pulledResults = pullGroups[pulledChan];
+        auto &finish = pullFinish[pulledChan];
         auto idxPull = getVectorIdx(pulledResult, pulledResults).value();
         bool hasSameChannelPull = (pulledResults.size() > 1);
         bool hasPredecessor = (idxPull > 0);
@@ -1330,7 +1341,7 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
         auto castOp = pulledChan.getDefiningOp();
         if (hasSameChannelPull && hasPredecessor) {
             // Get the finish signal from the last pull from the same channel
-            auto previousPullFinish = pulledResults[idxPull - 1];
+            auto previousPullFinish = finish[idxPull - 1];
             auto newValid = rewriter.create<comb::AndOp>(
                 loc,
                 castOp->getOperand(0),
@@ -1357,7 +1368,8 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
         pulledResult.replaceAllUsesWith(pullInstance.getResult(2));
         // Update the result in pull group
         for (auto &v : pulledResults)
-            if (v == pulledResult) v = pullInstance.getResult(0);
+            if (v == pulledResult) v = pullInstance.getResult(1);
+        finish.push_back(pullInstance.getResult(0));
         // If the pull has predecessor, we need to take the logical OR result of
         // all the ready signals generated by the pulls and use it as output
         if (hasSameChannelPull) {
@@ -1423,39 +1435,42 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
         // input valid signal and the finish signal from that pull.
         auto &pushedResults = pushGroups[pushedChan];
         auto &newPushResults = newPushGroups[pushedChan];
+        auto &finish = pushFinish[pushedChan];
         int idxPush = 0;
-        size_t i;
-        for (i = 0; i < pushedResults.size(); i++) {
+        for (size_t i = 0; i < pushedResults.size(); i++) {
             if (pushedResults[i] == pushedValue) {
                 idxPush = (int)i;
                 break;
             }
         }
-        if (i == pushedResults.size())
-            return rewriter.notifyMatchFailure(
-                loc,
-                "Didn't find the pushed result.");
         bool hasSameChannelPush = (pushedResults.size() > 1);
         bool hasPredecessor = (idxPush > 0);
         // Get the input channel ready port
-        auto data = op.getInp();
-        auto castOp = op.getChan().getDefiningOp();
+        auto castOp = pushedChan.getDefiningOp();
         auto ready = castOp->getOperand(0);
-        auto valid = data.getDefiningOp()->getResult(0);
+        auto valid = pushedValue.getDefiningOp()->getResult(0);
         auto validInput = rewriter.create<comb::AndOp>(loc, valid, ready);
         if (hasSameChannelPush && hasPredecessor) {
             // Get the finish signal from the last pull from the same channel
-            auto previousPushFinish = newPushResults[idxPush - 1].first;
+            auto previousPushFinish = finish[idxPush - 1];
             auto newValid = rewriter.create<comb::AndOp>(
                 loc,
                 validInput.getResult(),
                 previousPushFinish);
             inputs.push_back(newValid.getResult());
+            // Update the wait operation with the input valid signal, if this
+            // push is one of the last pushes
+            if (idxPush == (int)(pushedResults.size() - 1))
+                for (auto user : pushedValue.getUsers())
+                    if (isa<HWWaitOp>(user))
+                        user->replaceUsesOfWith(
+                            pushedValue,
+                            newValid.getResult());
         } else {
             inputs.push_back(validInput.getResult());
         }
-        auto dataBitwidth = data.getType().getIntOrFloatBitWidth();
-        inputs.push_back(data);
+        auto dataBitwidth = pushedValue.getType().getIntOrFloatBitWidth();
+        inputs.push_back(pushedValue);
 
         // Create an instance to the push_channel module
         SmallVector<Attribute> params;
@@ -1477,8 +1492,9 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
         }
         // Insert current output pair into the group
         newPushResults.push_back(std::make_pair(
-            pushInstance.getResult(0),
+            pushInstance.getResult(1),
             pushInstance.getResult(2)));
+        finish.push_back(pushInstance.getResult(0));
         // If the push has predecessor, we need to take the logical OR result of
         // all the valid signals generated by the pushes and use it as output
         // valid, and add MUX to decide which value to be output to the data
