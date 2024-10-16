@@ -53,6 +53,9 @@ SmallVector<std::pair<Value, SmallVector<Value>>> channelInputToInstanceOutput;
 SmallVector<std::pair<Value, Value>> channelOutputToInstanceInput;
 SmallVector<std::pair<Value, Value>> regionOutputToInstanceOutput;
 SmallVector<Value> processIterArgs;
+DenseMap<Value, SmallVector<Value>> pullGroups;
+DenseMap<Value, SmallVector<Value>> pushGroups;
+DenseMap<Value, SmallVector<std::pair<Value, Value>>> newPushGroups;
 
 SmallVector<hw::PortInfo> getHWPorts(
     OpBuilder builder,
@@ -202,6 +205,7 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
         ProcessOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        auto loc = op.getLoc();
         auto ctx = rewriter.getContext();
         auto args = op.getBody().getArguments();
         auto funcTy = op.getFunctionType();
@@ -211,16 +215,18 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
         SmallVector<Type> inElemTy, outElemty;
         for (auto inTy : funcTy.getInputs()) {
             auto elemTy = dyn_cast<OutputType>(inTy).getElementType();
-            assert(
-                isa<IntegerType>(elemTy)
-                && "only integers are supported on hardware");
+            if (!isa<IntegerType>(elemTy))
+                return rewriter.notifyMatchFailure(
+                    loc,
+                    "only integers are supported on hardware");
             inElemTy.push_back(elemTy);
         }
         for (auto outTy : funcTy.getResults()) {
             auto elemTy = dyn_cast<InputType>(outTy).getElementType();
-            assert(
-                isa<IntegerType>(elemTy)
-                && "only integers are supported on hardware");
+            if (!isa<IntegerType>(elemTy))
+                return rewriter.notifyMatchFailure(
+                    loc,
+                    "only integers are supported on hardware");
             outElemty.push_back(elemTy);
         }
         auto intergerFuncTy = FunctionType::get(ctx, inElemTy, outElemty);
@@ -232,7 +238,7 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
             /*hasClose*/ true,
             /*hasDone*/ true);
         auto hwModule = rewriter.create<hw::HWModuleOp>(
-            op.getLoc(),
+            loc,
             op.getSymNameAttr(),
             hw::ModulePortInfo(ports),
             ArrayAttr{},
@@ -300,7 +306,7 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
             /*hasClose*/ false,
             /*hasDone*/ true);
         auto hwKernelModule = rewriter.create<hw::HWModuleOp>(
-            op.getLoc(),
+            loc,
             StringAttr::get(ctx, op.getSymNameAttr().str() + "_kernel"),
             hw::ModulePortInfo(kernelPorts),
             ArrayAttr{},
@@ -332,6 +338,7 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
         for (size_t i = 0; i < args.size(); i++)
             kernelArgumentMap[args[i]] = kernelReplacePorts[i];
         for (auto &opi : kernelOps) {
+            // Copying the ops into new block and update the values
             Operation* newOp = rewriter.clone(*opi);
             for (size_t i = 0; i < newOp->getResults().size(); i++)
                 kernelResultMap[opi->getResult(i)] = newOp->getResult(i);
@@ -356,6 +363,37 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
                     ValueRange{cstTrue, constant});
                 // Update the result mapping as well
                 kernelResultMap[opi->getResult(0)] = castOp.getResult(0);
+            }
+            // If the op is a pull op, store it in the corresponding group
+            if (auto pullOp = dyn_cast<PullOp>(newOp)) {
+                auto pulledChannel = pullOp.getChan();
+                auto pulledResult = pullOp.getResult();
+                if (pullGroups.count(pulledChannel)) {
+                    auto &result = pullGroups[pulledChannel];
+                    result.push_back(pulledResult);
+                } else {
+                    // If there is no entry in the pull groups, create one
+                    SmallVector<Value> results;
+                    results.push_back(pulledResult);
+                    pullGroups[pulledChannel] = results;
+                }
+            }
+            // Similar as code above for pulls, but push groups need two values
+            // to store, aka valid and data
+            if (auto pushOp = dyn_cast<PushOp>(newOp)) {
+                auto pushedChannel = pushOp.getChan();
+                auto pushedValue = pushOp.getInp();
+                if (pushGroups.count(pushedChannel)) {
+                    auto &result = pushGroups[pushedChannel];
+                    result.push_back(pushedValue);
+                } else {
+                    SmallVector<Value> results;
+                    results.push_back(pushedValue);
+                    pushGroups[pushedChannel] = results;
+                }
+                if (!newPushGroups.count(pushedChannel))
+                    newPushGroups[pushedChannel] =
+                        SmallVector<std::pair<Value, Value>>{};
             }
         }
         // By default, the last push to each channel should be waited to
@@ -450,6 +488,7 @@ struct LowerRegionToHWModule : OpConversionPattern<RegionOp> {
         RegionOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        auto loc = op.getLoc();
         auto ctx = rewriter.getContext();
         auto args = op.getBody().getArguments();
         auto funcTy = op.getFunctionType();
@@ -457,16 +496,18 @@ struct LowerRegionToHWModule : OpConversionPattern<RegionOp> {
         SmallVector<Type> inElemTy, outElemty;
         for (auto inTy : funcTy.getInputs()) {
             auto elemTy = dyn_cast<OutputType>(inTy).getElementType();
-            assert(
-                isa<IntegerType>(elemTy)
-                && "only integers are supported on hardware");
+            if (!isa<IntegerType>(elemTy))
+                return rewriter.notifyMatchFailure(
+                    loc,
+                    "only integers are supported on hardware");
             inElemTy.push_back(elemTy);
         }
         for (auto outTy : funcTy.getResults()) {
             auto elemTy = dyn_cast<InputType>(outTy).getElementType();
-            assert(
-                isa<IntegerType>(elemTy)
-                && "only integers are supported on hardware");
+            if (!isa<IntegerType>(elemTy))
+                return rewriter.notifyMatchFailure(
+                    loc,
+                    "only integers are supported on hardware");
             outElemty.push_back(elemTy);
         }
         auto intergerFuncTy = FunctionType::get(ctx, inElemTy, outElemty);
@@ -478,7 +519,7 @@ struct LowerRegionToHWModule : OpConversionPattern<RegionOp> {
             /*hasClose*/ true,
             /*hasDone*/ true);
         auto hwModule = rewriter.create<hw::HWModuleOp>(
-            op.getLoc(),
+            loc,
             op.getSymNameAttr(),
             hw::ModulePortInfo(ports),
             ArrayAttr{},
@@ -655,66 +696,6 @@ struct LowerLoopToLogic : OpConversionPattern<HWLoopOp> {
                             });
                     });
             });
-
-        rewriter.eraseOp(op);
-        return success();
-    }
-};
-
-struct LowerPullToInstance : OpConversionPattern<PullOp> {
-    using OpConversionPattern<PullOp>::OpConversionPattern;
-
-    LowerPullToInstance(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<PullOp>(typeConverter, context) {};
-
-    LogicalResult matchAndRewrite(
-        PullOp op,
-        PullOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        auto operation = op.getOperation();
-        auto loc = op.getLoc();
-        auto ctx = rewriter.getContext();
-
-        // Get the pull_channel module
-        auto module = operation->getParentOfType<ModuleOp>();
-        std::optional<hw::HWModuleOp> pullModule = std::nullopt;
-        module.walk([&](hw::HWModuleOp hwModuleOp) {
-            if (hwModuleOp.getSymNameAttr().str() == "pull_channel")
-                pullModule = hwModuleOp;
-        });
-        if (!pullModule.has_value())
-            return rewriter.notifyMatchFailure(
-                loc,
-                "Cannot find pull channel module.");
-
-        // Inputs of the instance
-        SmallVector<Value> inputs;
-        // Get the clock and reset signal from parent module
-        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
-        inputs.push_back(hwModule.getBody().getArgument(0));
-        inputs.push_back(hwModule.getBody().getArgument(1));
-
-        // Get the input channel valid and data port
-        auto castOp = op.getChan().getDefiningOp();
-        inputs.push_back(castOp->getOperand(0));
-        auto inData = castOp->getOperand(1);
-        inputs.push_back(inData);
-        auto dataBitwidth = inData.getType().getIntOrFloatBitWidth();
-
-        // Create an instance to the pull_channel module
-        SmallVector<Attribute> params;
-        params.push_back(hw::ParamDeclAttr::get(
-            "bitwidth",
-            rewriter.getI32IntegerAttr(dataBitwidth)));
-        auto pullInstance = rewriter.create<hw::InstanceOp>(
-            loc,
-            pullModule.value().getOperation(),
-            StringAttr::get(ctx, "pull_channel"),
-            inputs,
-            ArrayAttr::get(ctx, params));
-        op.getResult().replaceAllUsesWith(pullInstance.getResult(2));
-        castOp->getResult(0).replaceAllUsesWith(pullInstance.getResult(1));
 
         rewriter.eraseOp(op);
         return success();
@@ -1080,6 +1061,11 @@ struct CreateAndInstanceArithOps : OpConversionPattern<OpFrom> {
         // Else such as used by push or any other arith ops, replace it with
         // the data
         opResult.replaceAllUsesWith(instance.getResult(1));
+        // Update the push group
+        for (auto &map : pushGroups) {
+            for (auto &v : map.second)
+                if (v == opResult) v = instance.getResult(1);
+        }
 
         rewriter.eraseOp(op);
         return success();
@@ -1286,6 +1272,110 @@ struct CreateAndInstanceArithExtTrunc : OpConversionPattern<OpT> {
         // Else such as used by push or any other arith ops, replace it with
         // the data
         opResult.replaceAllUsesWith(instance.getResult(1));
+        // Update the push group
+        for (auto &map : pushGroups) {
+            for (auto &v : map.second)
+                if (v == opResult) v = instance.getResult(1);
+        }
+
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
+struct LowerPullToInstance : OpConversionPattern<PullOp> {
+    using OpConversionPattern<PullOp>::OpConversionPattern;
+
+    LowerPullToInstance(TypeConverter &typeConverter, MLIRContext* context)
+            : OpConversionPattern<PullOp>(typeConverter, context) {};
+
+    LogicalResult matchAndRewrite(
+        PullOp op,
+        PullOpAdaptor adaptor,
+        ConversionPatternRewriter &rewriter) const override
+    {
+        auto operation = op.getOperation();
+        auto loc = op.getLoc();
+        auto ctx = rewriter.getContext();
+        auto pulledChan = op.getChan();
+        auto pulledResult = op.getResult();
+
+        // Get the pull_channel module
+        auto module = operation->getParentOfType<ModuleOp>();
+        std::optional<hw::HWModuleOp> pullModule = std::nullopt;
+        module.walk([&](hw::HWModuleOp hwModuleOp) {
+            if (hwModuleOp.getSymNameAttr().str() == "pull_channel")
+                pullModule = hwModuleOp;
+        });
+        if (!pullModule.has_value())
+            return rewriter.notifyMatchFailure(
+                loc,
+                "Cannot find pull channel module.");
+
+        // Inputs of the instance
+        SmallVector<Value> inputs;
+        // Get the clock and reset signal from parent module
+        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
+        inputs.push_back(hwModule.getBody().getArgument(0));
+        inputs.push_back(hwModule.getBody().getArgument(1));
+
+        // Check if before this pull, there is a pull from the same channel. If
+        // so, the valid signal should be a result of logical AND between the
+        // input valid signal and the finish signal from that pull.
+        auto &pulledResults = pullGroups[pulledChan];
+        auto idxPull = getVectorIdx(pulledResult, pulledResults).value();
+        bool hasSameChannelPull = (pulledResults.size() > 1);
+        bool hasPredecessor = (idxPull > 0);
+        // Get the input channel valid and data port
+        auto castOp = pulledChan.getDefiningOp();
+        if (hasSameChannelPull && hasPredecessor) {
+            // Get the finish signal from the last pull from the same channel
+            auto previousPullFinish = pulledResults[idxPull - 1];
+            auto newValid = rewriter.create<comb::AndOp>(
+                loc,
+                castOp->getOperand(0),
+                previousPullFinish);
+            inputs.push_back(newValid.getResult());
+        } else {
+            inputs.push_back(castOp->getOperand(0));
+        }
+        auto inData = castOp->getOperand(1);
+        inputs.push_back(inData);
+        auto dataBitwidth = inData.getType().getIntOrFloatBitWidth();
+
+        // Create an instance to the pull_channel module
+        SmallVector<Attribute> params;
+        params.push_back(hw::ParamDeclAttr::get(
+            "bitwidth",
+            rewriter.getI32IntegerAttr(dataBitwidth)));
+        auto pullInstance = rewriter.create<hw::InstanceOp>(
+            loc,
+            pullModule.value().getOperation(),
+            StringAttr::get(ctx, "pull_channel"),
+            inputs,
+            ArrayAttr::get(ctx, params));
+        pulledResult.replaceAllUsesWith(pullInstance.getResult(2));
+        // Update the result in pull group
+        for (auto &v : pulledResults)
+            if (v == pulledResult) v = pullInstance.getResult(0);
+        // If the pull has predecessor, we need to take the logical OR result of
+        // all the ready signals generated by the pulls and use it as output
+        if (hasSameChannelPull) {
+            if (idxPull == (int)(pulledResults.size() - 1)) {
+                auto newReady = rewriter.create<comb::OrOp>(
+                    loc,
+                    rewriter.getI1Type(),
+                    pulledResults);
+                castOp->getResult(0).replaceAllUsesWith(newReady.getResult());
+            }
+        } else {
+            castOp->getResult(0).replaceAllUsesWith(pullInstance.getResult(1));
+        }
+        // Update the push group
+        for (auto &map : pushGroups) {
+            for (auto &v : map.second)
+                if (v == pulledResult) v = pullInstance.getResult(2);
+        }
 
         rewriter.eraseOp(op);
         return success();
@@ -1306,6 +1396,8 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
         auto operation = op.getOperation();
         auto loc = op.getLoc();
         auto ctx = rewriter.getContext();
+        auto pushedChan = op.getChan();
+        auto pushedValue = op.getInp();
 
         // Get the pull_channel module
         auto module = operation->getParentOfType<ModuleOp>();
@@ -1326,13 +1418,42 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
         inputs.push_back(hwModule.getBody().getArgument(0));
         inputs.push_back(hwModule.getBody().getArgument(1));
 
+        // Check if before this push, there is a push to the same channel. If
+        // so, the valid signal should be a result of logical AND between the
+        // input valid signal and the finish signal from that pull.
+        auto &pushedResults = pushGroups[pushedChan];
+        auto &newPushResults = newPushGroups[pushedChan];
+        int idxPush = 0;
+        size_t i;
+        for (i = 0; i < pushedResults.size(); i++) {
+            if (pushedResults[i] == pushedValue) {
+                idxPush = (int)i;
+                break;
+            }
+        }
+        if (i == pushedResults.size())
+            return rewriter.notifyMatchFailure(
+                loc,
+                "Didn't find the pushed result.");
+        bool hasSameChannelPush = (pushedResults.size() > 1);
+        bool hasPredecessor = (idxPush > 0);
         // Get the input channel ready port
         auto data = op.getInp();
         auto castOp = op.getChan().getDefiningOp();
         auto ready = castOp->getOperand(0);
         auto valid = data.getDefiningOp()->getResult(0);
         auto validInput = rewriter.create<comb::AndOp>(loc, valid, ready);
-        inputs.push_back(validInput.getResult());
+        if (hasSameChannelPush && hasPredecessor) {
+            // Get the finish signal from the last pull from the same channel
+            auto previousPushFinish = newPushResults[idxPush - 1].first;
+            auto newValid = rewriter.create<comb::AndOp>(
+                loc,
+                validInput.getResult(),
+                previousPushFinish);
+            inputs.push_back(newValid.getResult());
+        } else {
+            inputs.push_back(validInput.getResult());
+        }
         auto dataBitwidth = data.getType().getIntOrFloatBitWidth();
         inputs.push_back(data);
 
@@ -1341,14 +1462,56 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
         params.push_back(hw::ParamDeclAttr::get(
             "bitwidth",
             rewriter.getI32IntegerAttr(dataBitwidth)));
-        auto pullInstance = rewriter.create<hw::InstanceOp>(
+        auto pushInstance = rewriter.create<hw::InstanceOp>(
             loc,
             pushModule.value().getOperation(),
             StringAttr::get(ctx, "push_channel"),
             inputs,
             ArrayAttr::get(ctx, params));
-        castOp->getResult(0).replaceAllUsesWith(pullInstance.getResult(1));
-        castOp->getResult(1).replaceAllUsesWith(pullInstance.getResult(2));
+        // Update the result in push group
+        for (auto &v : pushedResults) {
+            if (v == pushedValue) {
+                v = pushInstance.getResult(2);
+                break;
+            }
+        }
+        // Insert current output pair into the group
+        newPushResults.push_back(std::make_pair(
+            pushInstance.getResult(0),
+            pushInstance.getResult(2)));
+        // If the push has predecessor, we need to take the logical OR result of
+        // all the valid signals generated by the pushes and use it as output
+        // valid, and add MUX to decide which value to be output to the data
+        // port
+        if (hasSameChannelPush) {
+            if (idxPush == (int)(pushedResults.size() - 1)) {
+                auto cstZero = rewriter.create<hw::ConstantOp>(
+                    loc,
+                    pushInstance.getResult(2).getType(),
+                    0);
+                SmallVector<Value> newValids;
+                for (auto v : newPushResults) newValids.push_back(v.first);
+                auto newValid = rewriter.create<comb::OrOp>(
+                    loc,
+                    rewriter.getI1Type(),
+                    newValids);
+                castOp->getResult(0).replaceAllUsesWith(newValid.getResult());
+                // Create the MuxOps
+                Value lastMux = cstZero.getResult();
+                for (auto v : newPushResults) {
+                    auto muxOp = rewriter.create<comb::MuxOp>(
+                        loc,
+                        v.first,
+                        v.second,
+                        lastMux);
+                    lastMux = muxOp.getResult();
+                }
+                castOp->getResult(1).replaceAllUsesWith(lastMux);
+            }
+        } else {
+            castOp->getResult(0).replaceAllUsesWith(pushInstance.getResult(1));
+            castOp->getResult(1).replaceAllUsesWith(pushInstance.getResult(2));
+        }
 
         rewriter.eraseOp(op);
         return success();
