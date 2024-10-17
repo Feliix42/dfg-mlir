@@ -54,9 +54,13 @@ SmallVector<std::pair<Value, Value>> channelOutputToInstanceInput;
 SmallVector<std::pair<Value, Value>> regionOutputToInstanceOutput;
 SmallVector<Value> processIterArgs;
 DenseMap<Value, SmallVector<Value>> pullGroups;
-DenseMap<Value, SmallVector<Value>> pullFinish;
+SmallVector<Operation*> orderedPulls;
+SmallVector<Value> orderedPullFinish;
+DenseMap<Value, SmallVector<Value>> unorderedPullFinish;
 DenseMap<Value, SmallVector<Value>> pushGroups;
-DenseMap<Value, SmallVector<Value>> pushFinish;
+SmallVector<Operation*> orderedPushes;
+SmallVector<Value> orderedPushFinish;
+DenseMap<Value, SmallVector<Value>> unorderedPushFinish;
 DenseMap<Value, SmallVector<std::pair<Value, Value>>> newPushGroups;
 
 SmallVector<hw::PortInfo> getHWPorts(
@@ -266,6 +270,15 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
             argumentMap[args[i]] = replacePorts[i];
         Value loopOpResult;
         processIterArgs.clear();
+        pullGroups.clear();
+        orderedPulls.clear();
+        orderedPullFinish.clear();
+        unorderedPullFinish.clear();
+        pushGroups.clear();
+        orderedPushes.clear();
+        orderedPushFinish.clear();
+        unorderedPushFinish.clear();
+        newPushGroups.clear();
         for (auto &opi : op.getBody().getOps()) {
             if (auto loopOp = dyn_cast<LoopOp>(opi)) {
                 SmallVector<Value> loopedPorts;
@@ -367,6 +380,21 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
                 kernelResultMap[opi->getResult(0)] = castOp.getResult(0);
             }
             // If the op is a pull op, store it in the corresponding group
+            if (auto pullOp = dyn_cast<UnorderedPullOp>(newOp)) {
+                auto pulledChannel = pullOp.getChan();
+                auto pulledResult = pullOp.getResult();
+                if (pullGroups.count(pulledChannel)) {
+                    auto &result = pullGroups[pulledChannel];
+                    result.push_back(pulledResult);
+                } else {
+                    // If there is no entry in the pull groups, create one
+                    SmallVector<Value> results;
+                    results.push_back(pulledResult);
+                    pullGroups[pulledChannel] = results;
+                }
+                if (!unorderedPullFinish.count(pulledChannel))
+                    unorderedPullFinish[pulledChannel] = SmallVector<Value>{};
+            }
             if (auto pullOp = dyn_cast<PullOp>(newOp)) {
                 auto pulledChannel = pullOp.getChan();
                 auto pulledResult = pullOp.getResult();
@@ -379,11 +407,28 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
                     results.push_back(pulledResult);
                     pullGroups[pulledChannel] = results;
                 }
-                if (!pullFinish.count(pulledChannel))
-                    pullFinish[pulledChannel] = SmallVector<Value>{};
+                orderedPulls.push_back(newOp);
+                orderedPullFinish = SmallVector<Value>{};
             }
             // Similar as code above for pulls, but push groups need two values
             // to store, aka valid and data
+            if (auto pushOp = dyn_cast<UnorderedPushOp>(newOp)) {
+                auto pushedChannel = pushOp.getChan();
+                auto pushedValue = pushOp.getInp();
+                if (pushGroups.count(pushedChannel)) {
+                    auto &result = pushGroups[pushedChannel];
+                    result.push_back(pushedValue);
+                } else {
+                    SmallVector<Value> results;
+                    results.push_back(pushedValue);
+                    pushGroups[pushedChannel] = results;
+                }
+                if (!unorderedPushFinish.count(pushedChannel))
+                    unorderedPushFinish[pushedChannel] = SmallVector<Value>{};
+                if (!newPushGroups.count(pushedChannel))
+                    newPushGroups[pushedChannel] =
+                        SmallVector<std::pair<Value, Value>>{};
+            }
             if (auto pushOp = dyn_cast<PushOp>(newOp)) {
                 auto pushedChannel = pushOp.getChan();
                 auto pushedValue = pushOp.getInp();
@@ -395,19 +440,19 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
                     results.push_back(pushedValue);
                     pushGroups[pushedChannel] = results;
                 }
-                if (!pushFinish.count(pushedChannel))
-                    pushFinish[pushedChannel] = SmallVector<Value>{};
+                orderedPushes.push_back(newOp);
+                orderedPushFinish = SmallVector<Value>{};
                 if (!newPushGroups.count(pushedChannel))
                     newPushGroups[pushedChannel] =
                         SmallVector<std::pair<Value, Value>>{};
             }
         }
-        // By default, the last push to each channel should be waited to
+        // For ordered pushes, the last push to each channel should be waited to
         // generate the done signal for the kernel module
-        SmallVector<PushOp> lastPushes;
+        SmallVector<UnorderedPushOp> lastPushes;
         SmallVector<Value> lastPushValues;
         for (auto it = kernelOps.rbegin(); it != kernelOps.rend(); ++it) {
-            if (auto pushOp = dyn_cast<PushOp>(*it)) {
+            if (auto pushOp = dyn_cast<UnorderedPushOp>(*it)) {
                 auto pushedChan = cast<Value>(pushOp.getChan());
                 if (!isInSmallVector(pushedChan, lastPushValues)) {
                     lastPushes.push_back(pushOp);
@@ -415,26 +460,24 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
                 }
             }
         }
+        // For ordered pushes, only the last push will be waited
+        PushOp lastOrderedPush;
+        for (auto it = kernelOps.rbegin(); it != kernelOps.rend(); ++it)
+            if (auto pushOp = dyn_cast<PushOp>(*it)) {
+                lastOrderedPush = pushOp;
+                break;
+            }
+        // Create the wait operation
         SmallVector<Value> waitedValues;
         for (auto pushOp : lastPushes) {
             auto waitedValue = kernelResultMap[pushOp.getInp()];
             if (!isInSmallVector(waitedValue, waitedValues))
                 waitedValues.push_back(waitedValue);
         }
+        if (lastOrderedPush)
+            waitedValues.push_back(kernelResultMap[lastOrderedPush.getInp()]);
         auto waitOp =
             rewriter.create<HWWaitOp>(hwKernelModuleLoc, i1Ty, waitedValues);
-        SmallVector<Value> kernelOutReadys;
-        kernelOutReadys.push_back(waitOp.getResult());
-        for (auto pushOp : lastPushes) {
-            auto pushChan = kernelArgumentMap[pushOp.getChan()];
-            kernelOutReadys.push_back(
-                pushChan.getDefiningOp<UnrealizedConversionCastOp>().getOperand(
-                    0));
-        }
-        auto kernelDoneOutput = rewriter.create<comb::AndOp>(
-            hwKernelModuleLoc,
-            i1Ty,
-            kernelOutReadys);
         SmallVector<Value> kernelOutputs;
         kernelOutputs.append(
             kernelInReadySignals.begin(),
@@ -442,7 +485,7 @@ struct LowerProcessToHWModule : OpConversionPattern<ProcessOp> {
         kernelOutputs.append(
             kernelOutValidDataSignals.begin(),
             kernelOutValidDataSignals.end());
-        kernelOutputs.push_back(kernelDoneOutput.getResult());
+        kernelOutputs.push_back(waitOp.getResult());
         rewriter.create<hw::OutputOp>(hwKernelModuleLoc, kernelOutputs);
 
         // Insert an instance to the kernel module
@@ -521,6 +564,9 @@ struct LowerRegionToHWModule : OpConversionPattern<RegionOp> {
             outElemty.push_back(elemTy);
         }
         auto intergerFuncTy = FunctionType::get(ctx, inElemTy, outElemty);
+        channelInputToInstanceOutput.clear();
+        channelOutputToInstanceInput.clear();
+        regionOutputToInstanceOutput.clear();
 
         // Create new HWModule
         auto ports = getHWPorts(
@@ -1293,15 +1339,16 @@ struct CreateAndInstanceArithExtTrunc : OpConversionPattern<OpT> {
     }
 };
 
-struct LowerPullToInstance : OpConversionPattern<PullOp> {
-    using OpConversionPattern<PullOp>::OpConversionPattern;
+template<typename OpT>
+struct LowerPullToInstance : OpConversionPattern<OpT> {
+    using OpConversionPattern<OpT>::OpConversionPattern;
 
     LowerPullToInstance(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<PullOp>(typeConverter, context) {};
+            : OpConversionPattern<OpT>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
-        PullOp op,
-        PullOpAdaptor adaptor,
+        OpT op,
+        OpT::Adaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto operation = op.getOperation();
@@ -1309,9 +1356,10 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
         auto ctx = rewriter.getContext();
         auto pulledChan = op.getChan();
         auto pulledResult = op.getResult();
+        auto isOrdered = isa<PullOp>(op);
 
         // Get the pull_channel module
-        auto module = operation->getParentOfType<ModuleOp>();
+        auto module = operation->template getParentOfType<ModuleOp>();
         std::optional<hw::HWModuleOp> pullModule = std::nullopt;
         module.walk([&](hw::HWModuleOp hwModuleOp) {
             if (hwModuleOp.getSymNameAttr().str() == "pull_channel")
@@ -1325,7 +1373,7 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
         // Inputs of the instance
         SmallVector<Value> inputs;
         // Get the clock and reset signal from parent module
-        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
+        auto hwModule = operation->template getParentOfType<hw::HWModuleOp>();
         inputs.push_back(hwModule.getBody().getArgument(0));
         inputs.push_back(hwModule.getBody().getArgument(1));
 
@@ -1333,13 +1381,20 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
         // so, the valid signal should be a result of logical AND between the
         // input valid signal and the finish signal from that pull.
         auto &pulledResults = pullGroups[pulledChan];
-        auto &finish = pullFinish[pulledChan];
-        auto idxPull = getVectorIdx(pulledResult, pulledResults).value();
+        auto &finish =
+            isOrdered ? orderedPullFinish : unorderedPullFinish[pulledChan];
+        auto idxPullSameChannel =
+            getVectorIdx(pulledResult, pulledResults).value();
+        auto idxPull =
+            isOrdered ? getVectorIdx(op.getOperation(), orderedPulls).value()
+                      : idxPullSameChannel;
         bool hasSameChannelPull = (pulledResults.size() > 1);
         bool hasPredecessor = (idxPull > 0);
+        bool watchPrevious =
+            isOrdered ? hasPredecessor : (hasSameChannelPull && hasPredecessor);
         // Get the input channel valid and data port
         auto castOp = pulledChan.getDefiningOp();
-        if (hasSameChannelPull && hasPredecessor) {
+        if (watchPrevious) {
             // Get the finish signal from the last pull from the same channel
             auto previousPullFinish = finish[idxPull - 1];
             auto newValid = rewriter.create<comb::AndOp>(
@@ -1373,7 +1428,7 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
         // If the pull has predecessor, we need to take the logical OR result of
         // all the ready signals generated by the pulls and use it as output
         if (hasSameChannelPull) {
-            if (idxPull == (int)(pulledResults.size() - 1)) {
+            if (idxPullSameChannel == (int)(pulledResults.size() - 1)) {
                 auto newReady = rewriter.create<comb::OrOp>(
                     loc,
                     rewriter.getI1Type(),
@@ -1394,15 +1449,16 @@ struct LowerPullToInstance : OpConversionPattern<PullOp> {
     }
 };
 
-struct LowerPushToInstance : OpConversionPattern<PushOp> {
-    using OpConversionPattern<PushOp>::OpConversionPattern;
+template<typename OpT>
+struct LowerPushToInstance : OpConversionPattern<OpT> {
+    using OpConversionPattern<OpT>::OpConversionPattern;
 
     LowerPushToInstance(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<PushOp>(typeConverter, context) {};
+            : OpConversionPattern<OpT>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
-        PushOp op,
-        PushOpAdaptor adaptor,
+        OpT op,
+        OpT::Adaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto operation = op.getOperation();
@@ -1410,9 +1466,10 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
         auto ctx = rewriter.getContext();
         auto pushedChan = op.getChan();
         auto pushedValue = op.getInp();
+        auto isOrdered = isa<PushOp>(op);
 
         // Get the pull_channel module
-        auto module = operation->getParentOfType<ModuleOp>();
+        auto module = operation->template getParentOfType<ModuleOp>();
         std::optional<hw::HWModuleOp> pushModule = std::nullopt;
         module.walk([&](hw::HWModuleOp hwModuleOp) {
             if (hwModuleOp.getSymNameAttr().str() == "push_channel")
@@ -1426,7 +1483,7 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
         // Inputs of the instance
         SmallVector<Value> inputs;
         // Get the clock and reset signal from parent module
-        auto hwModule = operation->getParentOfType<hw::HWModuleOp>();
+        auto hwModule = operation->template getParentOfType<hw::HWModuleOp>();
         inputs.push_back(hwModule.getBody().getArgument(0));
         inputs.push_back(hwModule.getBody().getArgument(1));
 
@@ -1435,22 +1492,28 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
         // input valid signal and the finish signal from that pull.
         auto &pushedResults = pushGroups[pushedChan];
         auto &newPushResults = newPushGroups[pushedChan];
-        auto &finish = pushFinish[pushedChan];
-        int idxPush = 0;
+        auto &finish =
+            isOrdered ? orderedPushFinish : unorderedPushFinish[pushedChan];
+        int idxPushSameChannel = 0;
         for (size_t i = 0; i < pushedResults.size(); i++) {
             if (pushedResults[i] == pushedValue) {
-                idxPush = (int)i;
+                idxPushSameChannel = (int)i;
                 break;
             }
         }
+        int idxPush =
+            isOrdered ? getVectorIdx(op.getOperation(), orderedPushes).value()
+                      : idxPushSameChannel;
         bool hasSameChannelPush = (pushedResults.size() > 1);
         bool hasPredecessor = (idxPush > 0);
+        bool watchPredecessor =
+            isOrdered ? hasPredecessor : hasSameChannelPush && hasPredecessor;
         // Get the input channel ready port
         auto castOp = pushedChan.getDefiningOp();
         auto ready = castOp->getOperand(0);
         auto valid = pushedValue.getDefiningOp()->getResult(0);
         auto validInput = rewriter.create<comb::AndOp>(loc, valid, ready);
-        if (hasSameChannelPush && hasPredecessor) {
+        if (watchPredecessor) {
             // Get the finish signal from the last pull from the same channel
             auto previousPushFinish = finish[idxPush - 1];
             auto newValid = rewriter.create<comb::AndOp>(
@@ -1460,12 +1523,21 @@ struct LowerPushToInstance : OpConversionPattern<PushOp> {
             inputs.push_back(newValid.getResult());
             // Update the wait operation with the input valid signal, if this
             // push is one of the last pushes
-            if (idxPush == (int)(pushedResults.size() - 1))
-                for (auto user : pushedValue.getUsers())
-                    if (isa<HWWaitOp>(user))
-                        user->replaceUsesOfWith(
-                            pushedValue,
-                            newValid.getResult());
+            if (isOrdered) {
+                if (idxPush == (int)(orderedPushes.size() - 1))
+                    for (auto user : pushedValue.getUsers())
+                        if (isa<HWWaitOp>(user))
+                            user->replaceUsesOfWith(
+                                pushedValue,
+                                newValid.getResult());
+            } else {
+                if (idxPush == (int)(pushedResults.size() - 1))
+                    for (auto user : pushedValue.getUsers())
+                        if (isa<HWWaitOp>(user))
+                            user->replaceUsesOfWith(
+                                pushedValue,
+                                newValid.getResult());
+            }
         } else {
             inputs.push_back(validInput.getResult());
         }
@@ -1790,7 +1862,9 @@ struct LowerInstantiateOrEmbed : OpConversionPattern<OpT> {
         for (auto [placeholder, instanceOutput] :
              llvm::zip(replaceValue, instanceOutputs)) {
             placeholder.replaceAllUsesWith(instanceOutput);
-            rewriter.eraseOp(placeholder.getDefiningOp());
+            auto defineOp = placeholder.getDefiningOp();
+            if (!isa<UnrealizedConversionCastOp>(defineOp))
+                rewriter.eraseOp(defineOp);
         }
         for (auto placeholder : replaceWait) {
             placeholder.replaceAllUsesWith(instance.getResults().back());
@@ -1848,8 +1922,18 @@ void mlir::populateDfgToHWConversionPatterns(
     patterns.add<LowerProcessToHWModule>(typeConverter, patterns.getContext());
     patterns.add<LowerRegionToHWModule>(typeConverter, patterns.getContext());
     patterns.add<LowerLoopToLogic>(typeConverter, patterns.getContext());
-    patterns.add<LowerPullToInstance>(typeConverter, patterns.getContext());
-    patterns.add<LowerPushToInstance>(typeConverter, patterns.getContext());
+    patterns.add<LowerPullToInstance<PullOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<LowerPullToInstance<UnorderedPullOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<LowerPushToInstance<PushOp>>(
+        typeConverter,
+        patterns.getContext());
+    patterns.add<LowerPushToInstance<UnorderedPushOp>>(
+        typeConverter,
+        patterns.getContext());
     patterns.add<LowerChannelToInstance>(typeConverter, patterns.getContext());
     patterns.add<LowerIterArgsConstants>(typeConverter, patterns.getContext());
     patterns.add<LowerIterArgsYield>(typeConverter, patterns.getContext());

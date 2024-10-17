@@ -1388,62 +1388,57 @@ void InstantiateOp::print(OpAsmPrinter &p)
 
 LogicalResult InstantiateOp::verify()
 {
-    // For debug use, remember to uncomment
-    // auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
-    // auto calleeName = getCallee().getRootReference().str();
-    // auto hasCalledProcessOrOperator = false;
-    // auto callingRegion = false;
-    // ProcessOp calledProcessOp;
-    // OperatorOp calledOperatorOp;
+    auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
+    auto calleeName = getCallee().getRootReference().str();
+    auto hasCalledProcessOrOperator = false;
+    auto callingRegion = false;
+    ProcessOp calledProcessOp;
+    OperatorOp calledOperatorOp;
 
-    // // Check if there is a process or an operator which has the name of the
-    // one
-    // // to be instantiated
-    // moduleOp->walk([&](Operation* op) {
-    //     if (auto processOp = dyn_cast<ProcessOp>(op)) {
-    //         if (processOp.getSymName().str() == calleeName) {
-    //             hasCalledProcessOrOperator = true;
-    //             calledProcessOp = processOp;
-    //         }
-    //     } else if (auto operatorOp = dyn_cast<OperatorOp>(op)) {
-    //         if (operatorOp.getSymName().str() == calleeName) {
-    //             hasCalledProcessOrOperator = true;
-    //             calledOperatorOp = operatorOp;
-    //         }
-    //     } else if (auto regionOp = dyn_cast<RegionOp>(op)) {
-    //         if (regionOp.getSymName().str() == calleeName) callingRegion =
-    //         true;
-    //     } else
-    //         WalkResult::advance();
-    // });
+    // Check if there is a process or an operator which has the name of the one
+    // to be instantiated
+    moduleOp->walk([&](Operation* op) {
+        if (auto processOp = dyn_cast<ProcessOp>(op)) {
+            if (processOp.getSymName().str() == calleeName) {
+                hasCalledProcessOrOperator = true;
+                calledProcessOp = processOp;
+            }
+        } else if (auto operatorOp = dyn_cast<OperatorOp>(op)) {
+            if (operatorOp.getSymName().str() == calleeName) {
+                hasCalledProcessOrOperator = true;
+                calledOperatorOp = operatorOp;
+            }
+        } else if (auto regionOp = dyn_cast<RegionOp>(op)) {
+            if (regionOp.getSymName().str() == calleeName) callingRegion = true;
+        } else
+            WalkResult::advance();
+    });
 
-    // if (callingRegion || !hasCalledProcessOrOperator)
-    //     return ::emitError(
-    //         getLoc(),
-    //         "Cannot find the called process or operator op.");
+    if (callingRegion || !hasCalledProcessOrOperator)
+        return ::emitError(
+            getLoc(),
+            "Cannot find the called process or operator op.");
 
-    // // If there is the called process or opereator, check if the function
-    // type
-    // // mathces
-    // auto inputTy = getInputs().getTypes();
-    // auto outputTy = getOutputs().getTypes();
-    // FunctionType calledFuncTy;
-    // if (calledProcessOp != nullptr)
-    //     calledFuncTy = calledProcessOp.getFunctionType();
-    // else {
-    //     auto operatorFunc = calledOperatorOp.getFunctionType();
-    //     SmallVector<Type> inTy, outTy;
-    //     // SmallVector<Type> outTy;
-    //     for (auto type : operatorFunc.getInputs())
-    //         inTy.push_back(OutputType::get(getContext(), type));
-    //     for (auto type : operatorFunc.getResults())
-    //         outTy.push_back(InputType::get(getContext(), type));
-    //     calledFuncTy = FunctionType::get(getContext(), inTy, outTy);
-    // }
-    // if (calledFuncTy != FunctionType::get(getContext(), inputTy, outputTy))
-    //     return ::emitError(
-    //         getLoc(),
-    //         "Fcuntion type mismatches the called process or operator");
+    // If there is the called process or opereator, check if the function type
+    // mathces
+    auto inputTy = getInputs().getTypes();
+    auto outputTy = getOutputs().getTypes();
+    FunctionType calledFuncTy;
+    if (calledProcessOp != nullptr)
+        calledFuncTy = calledProcessOp.getFunctionType();
+    else {
+        auto operatorFunc = calledOperatorOp.getFunctionType();
+        SmallVector<Type> inTy, outTy;
+        for (auto type : operatorFunc.getInputs())
+            inTy.push_back(OutputType::get(getContext(), type));
+        for (auto type : operatorFunc.getResults())
+            outTy.push_back(InputType::get(getContext(), type));
+        calledFuncTy = FunctionType::get(getContext(), inTy, outTy);
+    }
+    if (calledFuncTy != FunctionType::get(getContext(), inputTy, outputTy))
+        return ::emitError(
+            getLoc(),
+            "Fcuntion type mismatches the called process or operator");
 
     return success();
 }
@@ -1475,6 +1470,17 @@ void PullOp::print(OpAsmPrinter &p)
     p << " " << getChan() << " : " << getType();
 }
 
+LogicalResult PullOp::verify()
+{
+    Block* block = getOperation()->getBlock();
+    for (auto &opi : block->getOperations())
+        if (isa<UnorderedPullOp>(opi))
+            return ::emitError(
+                getLoc(),
+                "Pull and unordered pull can not be used together.");
+    return success();
+}
+
 //===----------------------------------------------------------------------===//
 // PushOp
 //===----------------------------------------------------------------------===//
@@ -1499,6 +1505,72 @@ ParseResult PushOp::parse(OpAsmParser &parser, OperationState &result)
 }
 
 void PushOp::print(OpAsmPrinter &p)
+{
+    p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType();
+}
+
+LogicalResult PushOp::verify()
+{
+    Block* block = getOperation()->getBlock();
+    for (auto &opi : block->getOperations())
+        if (isa<UnorderedPushOp>(opi))
+            return ::emitError(
+                getLoc(),
+                "Push and unordered push can not be used together.");
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// UnorderedPullOp
+//===----------------------------------------------------------------------===//
+
+ParseResult UnorderedPullOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand inputChan;
+    Type dataTy;
+
+    if (parser.parseOperand(inputChan) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    result.addTypes(dataTy);
+
+    Type channelTy = OutputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(inputChan, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void UnorderedPullOp::print(OpAsmPrinter &p)
+{
+    p << " " << getChan() << " : " << getType();
+}
+
+//===----------------------------------------------------------------------===//
+// UnorderedPushOp
+//===----------------------------------------------------------------------===//
+
+ParseResult UnorderedPushOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand inp;
+    OpAsmParser::UnresolvedOperand outputChan;
+    Type dataTy;
+
+    if (parser.parseLParen() || parser.parseOperand(inp) || parser.parseRParen()
+        || parser.parseOperand(outputChan) || parser.parseColon()
+        || parser.parseType(dataTy))
+        return failure();
+
+    Type channelTy = InputType::get(dataTy.getContext(), dataTy);
+    if (parser.resolveOperand(inp, dataTy, result.operands)
+        || parser.resolveOperand(outputChan, channelTy, result.operands))
+        return failure();
+
+    return success();
+}
+
+void UnorderedPushOp::print(OpAsmPrinter &p)
 {
     p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType();
 }
@@ -1545,7 +1617,7 @@ LogicalResult PullNOp::verify()
 }
 
 //===----------------------------------------------------------------------===//
-// PushOp
+// PushNOp
 //===----------------------------------------------------------------------===//
 
 ParseResult PushNOp::parse(OpAsmParser &parser, OperationState &result)
