@@ -56,9 +56,11 @@ std::vector<std::tuple<std::string, std::vector<Type>, std::vector<Type>, Symbol
 std::map<std::string, std::tuple<Type, emitc::PointerType>> collectedChannelOps;
 std::vector<std::tuple<std::string, FunctionType>> collectedProcessOps;
 std::vector<std::tuple<std::string, FunctionType>> collectedOperatorOps;
-std::vector<std::tuple<std::string, FunctionType>> collectedRegionOps;
+std::vector<std::tuple<std::string, FunctionType, bool>> collectedRegionOps;
 std::vector<std::tuple<std::string, Type>> collectedPullOps;
 std::vector<std::tuple<std::string, Type>> collectedPushOps;
+
+std::map<std::string, bool> isRegionParallel;
 
 // helper functions
 
@@ -106,8 +108,9 @@ emitc::OpaqueType wrapAllInTemplate(MLIRContext *context, std::string typeName, 
     return emitc::OpaqueType::get(context, returnTypeName);
 }
 
-emitc::PointerType getRegionType(MLIRContext *context, emitc::OpaqueType inputChannelsTupleType, emitc::OpaqueType outputChannelsTupleType){
-    auto regionType = emitc::OpaqueType::get(context, ("Dppm::Region<" + inputChannelsTupleType.getValue() + "," + outputChannelsTupleType.getValue() + ">").str());
+emitc::PointerType getRegionType(MLIRContext *context, emitc::OpaqueType inputChannelsTupleType, emitc::OpaqueType outputChannelsTupleType, bool isParallel = false){
+	std::string regionString = isParallel ? "ParallelRegion" : "Region";
+    auto regionType = emitc::OpaqueType::get(context, ("Dppm::" + regionString + "<" + inputChannelsTupleType.getValue() + "," + outputChannelsTupleType.getValue() + ">").str());
     return emitc::PointerType::get(context, regionType);
 }
 
@@ -291,10 +294,10 @@ struct RegionOpLowering : public mlir::OpConversionPattern<RegionOp> {
         RegionOpAdaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-
         rewriter.modifyOpInPlace(regionOp, [](){});
-        std::string processName = regionOp.getSymName().str();
-        collectedRegionOps.push_back({processName, regionOp.getFunctionType()});
+        std::string regionName = regionOp.getSymName().str();
+        isRegionParallel[regionName] = regionOp.getIsParallel();
+        collectedRegionOps.push_back({regionName, regionOp.getFunctionType(), regionOp.getIsParallel()});
         return success();
     }
 };
@@ -439,15 +442,15 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
 
     rewriter.create<emitc::VerbatimOp>(loc, "extern \"C\" {");
 
-    for(auto [funcName, functionType] : collectedRegionOps){
+    for(auto [funcName, functionType, isParallel] : collectedRegionOps){
         auto savedPosition = rewriter.saveInsertionPoint();
         auto loweredInputTypes = lowerAllTypes(functionType.getInputs(), &highlevelTypeConverter);
         auto loweredOutputTypes = lowerAllTypes(functionType.getResults(), &highlevelTypeConverter);
         auto inputChannelsTupleType = wrapAllInTemplate(rewriter.getContext(), "Dppm::InputChannels", loweredInputTypes);
         auto outputChannelsTupleType = wrapAllInTemplate(rewriter.getContext(), "Dppm::OutputChannels", loweredOutputTypes);
-        auto regionType = getRegionType(rewriter.getContext(), inputChannelsTupleType, outputChannelsTupleType);
+        auto regionType = getRegionType(rewriter.getContext(), inputChannelsTupleType, outputChannelsTupleType, isParallel);
         std::vector<Type> declFuncTypes = map(combine(loweredInputTypes, loweredOutputTypes), [&helper](auto t){ return (Type)helper.getChannelPointer(t); });
-        declFuncTypes.insert(declFuncTypes.begin(), regionType);
+		declFuncTypes.insert(declFuncTypes.begin(), regionType);
         rewriter.create<emitc::FuncOp>(loc, "init_" + funcName, FunctionType::get(rewriter.getContext(), declFuncTypes, {}));
         rewriter.restoreInsertionPoint(savedPosition);
     }
@@ -488,7 +491,8 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
         functionInputTypes.insert(functionInputTypes.begin(),regionType);
         auto regionInputType = wrapAllInTemplate(rewriter.getContext(), "Dppm::InputChannels", inputTypes);
         auto regionOutputType = wrapAllInTemplate(rewriter.getContext(), "Dppm::OutputChannels", outputTypes);
-        auto newRegionType = getRegionType(rewriter.getContext(), regionInputType, regionOutputType);
+		bool isParallel = isRegionParallel[symbolRefAttr.getRootReference().str()];
+        auto newRegionType = getRegionType(rewriter.getContext(), regionInputType, regionOutputType, isParallel);
         auto functionType = FunctionType::get(&getContext(), functionInputTypes, {});
         auto functionHolder = rewriter.create<emitc::FuncOp>(loc, funcName, functionType);
         auto entryBlock = functionHolder.addEntryBlock();
@@ -498,13 +502,13 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
         std::vector<Value> outputChannelValues = std::vector<Value>(entryBlock->getArguments().begin()+1+inputTypesAmount, entryBlock->getArguments().end());
         auto inputWrapper = rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{autoType}, "Dppm::InputChannels", inputChannelValues).getResult(0);
         auto outputWrapper = rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{autoType}, "Dppm::OutputChannels", outputChannelValues).getResult(0);
-        auto regionPointer = rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{newRegionType}, "AddRegion", ValueRange{inputRegion, inputWrapper, outputWrapper}).getResult(0);
+		auto dpmFunctionName = isParallel ? "AddParallelRegion" : "AddRegion";
+        auto regionPointer = rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{newRegionType}, dpmFunctionName, ValueRange{inputRegion, inputWrapper, outputWrapper}).getResult(0);
         std::vector<Value> passToNextInit = { regionPointer };
         for(size_t i = 1 ; i < entryBlock->getNumArguments() ; i++){
             passToNextInit.push_back(entryBlock->getArgument(i));
         }
         auto functionName = ("init_" + StringRef{symbolRefAttr.getRootReference()}).str();
-        rewriter.create<emitc::ConstantOp>(loc, autoType, emitc::OpaqueAttr::get(&getContext(), functionName));
         rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, functionName, passToNextInit);
         rewriter.create<emitc::ReturnOp>(loc, (Value)0);
         rewriter.restoreInsertionPoint(savedPosition);

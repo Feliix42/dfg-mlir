@@ -141,6 +141,12 @@ ParseResult RegionOp::parse(OpAsmParser &parser, OperationState &result)
         getFunctionTypeAttrName(result.name),
         TypeAttr::get(type));
 
+
+	// check if region is parallel TODO check if all processes in a parallel region are dfg.operator
+	if(succeeded(parser.parseOptionalKeyword("is_parallel"))){
+		result.addAttribute("is_parallel", UnitAttr::get(parser.getContext()));
+	}
+
     // merge both argument lists for the block arguments
     inVals.append(outVals);
 
@@ -291,6 +297,7 @@ LogicalResult RegionOp::verify()
 
 ParseResult EmbedOp::parse(OpAsmParser &parser, OperationState &result)
 {
+
     // parse operator name
     StringAttr calleeAttr;
     if (parser.parseSymbolName(calleeAttr)) return failure();

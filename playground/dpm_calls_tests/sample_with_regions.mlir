@@ -26,7 +26,7 @@ dfg.process @sink_wrap inputs (%res_in: i64) outputs () {
     func.call @sink(%res) : (i64) -> ()
 }
 
-dfg.region @multiplyRegion inputs(%x_in : i64, %y_in : i64) outputs(%res_out : i64) {
+dfg.region @multiplyRegion inputs(%x_in : i64, %y_in : i64) outputs(%res_out : i64) is_parallel {
     dfg.instantiate @multiply inputs(%x_in, %y_in) outputs(%res_out) : (i64, i64) -> i64
 }
 

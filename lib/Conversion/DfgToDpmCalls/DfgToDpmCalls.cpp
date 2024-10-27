@@ -116,7 +116,6 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
 
         auto parentBlock = instantiateOp->getBlock();
         auto regionPointer = parentBlock->getArgument(0);
-
         std::vector<Value> functionValues;
         functionValues.push_back(regionPointer);
         for(auto value : adaptor.getInputs()){

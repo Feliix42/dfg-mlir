@@ -30,7 +30,8 @@ def Dfg_RegionOp : Dfg_Op<
     let summary = "Defines a region in a graph.";
 
     let arguments = (ins SymbolNameAttr:$sym_name,
-                         TypeAttrOf<FunctionType>:$function_type);
+                         TypeAttrOf<FunctionType>:$function_type,
+                         UnitAttr:$is_parallel);
     let regions = (region SizedRegion<1>:$body);
 
     let skipDefaultBuilders = 1;
