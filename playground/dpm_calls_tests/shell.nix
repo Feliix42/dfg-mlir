@@ -8,6 +8,7 @@ in pkgs.mkShell {
     protobuf
     (callPackage ../../../tetris/default.nix {})
     (callPackage ../../../dppm/default.nix {})
+    python3
   ];
 
 }
