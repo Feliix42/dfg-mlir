@@ -9,6 +9,8 @@ in pkgs.mkShell {
     (callPackage ../../../tetris/default.nix {})
     (callPackage ../../../dppm/default.nix {})
     python3
+    gdb
+    openssl
   ];
 
 }
