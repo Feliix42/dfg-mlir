@@ -479,7 +479,9 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
         }else{
             signalPassFailure();
         }
-        rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, kpnOrSdfFunction, ValueRange{inputRegion, functionValue, inputWrapper, outputWrapper});
+		auto processName = symbolRefAttr.getRootReference().str();
+		auto processNameString = rewriter.create<emitc::ConstantOp>(loc, emitc::OpaqueType::get(rewriter.getContext(), "std::string") , helper.OpaqueAttr('"' + processName + '"')).getResult();
+        rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, kpnOrSdfFunction, ValueRange{inputRegion, processNameString, functionValue, inputWrapper, outputWrapper});
         rewriter.create<emitc::ReturnOp>(loc, (Value)0);
         rewriter.restoreInsertionPoint(savedPosition);
     }
@@ -503,12 +505,14 @@ void ConvertDfgToDpmWrappersPass::runOnOperation() {
         auto inputWrapper = rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{autoType}, "Dppm::InputChannels", inputChannelValues).getResult(0);
         auto outputWrapper = rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{autoType}, "Dppm::OutputChannels", outputChannelValues).getResult(0);
 		auto dpmFunctionName = isParallel ? "AddParallelRegion" : "AddRegion";
-        auto regionPointer = rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{newRegionType}, dpmFunctionName, ValueRange{inputRegion, inputWrapper, outputWrapper}).getResult(0);
+		std::string regionName = symbolRefAttr.getRootReference().str();
+		auto regionNameString = rewriter.create<emitc::ConstantOp>(loc, emitc::OpaqueType::get(rewriter.getContext(), "std::string") , helper.OpaqueAttr('"' + regionName + '"')).getResult();
+        auto regionPointer = rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{newRegionType}, dpmFunctionName, ValueRange{inputRegion, regionNameString, inputWrapper, outputWrapper}).getResult(0);
         std::vector<Value> passToNextInit = { regionPointer };
         for(size_t i = 1 ; i < entryBlock->getNumArguments() ; i++){
             passToNextInit.push_back(entryBlock->getArgument(i));
         }
-        auto functionName = ("init_" + StringRef{symbolRefAttr.getRootReference()}).str();
+        auto functionName = "init_" + regionName;
         rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, functionName, passToNextInit);
         rewriter.create<emitc::ReturnOp>(loc, (Value)0);
         rewriter.restoreInsertionPoint(savedPosition);

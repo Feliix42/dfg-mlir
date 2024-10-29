@@ -1,0 +1,53 @@
+application: LMS
+platform: platform_name
+mapping_template:
+  processes: [sourceWrap, send, sinkWrap]
+  par_regions:
+    signParallelRegion: [signWrap]
+    verifyParallelRegion: [verifyWrap]
+  metadata: [execution_time, energy]
+mappings:
+  - name: mapping1
+    processes: [cpu_3, cpu_4, cpu_5]
+    par_regions:
+      signParallelRegion:
+        - [cpu_0]
+      verifyParallelRegion:
+        - [cpu_0]
+    metadata: [100, 250]
+  - name: mapping2
+    processes: [cpu_3, cpu_4, cpu_5]
+    par_regions:
+      signParallelRegion:
+        - [cpu_0]
+        - [cpu_1]
+      verifyParallelRegion:
+        - [cpu_0]
+        - [cpu_1]
+    metadata: [100, 250]
+  - name: mapping3
+    processes: [cpu_3, cpu_4, cpu_5]
+    par_regions:
+      signParallelRegion:
+        - [cpu_0]
+        - [cpu_1]
+        - [cpu_2]
+      verifyParallelRegion:
+        - [cpu_0]
+        - [cpu_1]
+        - [cpu_2]
+    metadata: [100, 250]
+  - name: mapping4
+    processes: [cpu_3, cpu_4, cpu_5]
+    par_regions:
+      signParallelRegion:
+        - [cpu_0]
+        - [cpu_1]
+        - [cpu_2]
+        - [cpu_3]
+      verifyParallelRegion:
+        - [cpu_0]
+        - [cpu_1]
+        - [cpu_2]
+        - [cpu_3]
+    metadata: [100, 250]

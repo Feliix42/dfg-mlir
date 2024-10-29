@@ -6,6 +6,7 @@ llvm.func @lms_sign(!llvm.ptr, !llvm.ptr) -> ()
 llvm.func @lms_verify(!llvm.ptr, !llvm.ptr) -> i32
 llvm.func @lms_sink(i32) -> ()
 llvm.func @lms_get_iterations() -> i32
+llvm.func @lms_done(i32) -> ()
 
 dfg.process @sourceWrap inputs() outputs(%out_a: !msg_type) {
 
@@ -62,6 +63,15 @@ dfg.process @sinkWrap inputs(%is_valid: i32) outputs() {
 		%bool = dfg.pull %is_valid : i32
 		llvm.call @lms_sink(%bool) : (i32) -> ()
 	}
+	llvm.call @lms_done(%ub) : (i32) -> ()
+}
+
+dfg.region @signParallelRegion inputs(%msg_in : !msg_type) outputs(%msg_out: !msg_type, %sig_out: !signature_type) is_parallel {
+	dfg.instantiate @signWrap inputs(%msg_in) outputs(%msg_out, %sig_out) : (!msg_type) -> (!msg_type, !signature_type)
+}
+
+dfg.region @verifyParallelRegion inputs(%msg_in : !msg_type, %sig_in: !signature_type) outputs(%is_valid: i32) is_parallel {
+	dfg.instantiate @verifyWrap inputs(%msg_in, %sig_in) outputs(%is_valid) : (!msg_type, !signature_type) -> i32	
 }
 
 dfg.region @mainRegion inputs() outputs() {
@@ -77,9 +87,13 @@ dfg.region @mainRegion inputs() outputs() {
 	%is_valid_in, %is_valid_out = dfg.channel() : i32
 		
 	dfg.instantiate @sourceWrap inputs() outputs(%sign_msg_in) : () -> (!msg_type)
-	dfg.instantiate @signWrap inputs(%sign_msg_out) outputs(%send_msg_in, %send_sig_in) : (!msg_type) -> (!msg_type, !signature_type)
+
+	dfg.embed @signParallelRegion inputs(%sign_msg_out) outputs(%send_msg_in, %send_sig_in) : (!msg_type) -> (!msg_type, !signature_type)
+
 	dfg.instantiate @send inputs(%send_msg_out, %send_sig_out) outputs(%rec_msg_in, %rec_sig_in) : (!msg_type, !signature_type) -> (!msg_type, !signature_type)
-	dfg.instantiate @verifyWrap inputs(%rec_msg_out, %rec_sig_out) outputs(%is_valid_in) : (!msg_type, !signature_type) -> i32
+
+	dfg.embed @verifyParallelRegion inputs(%rec_msg_out, %rec_sig_out) outputs(%is_valid_in) : (!msg_type, !signature_type) -> i32
+
 	dfg.instantiate @sinkWrap inputs(%is_valid_out) outputs() : (i32) -> ()
 
 }

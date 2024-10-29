@@ -220,7 +220,7 @@ void sink(int64_t in){
 
 void lms_fill_message(int32_t data, std::array<uint8_t, 5> *empty_data) {
 	for(int i = 0 ; i < 5 ; i++){
-		(*empty_data)[i] = 'K' + i;
+		(*empty_data)[i] = 'A' + byteDistribution(gen) % 26;
 	}
 	if(!keys_ready) {
 		std::cout << "Keys are not ready, generating keys\n";
@@ -237,14 +237,20 @@ void lms_fill_message(int32_t data, std::array<uint8_t, 5> *empty_data) {
 
 void lms_sink(int32_t valid){
 	if(valid){
-		std::cout << "Received a valid sig" << std::endl;
+		//std::cout << "Received a valid sig" << std::endl;
 	}else{
 		std::cout << "ERROR: Received invalid sig" << std::endl;
 	}
 }
 
 int32_t lms_get_iterations() {
-	return 5;
+	const char* env_p = std::getenv("DFG_TOKEN_COUNT");
+	if (env_p) {
+        int loopCount = std::atoi(env_p);
+		return loopCount;
+    } else {
+    	return 1;
+    }
 }
 
 
@@ -297,7 +303,12 @@ int32_t lms_verify(std::array<uint8_t, 5> *msg_ptr, lmots_signature<chosen> *sig
 			return 0;
 		}
 	}
+
 	return 1;
+}
+
+void lms_done(int32_t iterations){
+	std::cout << "Successfully received " << iterations << " valid signatures" << std::endl;
 }
 
 }

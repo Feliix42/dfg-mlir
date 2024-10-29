@@ -8,7 +8,9 @@ in pkgs.mkShell {
     protobuf
     (callPackage ../../../tetris/default.nix {})
     (callPackage ../../../dppm/default.nix {})
-    python3
+    (pkgs.python3.withPackages (python-pkgs: [
+      python-pkgs.matplotlib
+    ]))
     gdb
     openssl
   ];
