@@ -311,4 +311,8 @@ void lms_done(int32_t iterations){
 	std::cout << "Successfully received " << iterations << " valid signatures" << std::endl;
 }
 
+void print(int32_t num){
+	std::cout << "Received int: " << num << "\n";
+}
+
 }

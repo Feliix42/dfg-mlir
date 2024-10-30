@@ -40,9 +40,9 @@ $(BUILD_DIR)/%.dpm_calls_ll: $(BUILD_DIR)/%.dpm_calls_mlir_llvm
 	@echo Converting LLVM dialect to LLVMIR
 	mlir-translate $^ --mlir-to-llvmir -o $@
 $(BUILD_DIR)/%.dpm_calls_o: $(BUILD_DIR)/%.dpm_calls_ll
-	llc -filetype=obj --relocation-model=pic $^ -o $@
+	llc -filetype=obj $^ -o $@ --relocation-model=pic
 $(BUILD_DIR)/%.o: %.ll
-	llc -filetype=obj --relocation-model=pic $^ -o $@
+	llc -filetype=obj $^ -o $@ --relocation-model=pic
 $(BUILD_DIR)/%.o: %.cpp
 	clang++ -c $^ -o $@ #-O0 -ggdb
 
