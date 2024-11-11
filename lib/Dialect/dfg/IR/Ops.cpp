@@ -1,7 +1,7 @@
-/// Implements the dfg dialect ops.
+/// Implements the vitis dialect ops.
 ///
 /// @file
-/// @author     Felix Suchert (felix.suchert@tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 

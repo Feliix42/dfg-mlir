@@ -5,6 +5,7 @@
 
 #include "circt/InitAllDialects.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
+#include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
@@ -23,7 +24,7 @@ int main(int argc, char* argv[])
     registerAllDialects(registry);
     circt::registerAllDialects(registry);
 
-    registry.insert<dfg::DfgDialect>();
+    registry.insert<dfg::DfgDialect, vitis::VitisDialect>();
 
     return asMainReturnCode(MlirLspServerMain(argc, argv, registry));
 }
