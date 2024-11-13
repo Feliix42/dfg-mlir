@@ -9,6 +9,13 @@
 
 include "mlir/Pass/PassBase.td"
 
+def DfgInlineRegion : Pass<"dfg-inline-region">
+{
+    let summary = "inline region based on inline strategy";
+
+    let constructor = "mlir::dfg::createDfgInlineRegionPass()";
+}
+
 def DfgOperatorToProcess : Pass<"dfg-operator-to-process">
 {
     let summary = "convert each operator to process";

@@ -1,2 +1,3 @@
+add_subdirectory(InlineRegion)
 add_subdirectory(OperatorToProcess)
 add_subdirectory(PrintOperatorToYaml)

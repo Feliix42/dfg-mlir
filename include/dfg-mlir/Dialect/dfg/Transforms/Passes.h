@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "dfg-mlir/Dialect/dfg/Transforms/InlineRegion/InlineRegion.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/OpereatorToProcess/OperatorToProcess.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/PrintOperatorToYaml/PrintOperatorToYaml.h"
 
