@@ -32,8 +32,22 @@ def Vitis_ConstantOp : Vitis_Op<"constant",
     let summary = "Constant operation";
     let arguments = (ins TypedAttrInterface:$value);
     let results = (outs AnyType:$result);
-    let assemblyFormat = "attr-dict $value";
+    let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
+}
+
+def Vitis_DefineOp : Vitis_Op<"define", [Pure]>
+{
+    let summary = "define a variable as in C";
+    let results = (outs AnyType:$variable);
+    let assemblyFormat = "attr-dict `:` type($variable)";
+}
+
+def Vitis_TypedefOp : Vitis_Op<"typedef", []>
+{
+    let summary = "typedef";
+    let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type);
+    let assemblyFormat = "$sym_name `:` $type attr-dict";   
 }
 
 def Vitis_FuncOp : Vitis_Op<"func",
@@ -46,7 +60,6 @@ def Vitis_FuncOp : Vitis_Op<"func",
     let summary = "Function";
     let arguments = (ins SymbolNameAttr:$sym_name,
                          TypeAttrOf<FunctionType>:$function_type,
-                        //  OptionalAttr<StrAttr>:$sym_visibility,
                          OptionalAttr<DictArrayAttr>:$arg_attrs,
                          OptionalAttr<DictArrayAttr>:$res_attrs);
     let regions = (region AnyRegion:$body);
@@ -83,6 +96,30 @@ def Vitis_ReturnOp : Vitis_Op<"return",
     // let assemblyFormat = "attr-dict ($operand^ `:` type($operand))?";
     // let hasVerifier = 1;
     let assemblyFormat = "attr-dict";
+}
+
+def Vitis_WhileOp : Vitis_Op<"while",
+        [
+            Pure,
+            NoTerminator
+        ]>
+{
+    let summary = "while-loop";
+    let arguments = (ins I1:$condition);
+    let regions = (region SizedRegion<1>:$body);
+    let assemblyFormat = "$condition $body attr-dict";
+}
+
+def Vitis_IfBreakOp : Vitis_Op<"if_break",
+        [
+            Pure,
+            NoTerminator
+        ]>
+{
+
+    let summary = "if last signal is asserted, break to end exec";
+    let arguments = (ins I1:$condition);
+    let assemblyFormat = "$condition attr-dict";
 }
 
 #endif // VITIS_OPS

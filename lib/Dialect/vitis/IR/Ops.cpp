@@ -38,6 +38,25 @@ using namespace mlir::vitis;
 // ConstantOp
 //===----------------------------------------------------------------------===//
 
+ParseResult ConstantOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    IntegerAttr valueAttr;
+
+    if (parser.parseAttribute(valueAttr, "value", result.attributes)
+        || parser.parseOptionalAttrDict(result.attributes))
+        return failure();
+
+    result.addTypes(valueAttr.getType());
+    return success();
+}
+
+void ConstantOp::print(OpAsmPrinter &p)
+{
+    p << " ";
+    p.printAttribute(getValueAttr());
+    p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"value"});
+}
+
 LogicalResult ConstantOp::verify()
 {
     auto type = getType();
@@ -90,10 +109,10 @@ LogicalResult FuncOp::verify()
         return ::emitError(getLoc(), "Now only void return type is supported.");
     else if (funcTy.getNumInputs() != 0) {
         for (auto type : funcTy.getInputs())
-            if (!isa<StreamType>(type))
+            if (!isa<StreamType>(type) && !isa<AliasType>(type))
                 return ::emitError(
                     getLoc(),
-                    "Now only stream is supported as argument type.");
+                    "Now only stream or alias is supported as argument type.");
     }
     return success();
 }
