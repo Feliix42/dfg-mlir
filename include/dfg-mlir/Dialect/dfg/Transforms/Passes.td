@@ -14,6 +14,11 @@ def DfgInlineRegion : Pass<"dfg-inline-region">
     let summary = "inline region based on inline strategy";
 
     let constructor = "mlir::dfg::createDfgInlineRegionPass()";
+
+    let options = [
+        Option<"strategy", "strategy", "std::string", /*default=*/"\"full\"",
+            "Strategy to inline regions">
+    ];
 }
 
 def DfgOperatorToProcess : Pass<"dfg-operator-to-process">
