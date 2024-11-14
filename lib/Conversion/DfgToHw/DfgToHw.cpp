@@ -1540,6 +1540,19 @@ struct LowerPushToInstance : OpConversionPattern<OpT> {
             }
         } else {
             inputs.push_back(validInput.getResult());
+            if (isOrdered && orderedPushes.size() == 1) {
+                for (auto user : pushedValue.getUsers())
+                    if (isa<HWWaitOp>(user))
+                        user->replaceUsesOfWith(
+                            pushedValue,
+                            validInput.getResult());
+            } else if (!isOrdered && pushedResults.size() == 1) {
+                for (auto user : pushedValue.getUsers())
+                    if (isa<HWWaitOp>(user))
+                        user->replaceUsesOfWith(
+                            pushedValue,
+                            validInput.getResult());
+            }
         }
         auto dataBitwidth = pushedValue.getType().getIntOrFloatBitWidth();
         inputs.push_back(pushedValue);
