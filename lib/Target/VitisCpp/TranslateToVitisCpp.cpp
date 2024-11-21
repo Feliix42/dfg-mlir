@@ -20,7 +20,7 @@
 #include <mlir/Support/LogicalResult.h>
 #include <stack>
 
-#define DEBUG_TYPE "translate-to-relayir"
+#define DEBUG_TYPE "translate-to-vitiscpp"
 
 using namespace mlir;
 using namespace mlir::vitis;
@@ -133,7 +133,6 @@ StringRef VitisCppEmitter::getOrCreateName(Value value)
 {
     if (!valueMapper.count(value))
         valueMapper.insert(value, formatv("v{0}", ++valueInScopeCount.top()));
-    // os << "\n" << *valueMapper.begin(value) << "\n";
     return *valueMapper.begin(value);
 }
 
@@ -196,11 +195,10 @@ LogicalResult VitisCppEmitter::emitVariableDeclaration(
     OpResult result,
     bool trailingSemicolon)
 {
-    os << "/*test: " << getOrCreateName(result) << "*/";
-    // if (hasValueInScope(result)) {
-    //     return result.getDefiningOp()->emitError(
-    //         "result variable for the operation already declared");
-    // }
+    if (hasValueInScope(result)) {
+        return result.getDefiningOp()->emitError(
+            "result variable for the operation already declared");
+    }
     if (failed(emitType(result.getOwner()->getLoc(), result.getType())))
         return failure();
     os << " " << getOrCreateName(result);
@@ -303,6 +301,26 @@ printOperation(VitisCppEmitter &emitter, vitis::ConstantOp constantOp)
 }
 
 static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::DefineOp defineOp)
+{
+    if (failed(emitter.emitVariableDeclaration(
+            defineOp.getOperation()->getResult(0),
+            true)))
+        return failure();
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::UpdateOp updateOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << emitter.getOrCreateName(updateOp.getVariable()) << " = "
+       << emitter.getOrCreateName(updateOp.getNewValue()) << ";";
+    return success();
+}
+
+static LogicalResult
 printOperation(VitisCppEmitter &emitter, vitis::WhileOp whileOp)
 {
     VitisCppEmitter::Scope scope(emitter);
@@ -319,6 +337,17 @@ printOperation(VitisCppEmitter &emitter, vitis::WhileOp whileOp)
         if (failed(emitter.emitOperation(opi, false))) return failure();
 
     os.unindent() << "}";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::IfBreakOp ifBreakOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << "if (" << emitter.getOrCreateName(ifBreakOp.getCondition())
+       << ") break;";
 
     return success();
 }
@@ -365,12 +394,82 @@ printOperation(VitisCppEmitter &emitter, vitis::StreamGetLastOp getLastOp)
 }
 
 static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::IfBreakOp ifBreakOp)
+printOperation(VitisCppEmitter &emitter, vitis::StreamSetLastOp setLastOp)
 {
     raw_indented_ostream &os = emitter.ostream();
 
-    os << "if (" << emitter.getOrCreateName(ifBreakOp.getCondition())
-       << ") break;";
+    os << emitter.getOrCreateName(setLastOp.getDataPkt())
+       << ".last = " << emitter.getOrCreateName(setLastOp.getLast()) << ";";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::StreamGetDataOp getDataOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*getDataOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(getDataOp.getDataPkt()) << ".data;";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::StreamSetDataOp setDataOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << emitter.getOrCreateName(setDataOp.getDataPkt())
+       << ".data = " << emitter.getOrCreateName(setDataOp.getData()) << ";";
+
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// ArithOps
+//===----------------------------------------------------------------------===//
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArithAddOp addOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*addOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(addOp.getLhs()) << " + "
+       << emitter.getOrCreateName(addOp.getRhs()) << ";";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArithMulOp mulOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*mulOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(mulOp.getLhs()) << " * "
+       << emitter.getOrCreateName(mulOp.getRhs()) << ";";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArithOrOp orOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*orOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(orOp.getLhs()) << " | "
+       << emitter.getOrCreateName(orOp.getRhs()) << ";";
 
     return success();
 }
@@ -387,12 +486,22 @@ VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
             .Case<ModuleOp>([&](auto op) { return printOperation(*this, op); })
             .Case<vitis::FuncOp, vitis::ReturnOp>(
                 [&](auto op) { return printOperation(*this, op); })
-            .Case<vitis::ConstantOp, vitis::WhileOp, vitis::IfBreakOp>(
+            .Case<
+                vitis::ConstantOp,
+                vitis::DefineOp,
+                vitis::UpdateOp,
+                vitis::WhileOp,
+                vitis::IfBreakOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
                 vitis::StreamReadOp,
                 vitis::StreamWriteOp,
-                vitis::StreamGetLastOp>(
+                vitis::StreamGetLastOp,
+                vitis::StreamSetLastOp,
+                vitis::StreamGetDataOp,
+                vitis::StreamSetDataOp>(
+                [&](auto op) { return printOperation(*this, op); })
+            .Case<vitis::ArithAddOp, vitis::ArithMulOp, vitis::ArithOrOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Default(
                 [](auto op) { return op->emitError("unsupported operation"); });
@@ -406,7 +515,7 @@ LogicalResult VitisCppEmitter::emitType(Location loc, Type vitisType)
 {
     if (auto type = dyn_cast<IntegerType>(vitisType)) {
         switch (type.getWidth()) {
-        case 1: return (os << "bool"), success();
+        case 1: // return (os << "bool"), success();
         case 8:
         case 16:
         case 32:

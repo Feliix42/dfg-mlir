@@ -43,6 +43,13 @@ def Vitis_DefineOp : Vitis_Op<"define", [Pure]>
     let assemblyFormat = "attr-dict `:` type($variable)";
 }
 
+def Vitis_UpdateOp : Vitis_Op<"update", [Pure, AllTypesMatch<["variable", "new_value"]>]>
+{
+    let summary = "update avariable with a new value";
+    let arguments = (ins AnyType:$variable, AnyType: $new_value);
+    let assemblyFormat = "$variable `,` $new_value  attr-dict `:` type($variable)";
+}
+
 def Vitis_TypedefOp : Vitis_Op<"typedef", []>
 {
     let summary = "typedef";
