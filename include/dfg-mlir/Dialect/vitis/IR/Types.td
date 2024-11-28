@@ -13,35 +13,6 @@ include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mlir/IR/AttrTypeBase.td"
 
-def Vitis_AliasType : Vitis_Type<"Alias", []> {
-    let mnemonic = "alias";
-    let summary = "container of type aliases";
-    let parameters = (ins "std::string":$alias);
-    let assemblyFormat = "`<` $alias `>`";
-}
-
-def Vitis_APUIntType : Vitis_Type<"APUInt", []> {
-    let mnemonic = "ap_uint";
-    let summary = "ap_uint<DATAWIDTH>";
-    let parameters = (ins "TypedAttr":$datawidth);
-    let hasCustomAssemblyFormat = 1;
-    let skipDefaultBuilders = 1;
-    let builders = [
-        TypeBuilderWithInferredContext<(ins "TypedAttr":$datawidth), "", "Type">
-    ];
-}
-
-def Vitis_APSIntType : Vitis_Type<"APSInt", []> {
-    let mnemonic = "ap_sint";
-    let summary = "ap_int<DATAWIDTH>";
-    let parameters = (ins "TypedAttr":$datawidth);
-    let hasCustomAssemblyFormat = 1;
-    let skipDefaultBuilders = 1;
-    let builders = [
-        TypeBuilderWithInferredContext<(ins "TypedAttr":$datawidth), "", "Type">
-    ];
-}
-
 def Vitis_APAxiUType : Vitis_Type<"APAxiU", []> {
     let mnemonic = "ap_axiu";
     let summary = "ap_axiu<DATAWIDTH, keep, user, dest, AXIS_ENABLE_LAST>";

@@ -20,6 +20,7 @@ target_link_libraries(${PROJECT_NAME}
     MLIRLspServerLib
 
     VitisTargetCpp
+    VitisTargetTcl
 
     ${circt_dialect_libs}
     ${circt_translation_libs}

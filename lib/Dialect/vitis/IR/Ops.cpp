@@ -109,7 +109,7 @@ LogicalResult FuncOp::verify()
         return ::emitError(getLoc(), "Now only void return type is supported.");
     else if (funcTy.getNumInputs() != 0) {
         for (auto type : funcTy.getInputs())
-            if (!isa<StreamType>(type) && !isa<AliasType>(type))
+            if (!isa<StreamType>(type))
                 return ::emitError(
                     getLoc(),
                     "Now only stream or alias is supported as argument type.");

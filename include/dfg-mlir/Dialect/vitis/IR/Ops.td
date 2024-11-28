@@ -117,6 +117,17 @@ def Vitis_WhileOp : Vitis_Op<"while",
     let assemblyFormat = "$condition $body attr-dict";
 }
 
+def Vitis_WhileTrueOp : Vitis_Op<"while_true",
+        [
+            Pure,
+            NoTerminator
+        ]>
+{
+    let summary = "while-true-loop";
+    let regions = (region SizedRegion<1>:$body);
+    let assemblyFormat = "$body attr-dict";
+}
+
 def Vitis_IfBreakOp : Vitis_Op<"if_break",
         [
             Pure,

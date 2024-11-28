@@ -31,78 +31,6 @@ using namespace mlir::vitis;
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
-// APUIntType
-//===----------------------------------------------------------------------===//
-
-Type APUIntType::get(mlir::TypedAttr datawidth)
-{
-    auto widthWidth = llvm::dyn_cast<IntegerType>(datawidth.getType());
-    assert(
-        widthWidth && widthWidth.getWidth() == 32
-        && "!hw.int width must be 32-bits");
-    (void)widthWidth;
-
-    if (auto cstWidth = llvm::dyn_cast<IntegerAttr>(datawidth))
-        return IntegerType::get(
-            datawidth.getContext(),
-            cstWidth.getValue().getZExtValue());
-
-    return Base::get(datawidth.getContext(), datawidth);
-}
-
-Type APUIntType::parse(AsmParser &p)
-{
-    auto i32Ty = p.getBuilder().getIntegerType(32);
-    mlir::TypedAttr datawidth;
-    if (p.parseLess() || p.parseAttribute(datawidth, i32Ty) || p.parseGreater())
-        return Type();
-    return get(datawidth);
-}
-
-void APUIntType::print(AsmPrinter &p) const
-{
-    p << "<";
-    p.printAttributeWithoutType(getDatawidth());
-    p << '>';
-}
-
-//===----------------------------------------------------------------------===//
-// APSIntType
-//===----------------------------------------------------------------------===//
-
-Type APSIntType::get(mlir::TypedAttr datawidth)
-{
-    auto widthWidth = llvm::dyn_cast<IntegerType>(datawidth.getType());
-    assert(
-        widthWidth && widthWidth.getWidth() == 32
-        && "!hw.int width must be 32-bits");
-    (void)widthWidth;
-
-    if (auto cstWidth = llvm::dyn_cast<IntegerAttr>(datawidth))
-        return IntegerType::get(
-            datawidth.getContext(),
-            cstWidth.getValue().getZExtValue());
-
-    return Base::get(datawidth.getContext(), datawidth);
-}
-
-Type APSIntType::parse(AsmParser &p)
-{
-    auto i32Ty = p.getBuilder().getIntegerType(32);
-    mlir::TypedAttr datawidth;
-    if (p.parseLess() || p.parseAttribute(datawidth, i32Ty) || p.parseGreater())
-        return Type();
-    return get(datawidth);
-}
-
-void APSIntType::print(AsmPrinter &p) const
-{
-    p << "<";
-    p.printAttributeWithoutType(getDatawidth());
-    p << '>';
-}
-
-//===----------------------------------------------------------------------===//
 // StreamType
 //===----------------------------------------------------------------------===//
 
@@ -111,8 +39,7 @@ LogicalResult StreamType::verify(
     Type stream_type)
 {
     if (!llvm::isa<APAxiUType>(stream_type)
-        && !llvm::isa<APAxiSType>(stream_type)
-        && !llvm::isa<AliasType>(stream_type))
+        && !llvm::isa<APAxiSType>(stream_type))
         return emitError()
                << "Only ap_axi type or alias is supported in stream";
     return success();

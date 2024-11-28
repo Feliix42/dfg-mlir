@@ -4,7 +4,7 @@
 
 #include "dfg-mlir/Dialect//vitis/IR/Ops.h"
 #include "dfg-mlir/Dialect/vitis/IR/Types.h"
-#include "dfg-mlir/Target/VitisCpp/VitisEmitter.h"
+#include "dfg-mlir/Target/VitisCpp/VitisCppEmitter.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
@@ -342,6 +342,26 @@ printOperation(VitisCppEmitter &emitter, vitis::WhileOp whileOp)
 }
 
 static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::WhileTrueOp whileTrueOp)
+{
+    VitisCppEmitter::Scope scope(emitter);
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << "while(true) {\n#pragma HLS PIPELINE II=1\n";
+    os.indent();
+
+    Region::BlockListType &blocks = whileTrueOp.getBody().getBlocks();
+    for (Block &block : blocks) emitter.getOrCreateName(block);
+
+    for (auto &opi : whileTrueOp.getBody().getOps())
+        if (failed(emitter.emitOperation(opi, false))) return failure();
+
+    os.unindent() << "}";
+
+    return success();
+}
+
+static LogicalResult
 printOperation(VitisCppEmitter &emitter, vitis::IfBreakOp ifBreakOp)
 {
     raw_indented_ostream &os = emitter.ostream();
@@ -491,6 +511,7 @@ VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
                 vitis::DefineOp,
                 vitis::UpdateOp,
                 vitis::WhileOp,
+                vitis::WhileTrueOp,
                 vitis::IfBreakOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
@@ -514,28 +535,11 @@ VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
 LogicalResult VitisCppEmitter::emitType(Location loc, Type vitisType)
 {
     if (auto type = dyn_cast<IntegerType>(vitisType)) {
-        switch (type.getWidth()) {
-        case 1: // return (os << "bool"), success();
-        case 8:
-        case 16:
-        case 32:
-        case 64:
-            if (type.getSignedness() == IntegerType::Unsigned)
-                return (os << "ap_uint<" << type.getWidth() << ">"), success();
-            else
-                return (os << "ap_int<" << type.getWidth() << ">"), success();
-        default: return emitError(loc, "cannot emit integer type ") << type;
-        }
-    }
-    if (auto type = dyn_cast<APUIntType>(vitisType)) {
-        auto width = type.getDatawidth().getType().getIntOrFloatBitWidth();
-        os << "ap_uint<" << width << ">";
-        return success();
-    }
-    if (auto type = dyn_cast<APSIntType>(vitisType)) {
-        auto width = type.getDatawidth().getType().getIntOrFloatBitWidth();
-        os << "ap_int<" << width << ">";
-        return success();
+        auto datawidth = type.getWidth();
+        if (type.getSignedness() == IntegerType::Unsigned)
+            return (os << "ap_uint<" << datawidth << ">"), success();
+        else
+            return (os << "ap_int<" << datawidth << ">"), success();
     }
     if (auto type = dyn_cast<APAxiUType>(vitisType)) {
         auto last = type.getTlast() ? ", AXIS_ENABLE_LAST>" : ">";

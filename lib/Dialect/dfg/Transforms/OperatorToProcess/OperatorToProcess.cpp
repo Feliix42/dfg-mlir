@@ -101,7 +101,7 @@ void reorderIterArgs(
 struct ConvertAnyOperatorToEquivalentProcess
         : public OpRewritePattern<OperatorOp> {
     ConvertAnyOperatorToEquivalentProcess(MLIRContext* context)
-            : OpRewritePattern<OperatorOp>(context){};
+            : OpRewritePattern<OperatorOp>(context) {};
 
     LogicalResult
     matchAndRewrite(OperatorOp op, PatternRewriter &rewriter) const override

@@ -1,4 +1,4 @@
-/// Declaration of the vitis emitter.
+/// Declaration of the vitis cpp emitter.
 ///
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
