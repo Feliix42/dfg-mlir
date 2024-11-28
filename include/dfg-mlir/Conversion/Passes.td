@@ -121,4 +121,16 @@ def ConvertDfgInsertOlympusWrapper : Pass<"insert-olympus-wrappers"> {
     ];
 }
 
+def ConvertDfgToVitis : Pass<"convert-dfg-to-vitis"> {
+    let summary = "Convert DFG dialect graph nodes to vitis dialect.";
+
+    let constructor = "mlir::createConvertDfgToLLVMPass()";
+
+    let dependentDialects = [
+        "dfg::DfgDialect",
+
+        "arith::ArithDialect"
+    ];
+}
+
 #endif // DFG_MLIR_CONVERSION_PASSES
