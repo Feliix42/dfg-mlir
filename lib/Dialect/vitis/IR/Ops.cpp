@@ -68,6 +68,61 @@ LogicalResult ConstantOp::verify()
 }
 
 //===----------------------------------------------------------------------===//
+// VariableOp
+//===----------------------------------------------------------------------===//
+
+ParseResult VariableOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    // Define variables for parsing
+    OpAsmParser::UnresolvedOperand initOperand;
+    Type variableType;
+
+    // Attempt to parse the optional 'init' keyword and operand
+    bool hasInit = succeeded(parser.parseOptionalKeyword("init"));
+    if (hasInit) {
+        if (parser.parseOperand(initOperand)) return failure();
+    }
+
+    // Parse attributes and result type
+    if (parser.parseOptionalAttrDict(result.attributes)
+        || parser.parseColonType(variableType))
+        return failure();
+
+    // Add the result type to the operation state
+    result.addTypes(variableType);
+
+    // Resolve the operand if it exists
+    if (hasInit) {
+        if (parser.resolveOperand(initOperand, variableType, result.operands))
+            return failure();
+    }
+
+    return success();
+}
+
+void VariableOp::print(OpAsmPrinter &p)
+{
+    // Print the optional 'init' operand
+    if (getInit()) p << " init " << getInit();
+
+    // Print attributes and result type
+    p.printOptionalAttrDict((*this)->getAttrs());
+    p << " : " << getType();
+}
+
+LogicalResult VariableOp::verify()
+{
+    if (getInit()) {
+        auto initType = getInit().getType();
+        if (initType != getType())
+            return ::emitError(
+                getLoc(),
+                "Different types between variable and the init value.");
+    }
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
 // FuncOp
 //===----------------------------------------------------------------------===//
 

@@ -36,11 +36,13 @@ def Vitis_ConstantOp : Vitis_Op<"constant",
     let hasVerifier = 1;
 }
 
-def Vitis_DefineOp : Vitis_Op<"define", [Pure]>
+def Vitis_VariableOp : Vitis_Op<"variable", [Pure]>
 {
     let summary = "define a variable as in C";
+    let arguments = (ins Optional<AnyType>:$init);
     let results = (outs AnyType:$variable);
-    let assemblyFormat = "attr-dict `:` type($variable)";
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
 }
 
 def Vitis_UpdateOp : Vitis_Op<"update", [Pure, AllTypesMatch<["variable", "new_value"]>]>
