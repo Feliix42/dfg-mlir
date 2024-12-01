@@ -178,13 +178,20 @@ struct PushOpLowering : public OpConversionPattern<PushOp> {
 		auto dataLayout = DataLayout(pushOp->getParentOfType<ModuleOp>());
 		auto dataAlignment = dataLayout.getTypeABIAlignment(pushOp.getInp().getType());
 
-        // Create a local "c-style-array" and store the data
+		// the lowering already transformed the parent process into a llvm function. insert alloca at the start, why does LICM not catch this??
+		auto processOp = pushOp->getParentOfType<LLVM::LLVMFuncOp>();
+		auto &processBody = processOp.getBody();
 
+		auto oldInsertionPoint = rewriter.saveInsertionPoint();
+		rewriter.setInsertionPointToStart(&processBody.front());
+
+        // Create a local "c-style-array" and store the data, created on stack, move to process begin to avoid stack overflow if placed in loop
         auto arraySize = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(1)).getResult();
 		auto dataPointer = rewriter.create<LLVM::AllocaOp>(loc, genericPointer(rewriter.getContext()), pushOp.getInp().getType(), arraySize, dataAlignment).getResult();
 
-        rewriter.create<LLVM::StoreOp>(loc,adaptor.getInp(), dataPointer);
+		rewriter.restoreInsertionPoint(oldInsertionPoint);
 
+        rewriter.create<LLVM::StoreOp>(loc,adaptor.getInp(), dataPointer);
         rewriter.create<LLVM::CallOp>(loc, TypeRange{}, GetAdapterLocName(pushOp), ValueRange{adaptor.getChan(), dataPointer});
 
         rewriter.eraseOp(pushOp);
@@ -208,12 +215,21 @@ struct PullOpLowering : public OpConversionPattern<PullOp> {
 		auto dataLayout = DataLayout(pullOp->getParentOfType<ModuleOp>());
 		auto dataAlignment = dataLayout.getTypeABIAlignment(pullOp.getOutp().getType());
 
-		// Move the ownership of the data into the current LLVMIR frame by allocating a copy
+		// the lowering already transformed the parent process into a llvm function. insert alloca at the start, why does LICM not catch this??
+		auto processOp = pullOp->getParentOfType<LLVM::LLVMFuncOp>();
+		auto &processBody = processOp.getBody();
 
+		auto oldInsertionPoint = rewriter.saveInsertionPoint();
+		rewriter.setInsertionPointToStart(&processBody.front());
+
+		// Move the ownership of the data into the current LLVMIR frame by allocating a copy
         // TODO check if there are issues when copying the std::array into this "c-style-array"
 
+        // Create a local "c-style-array" and store the data, created on stack, move to process begin to avoid stack overflow if placed in loop
         auto arraySize = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(1)).getResult();
 		auto dataPointer = rewriter.create<LLVM::AllocaOp>(loc, genericPointer(rewriter.getContext()), pullOp.getOutp().getType(), arraySize, dataAlignment).getResult();
+
+		rewriter.restoreInsertionPoint(oldInsertionPoint);
 
 		rewriter.create<LLVM::CallOp>(
 			loc,

@@ -1,0 +1,21 @@
+application: audio
+platform: platform_name
+mapping_template:
+  processes: [source, sink]
+  par_regions:
+    filterPr: [filter]
+  metadata: [execution_time, energy]
+mappings:
+  - name: mapping1
+    processes: [cpu_0, cpu_1]
+    par_regions:
+      filterPr:
+        - [cpu_0]
+    metadata: [100, 250]
+  - name: mapping2
+    processes: [cpu_0, cpu_1]
+    par_regions:
+      filterPr:
+        - [cpu_0]
+        - [cpu_1]
+    metadata: [100, 250]
