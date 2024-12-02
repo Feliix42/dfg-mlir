@@ -129,22 +129,36 @@
             "-DCMAKE_CXX_COMPILER=clang++"
             "-DLLVM_ENABLE_LLD=ON"
           ];
+
+          installPhase = ''
+            cmake --install . --verbose
+            mkdir -p $out/bin
+            cp bin/dfg-opt $out/bin
+          '';
+
         }) {};
       };
 
-      # Provide some binary packages for selected system types.
-      packages = forAllSystems (system:
-        {
-          inherit (nixpkgsFor.${system}) dfg_dialect;
-        });
+      # Provide some binary packages for selected system types. -> packages."X".dfg_dialect = nixpkgsFor."X".dfg_dialect;
+      packages = forAllSystems (system: {
+        inherit (nixpkgsFor.${system}) dfg_dialect;
+        # The default package for 'nix build'. This makes sense if the
+        # flake provides only one package or there is a clear "main"
+        # package.
+        default = self.packages.${system}.dfg_dialect;
+      });
 
-      # The default package for 'nix build'. This makes sense if the
-      # flake provides only one package or there is a clear "main"
-      # package.
-      defaultPackage = forAllSystems (system: self.packages.${system}.dfg_dialect);
-
-      # Provide a 'nix develop' environment for interactive hacking.
-      devShell = forAllSystems (system: self.packages.${system}.dfg_dialect.override { inShell = true; });
+      devShells = forAllSystems (system: let pkgs = nixpkgsFor.${system}; in {
+         # default shell for dfg development
+         default = pkgs.dfg_dialect.override { inShell = true; };
+         # shell for dpm_connection
+         dpm_connect = pkgs.mkShell {
+           buildInputs = with pkgs; [
+             (dfg_dialect.override { inShell = false; })
+             (callPackage ./external/dppm/default.nix {})
+           ];
+         };
+      });
 
       # A NixOS module, if applicable (e.g. if the package provides a system service).
       nixosModules.dfg_dialect =

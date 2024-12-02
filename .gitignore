@@ -13,3 +13,4 @@ playground/*.ll
 playground/*.out
 playground/lowered.mlir
 
+external/
