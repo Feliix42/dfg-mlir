@@ -3,9 +3,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "dfg-mlir/Dialect//vitis/IR/Ops.h"
-#include "dfg-mlir/Dialect/vitis/IR/Types.h"
 #include "dfg-mlir/Target/VitisTcl/VitisTclEmitter.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/IndentedOstream.h"
@@ -62,6 +60,7 @@ translateToVitisTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
     ios << "create_clock -period $CLOCK_PERIOD -name default\n";
     ios << "set_top $func\n";
     ios << "csynth_design\n";
+    ios << "export_design -rtl verilog";
     ios << "close_solution\n";
     ios.unindent();
     ios << "}\n";
