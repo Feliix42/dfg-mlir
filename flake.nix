@@ -3,9 +3,10 @@
 
   inputs = {
     nixpkgs.url = "nixpkgs/nixos-24.05";
+    dpm.url = "path:?";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, dpm }:
     let
 
       # to work with older version of flakes
@@ -145,6 +146,7 @@
         # The default package for 'nix build'. This makes sense if the
         # flake provides only one package or there is a clear "main"
         # package.
+
         default = self.packages.${system}.dfg_dialect;
       });
 
@@ -155,7 +157,14 @@
          dpm_connect = pkgs.mkShell {
            buildInputs = with pkgs; [
              (dfg_dialect.override { inShell = false; })
-             (callPackage ./external/dppm/default.nix {})
+             dpm.packages.${system}.default
+             llvm-custom
+             clang_18
+             (kissfftFloat.override { enableStatic = true; })
+             python3
+             glibc.static
+             pkgsStatic.yaml-cpp
+             pkgsStatic.openssl
            ];
          };
       });

@@ -1,5 +1,5 @@
 BUILD_DIR=./build
-DFG_OPT=../../build/bin/dfg-opt
+DFG_OPT=dfg-opt
 EXTRACT_ADAPTERS=../../scripts/extract_adapters.py
 
 MLIR_FILES=$(wildcard *.mlir)
@@ -8,7 +8,7 @@ TARGETS=$(MLIR_FILES:%.mlir=$(BUILD_DIR)/%.elf)
 OTHER_DEP=ll_externs c_externs
 SUB_TARGETS=$(OTHER_DEP:%=$(BUILD_DIR)/%.o)
 
-LINKER_FLAGS=-ldpm -lyaml-cpp -ltetrisclient -lprotobuf -lcrypto
+LINKER_FLAGS=-ldpm -lyaml-cpp -lcrypto
 
 all: $(TARGETS)
 

@@ -1,5 +1,5 @@
 BUILD_DIR=./build
-DFG_OPT=../../build/bin/dfg-opt
+DFG_OPT=dfg-opt
 EXTRACT_ADAPTERS=../../scripts/extract_adapters.py
 
 MLIR_FILES=$(wildcard *.mlir)
