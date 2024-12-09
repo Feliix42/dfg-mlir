@@ -5,19 +5,14 @@
 
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 
-#include "dfg-mlir/Dialect/dfg/Enums.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
-#include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #define DEBUG_TYPE "dfg-ops"
 
@@ -40,7 +35,7 @@ constexpr char kOperandSegmentSizesAttr[] = "operandSegmentSizes";
 /// @param arguments A list of arguments to parse
 /// @return A parse result indicating success or failure to parse.
 struct TypeId {
-    static Type get(MLIRContext* ctx, Type t) { return t; }
+    static Type get(MLIRContext*, Type t) { return t; }
 };
 template<typename T>
 static ParseResult parseChannelArgumentList(
@@ -704,6 +699,47 @@ LogicalResult ProcessOp::verify()
 //===----------------------------------------------------------------------===//
 // OperatorOp
 //===----------------------------------------------------------------------===//
+
+void OperatorOp::build(
+    OpBuilder &builder,
+    OperationState &state,
+    StringRef name,
+    FunctionType function_type,
+    ArrayRef<Type> iter_args)
+{
+    state.addAttribute(
+        SymbolTable::getSymbolAttrName(),
+        builder.getStringAttr(name));
+    state.addAttribute(
+        OperatorOp::getFunctionTypeAttrName(state.name),
+        TypeAttr::get(function_type));
+
+    // add init body (no arguments)
+    state.addRegion();
+    // add actual body region
+    Region* bodyRegion = state.addRegion();
+    Block* body = new Block();
+    bodyRegion->push_back(body);
+
+    SmallVector<Type> blockArgTypes;
+    blockArgTypes.append(
+        function_type.getInputs().begin(),
+        function_type.getInputs().end());
+    // FIXME (feliix42): The outputs should not be part of the argument list for OperatorOp!
+    blockArgTypes.append(
+        function_type.getResults().begin(),
+        function_type.getResults().end());
+    blockArgTypes.append(iter_args.begin(), iter_args.end());
+    body->addArguments(
+        blockArgTypes,
+        SmallVector<Location>(blockArgTypes.size(), builder.getUnknownLoc()));
+
+    SmallVector<Attribute> iterArgsTypesAttr;
+    for (Type ty : iter_args) iterArgsTypesAttr.push_back(TypeAttr::get(ty));
+    state.addAttribute(
+        "iter_args_types",
+        ArrayAttr::get(builder.getContext(), iterArgsTypesAttr));
+}
 
 ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 {

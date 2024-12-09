@@ -2,7 +2,7 @@ dfg.process @sum
     inputs (%op_a: ui32, %op_b: ui32)
     outputs (%a: ui32)
 {
-    dfg.loop inputs(%op_a: ui32) {
+    dfg.loop inputs(%op_a: ui32, %op_b: ui32) {
         %inp1 = dfg.pull %op_a : ui32
         %inp2 = dfg.pull %op_b : ui32
 
@@ -22,7 +22,7 @@ dfg.operator @call_func
     outputs(%out: i32)
 {
     %out_data = func.call @to_call(%in) : (i32) -> i32
-    dfg.yield %out_data : i32
+    dfg.output %out_data : i32
 }
 
 func.func @return_a_value() -> ui32

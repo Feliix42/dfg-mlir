@@ -175,10 +175,11 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
     let regions = (region AnyRegion: $initBody,
                           AnyRegion: $body);
 
-    // let builders = [
-    //     OpBuilder<(ins "StringRef":$name, "FunctionType":$function_type,
-    //                    CArg<"ValueRange", "{}">: $iterArgs)>
-    // ];
+    let skipDefaultBuilders = 1;
+    let builders = [
+        OpBuilder<(ins "StringRef":$name, "FunctionType":$function_type,
+                       CArg<"ArrayRef<Type>", "{}">:$iter_args)>
+    ];
 
     let extraClassDeclaration = [{
         /// Returns whether the process is externally defined
