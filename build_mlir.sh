@@ -4,8 +4,8 @@ set -euo pipefail
 
 # LLVM and CIRCT hashes to build
 # NOTE: The LLVM hash *must* match the hash required by CIRCT
-LLVMHASH=08ed557714eed7f5cde9d1c5606f58280683884a 
-CIRCTHASH=39b4f01a665e62b8770ea66b31abe7c1b8a9bfb2 
+LLVMHASH=2ee2b6aa7a3d9ba6ba13f6881b25e26d7d12c823
+CIRCTHASH=464f177ddcd3eb737fe8a592d20a24b15f25aef6
 
 LIBDIR=$PWD/libs
 LLVMDIR=$LIBDIR/llvm
@@ -13,7 +13,13 @@ CIRCTDIR=$LIBDIR/circt
 LLVMOUT=$LIBDIR/llvm_build
 CIRCTOUT=$LIBDIR/circt_build
 
-CPUCOUNT=$(nproc)
+if [ -x "$(nproc)" ]
+then
+    CPUCOUNT=$(nproc)
+else
+    # MacOS
+    CPUCOUNT=$(sysctl -n hw.ncpu)
+fi
 
 mkdir -p $LIBDIR
 
