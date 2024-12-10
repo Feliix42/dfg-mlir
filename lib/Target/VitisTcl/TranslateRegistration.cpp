@@ -12,8 +12,8 @@ namespace mlir {
 namespace vitis {
 
 static llvm::cl::opt<std::string> TargetDevice(
-    "target-device",
-    llvm::cl::desc("Target FPGA device"),
+    "vitis-target-device", // Unique name
+    llvm::cl::desc("Target FPGA device for Vitis Tcl"),
     llvm::cl::init("xck26-sfvc784-2LV-c"));
 
 void registerToVitisTclTranslation()

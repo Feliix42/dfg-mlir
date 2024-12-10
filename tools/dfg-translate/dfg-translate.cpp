@@ -6,6 +6,7 @@
 #include "circt/InitAllTranslations.h"
 #include "dfg-mlir/Target/VitisCpp/VitisCppEmitter.h"
 #include "dfg-mlir/Target/VitisTcl/VitisTclEmitter.h"
+#include "dfg-mlir/Target/VivadoTcl/VivadoTclEmitter.h"
 #include "mlir/InitAllTranslations.h"
 #include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
 
@@ -16,6 +17,9 @@ namespace vitis {
 void registerToVitisCppTranslation();
 void registerToVitisTclTranslation();
 } // namespace vitis
+namespace dfg {
+void registerToVivadoTclTranslation();
+} // namespace dfg
 } // namespace mlir
 
 int main(int argc, char* argv[])
@@ -24,6 +28,7 @@ int main(int argc, char* argv[])
     circt::registerAllTranslations();
     vitis::registerToVitisCppTranslation();
     vitis::registerToVitisTclTranslation();
+    dfg::registerToVivadoTclTranslation();
 
     return failed(
         mlirTranslateMain(argc, argv, "DFG Translation Testing Tool"));
