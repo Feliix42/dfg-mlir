@@ -252,30 +252,152 @@ translateToVivadoTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
         }
     }
     ios << "\n";
-    // debug: the dma ports
-    // for (auto arg : regionOp.getBody().getArguments())
-    //     ios << regionIODmaPorts[arg] << "\n";
 
     for (auto &opi : regionOp.getBody().getOps())
         if (failed(emitOperation(opi, os)))
             return emitError(opi.getLoc(), "cannot emit this operation");
-    // debug: the fifo ports
-    // for (auto port : channelIOFifoPorts)
-    //     ios << port.first.getType() << ": " << port.second << "\n";
-
-    // TODO: the rest
+    // Apply automations
+    // DMAs
+    for (size_t i = 0; i < std::max(numInputs, numOutputs); i++) {
+        ios << "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { "
+               "Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master "
+               "{/zynq_mpsoc/M_AXI_HPM0_FPD} Slave {/dma_"
+            << i
+            << "/S_AXI_LITE} ddr_seg {Auto} intc_ip {New AXI Interconnect} "
+               "master_apm {0}}  [get_bd_intf_pins dma_"
+            << i << "/S_AXI_LITE]\n";
+    }
+    bool smcCreated = false;
+    for (int i = 0; i < numDmaReadWrites; i++) {
+        auto intcIP = smcCreated ? "/axi_smc" : "New AXI SmartConnect";
+        auto getPin = smcCreated ? "dma_" + std::to_string(i) + "/M_AXI_MM2S"
+                                 : "zynq_mpsoc/S_AXI_HPC0_FPD";
+        ios << "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config "
+               "{ Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} "
+               "Master {/dma_"
+            << i
+            << "/M_AXI_MM2S} Slave {/zynq_mpsoc/S_AXI_HPC0_FPD} ddr_seg "
+               "{Auto} intc_ip {"
+            << intcIP
+            << "} master_apm {0}}  "
+               "[get_bd_intf_pins "
+            << getPin << "]\n";
+        if (!smcCreated) smcCreated = true;
+        ios << "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config "
+               "{ Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} "
+               "Master {/dma_"
+            << i
+            << "/M_AXI_S2MM} Slave {/zynq_mpsoc/S_AXI_HPC0_FPD} ddr_seg "
+               "{Auto} intc_ip {/axi_smc} master_apm {0}}  [get_bd_intf_pins "
+               "dma_"
+            << i << "/M_AXI_S2MM]\n";
+    }
+    for (int i = 0; i < std::abs(int(numInputs - numOutputs)); i++) {
+        auto bias = i + std::min(numInputs, numOutputs);
+        auto intcIP = smcCreated ? "/axi_smc" : "New AXI SmartConnect";
+        auto direction = numInputs > numOutputs
+                             ? "dma_" + std::to_string(bias) + "/M_AXI_MM2S"
+                             : "dma_" + std::to_string(bias) + "/M_AXI_S2MM";
+        auto getPin = smcCreated ? direction : "zynq_mpsoc/S_AXI_HPC0_FPD";
+        ios << "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config "
+               "{ Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} "
+               "Master {/"
+            << getPin
+            << "} Slave {/zynq_mpsoc/S_AXI_HPC0_FPD} ddr_seg "
+               "{Auto} intc_ip {"
+            << intcIP << "} master_apm {0}}  [get_bd_intf_pins " << getPin
+            << "]\n";
+    }
+    ios << "\n";
+    // FIFO clock/reset
+    for (int i = 0; i < instanceNums["fifo"]; i++) {
+        ios << "apply_bd_automation -rule xilinx.com:bd_rule:clkrst "
+               "-config { "
+               "Clk {Auto}}  [get_bd_pins fifo_"
+            << i << "/s_axis_aclk]\n";
+    }
+    ios << "\n";
+    // The HLS IPs
+    for (auto &map : instanceNums) {
+        auto name = map.first();
+        if (name != "fifo" && name != "connection") {
+            for (int i = 0; i < map.second; i++) {
+                ios << "apply_bd_automation -rule xilinx.com:bd_rule:axi4 "
+                       "-config { Clk_master {Auto} Clk_slave {Auto} "
+                       "Clk_xbar "
+                       "{Auto} Master {/zynq_mpsoc/M_AXI_HPM0_FPD} Slave {/"
+                    << name << "_" << i
+                    << "/s_axi_control} ddr_seg {Auto} intc_ip {New AXI "
+                       "Interconnect} master_apm {0}}  [get_bd_intf_pins "
+                    << name << "_" << i << "/s_axi_control]\n";
+            }
+        }
+    }
+    ios << "\n";
 
     // Regenerate the layout
     ios << "regenerate_bd_layout\n";
+    // Validate the design
+    ios << "puts \"INFO: Validating block design: $bd_name\"\n";
+    ios << "validate_bd_design\n";
     // Save block design
     ios << "save_bd_design\n";
     // Close the block design
     ios << "puts \"INFO: Closing block design: $bd_name\"\n";
     ios << "close_bd_design [get_bd_designs $bd_name]\n";
+    // Create a HDL wrapper
+    ios << "puts \"INFO: Generating HDL wrapper for block design: $bd_name\"\n";
+    ios << "make_wrapper -files [get_files "
+           "\"$project_dir/$project_name.srcs/sources_1/bd/$bd_name/"
+           "$bd_name.bd\"] -top\n";
+    // Add wrapper as top
+    ios << "set wrapper_path "
+           "\"$project_dir/$project_name.srcs/sources_1/bd/$bd_name/hdl/"
+           "${bd_name}_wrapper.v\"\n";
+    ios << "add_files $wrapper_path\n";
+    ios << "set_property top \"${bd_name}_wrapper\" [get_filesets sources_1]\n";
     ios << "\n";
 
     // TODO: sythn and impl
+    // Get the maximum number of cores that can use for synth and impl
+    ios << "set max_cores [get_param general.maxThreads]\n";
+    ios << "puts \"INFO: Using up to $max_cores threads for synthesis and "
+           "implementation.\"\n";
+    // Synthesis
+    ios << "puts \"INFO: Running Synthesis...\"\n";
+    ios << "launch_runs synth_1 -jobs $max_cores\n";
+    ios << "wait_on_run synth_1\n";
+    // Implementation
+    ios << "puts \"INFO: Running Implementation...\"\n";
+    ios << "launch_runs impl_1 -jobs $max_cores\n";
+    ios << "wait_on_run impl_1\n";
+    // Get WNS to estimate the maximum freq can be utilized
+    ios << "open_run impl_1\n";
+    ios << "set wns [get_property SLACK [get_timing_paths]]\n";
+    ios << "set max_freq [expr {floor(1000 / (10 - $wns))}]\n";
+    ios << "close_design\n";
+    // Open bd_design and configure the freq again
+    ios << "open_bd_design "
+           "\"$project_dir/$project_name.srcs/sources_1/bd/$bd_name/"
+           "$bd_name.bd\"\n";
+    ios << "set_property CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ $max_freq "
+           "[get_bd_cell zynq_mpsoc]\n";
+    ios << "save_bd_design\n";
+    ios << "close_bd_design [get_bd_designs $bd_name]\n";
+    // Rerun synth and impl
+    ios << "puts \"INFO: Rerunning Synthesis...\"\n";
+    ios << "reset_run synth_1\n";
+    ios << "launch_runs synth_1 -jobs $max_cores\n";
+    ios << "wait_on_run synth_1\n";
+    ios << "puts \"INFO: Running Implementation...\"\n";
+    ios << "reset_run impl_1\n";
+    ios << "launch_runs impl_1 -to_step write_bitstream -jobs $max_cores\n";
+    ios << "wait_on_run impl_1\n";
+    ios << "\n";
 
+    // Export the hardware
+    ios << "write_hw_platform -fixed -include_bit -force -file "
+           "$project_dir/$project_name_bd.xsa\n";
     // Exit Vivado
     ios << "exit\n";
 
