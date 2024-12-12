@@ -725,10 +725,6 @@ void OperatorOp::build(
     blockArgTypes.append(
         function_type.getInputs().begin(),
         function_type.getInputs().end());
-    // FIXME (feliix42): The outputs should not be part of the argument list for OperatorOp!
-    blockArgTypes.append(
-        function_type.getResults().begin(),
-        function_type.getResults().end());
     blockArgTypes.append(iter_args.begin(), iter_args.end());
     body->addArguments(
         blockArgTypes,
@@ -797,7 +793,6 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
         ArrayAttr::get(builder.getContext(), iterArgsTypeAttr));
 
     // merge both argument lists for the block arguments
-    inVals.append(outVals);
     inVals.append(iterVals);
 
     OptionalParseResult attrResult =
@@ -853,7 +848,7 @@ void OperatorOp::print(OpAsmPrinter &p)
     ArrayRef<Type> inputTypes = getFunctionType().getInputs();
     ArrayRef<Type> outputTypes = getFunctionType().getResults();
     auto numArgs = body.getArguments().size();
-    auto bias = inputTypes.size() + outputTypes.size();
+    auto bias = inputTypes.size();
     auto hasIterArgs =
         !op->getAttrOfType<ArrayAttr>("iter_args_types").getValue().empty();
 
@@ -877,10 +872,11 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
 
-            if (isExternal)
-                p << "\%arg" << i;
-            else
-                p.printOperand(body.getArgument(i));
+            p << "\%arg" << i;
+            // if (isExternal)
+            //     p << "\%arg" << i;
+            // else
+            //     p.printOperand(body.getArgument(i));
             p << " : " << outputTypes[i - inpSize];
         }
         p << ")";
@@ -947,19 +943,19 @@ LogicalResult OperatorOp::verify()
         }
     }
 
-    // Verify that all output ports are only used in OutputOp
-    // and all iter args are only used in YieldOp
-    auto numInputs = getFunctionType().getNumInputs();
-    auto numOutputs = getFunctionType().getNumResults();
-    if (!getBody().empty())
-        for (size_t i = numInputs; i < numInputs + numOutputs; i++) {
-            for (Operation* user : getBody().getArgument(i).getUsers())
-                if (!isa<OutputOp>(user))
-                    return ::emitError(
-                        user->getLoc(),
-                        "Output ports can only be used to output data into "
-                        "them.");
-        }
+    // // Verify that all output ports are only used in OutputOp
+    // // and all iter args are only used in YieldOp
+    // auto numInputs = getFunctionType().getNumInputs();
+    // auto numOutputs = getFunctionType().getNumResults();
+    // if (!getBody().empty())
+    //     for (size_t i = numInputs; i < numInputs + numOutputs; i++) {
+    //         for (Operation* user : getBody().getArgument(i).getUsers())
+    //             if (!isa<OutputOp>(user))
+    //                 return ::emitError(
+    //                     user->getLoc(),
+    //                     "Output ports can only be used to output data into "
+    //                     "them.");
+    //     }
 
     return success();
 }
