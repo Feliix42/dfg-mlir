@@ -3,7 +3,6 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
-#include "circt/InitAllTranslations.h"
 #include "dfg-mlir/Target/VitisCpp/VitisCppEmitter.h"
 #include "dfg-mlir/Target/VitisTcl/VitisTclEmitter.h"
 #include "dfg-mlir/Target/VivadoTcl/VivadoTclEmitter.h"
@@ -25,7 +24,6 @@ void registerToVivadoTclTranslation();
 int main(int argc, char* argv[])
 {
     registerAllTranslations();
-    circt::registerAllTranslations();
     vitis::registerToVitisCppTranslation();
     vitis::registerToVitisTclTranslation();
     dfg::registerToVivadoTclTranslation();

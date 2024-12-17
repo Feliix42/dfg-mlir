@@ -3,7 +3,6 @@
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
-#include "circt/InitAllDialects.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
 #include "mlir/IR/Dialect.h"
@@ -22,7 +21,6 @@ int main(int argc, char* argv[])
 {
     DialectRegistry registry;
     registerAllDialects(registry);
-    circt::registerAllDialects(registry);
 
     registry.insert<dfg::DfgDialect, vitis::VitisDialect>();
 

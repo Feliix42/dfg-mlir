@@ -18,7 +18,6 @@
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
-#include <circt/Support/LLVM.h>
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/Support/LogicalResult.h>
 
