@@ -22,7 +22,7 @@ cmake -S llvm -B build -G Ninja \
     -DCMAKE_CXX_STANDARD=17 \
     -DLLVM_TARGETS_TO_BUILD="host" \
     -DLLVM_ENABLE_PROJECTS="mlir" \
-    -DLLVM_USE_LINKER=mold \
+    -DLLVM_USE_LINKER=lld \
     -DBUILD_SHARED_LIBS=1 \
     -DLLVM_INSTALL_UTILS=ON \
     -DLLVM_ENABLE_ASSERTIONS=ON \
@@ -52,7 +52,7 @@ cmake -B build -G Ninja \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_CXX_STANDARD=20 \
-    -DLLVM_USE_LINKER=mold
+    -DLLVM_USE_LINKER=lld
 
 # Building dfg-mlir
 
