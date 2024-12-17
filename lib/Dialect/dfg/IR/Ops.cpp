@@ -5,19 +5,14 @@
 
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 
-#include "dfg-mlir/Dialect/dfg/Enums.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
-#include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #define DEBUG_TYPE "dfg-ops"
 
@@ -40,7 +35,7 @@ constexpr char kOperandSegmentSizesAttr[] = "operandSegmentSizes";
 /// @param arguments A list of arguments to parse
 /// @return A parse result indicating success or failure to parse.
 struct TypeId {
-    static Type get(MLIRContext* ctx, Type t) { return t; }
+    static Type get(MLIRContext*, Type t) { return t; }
 };
 template<typename T>
 static ParseResult parseChannelArgumentList(
@@ -705,6 +700,43 @@ LogicalResult ProcessOp::verify()
 // OperatorOp
 //===----------------------------------------------------------------------===//
 
+void OperatorOp::build(
+    OpBuilder &builder,
+    OperationState &state,
+    StringRef name,
+    FunctionType function_type,
+    ArrayRef<Type> iter_args)
+{
+    state.addAttribute(
+        SymbolTable::getSymbolAttrName(),
+        builder.getStringAttr(name));
+    state.addAttribute(
+        OperatorOp::getFunctionTypeAttrName(state.name),
+        TypeAttr::get(function_type));
+
+    // add init body (no arguments)
+    state.addRegion();
+    // add actual body region
+    Region* bodyRegion = state.addRegion();
+    Block* body = new Block();
+    bodyRegion->push_back(body);
+
+    SmallVector<Type> blockArgTypes;
+    blockArgTypes.append(
+        function_type.getInputs().begin(),
+        function_type.getInputs().end());
+    blockArgTypes.append(iter_args.begin(), iter_args.end());
+    body->addArguments(
+        blockArgTypes,
+        SmallVector<Location>(blockArgTypes.size(), builder.getUnknownLoc()));
+
+    SmallVector<Attribute> iterArgsTypesAttr;
+    for (Type ty : iter_args) iterArgsTypesAttr.push_back(TypeAttr::get(ty));
+    state.addAttribute(
+        "iter_args_types",
+        ArrayAttr::get(builder.getContext(), iterArgsTypesAttr));
+}
+
 ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
 {
     auto &builder = parser.getBuilder();
@@ -761,7 +793,6 @@ ParseResult OperatorOp::parse(OpAsmParser &parser, OperationState &result)
         ArrayAttr::get(builder.getContext(), iterArgsTypeAttr));
 
     // merge both argument lists for the block arguments
-    inVals.append(outVals);
     inVals.append(iterVals);
 
     OptionalParseResult attrResult =
@@ -817,7 +848,7 @@ void OperatorOp::print(OpAsmPrinter &p)
     ArrayRef<Type> inputTypes = getFunctionType().getInputs();
     ArrayRef<Type> outputTypes = getFunctionType().getResults();
     auto numArgs = body.getArguments().size();
-    auto bias = inputTypes.size() + outputTypes.size();
+    auto bias = inputTypes.size();
     auto hasIterArgs =
         !op->getAttrOfType<ArrayAttr>("iter_args_types").getValue().empty();
 
@@ -841,10 +872,11 @@ void OperatorOp::print(OpAsmPrinter &p)
         for (unsigned i = inpSize; i < outputTypes.size() + inpSize; i++) {
             if (i > inpSize) p << ", ";
 
-            if (isExternal)
-                p << "\%arg" << i;
-            else
-                p.printOperand(body.getArgument(i));
+            p << "\%arg" << i;
+            // if (isExternal)
+            //     p << "\%arg" << i;
+            // else
+            //     p.printOperand(body.getArgument(i));
             p << " : " << outputTypes[i - inpSize];
         }
         p << ")";
@@ -911,19 +943,19 @@ LogicalResult OperatorOp::verify()
         }
     }
 
-    // Verify that all output ports are only used in OutputOp
-    // and all iter args are only used in YieldOp
-    auto numInputs = getFunctionType().getNumInputs();
-    auto numOutputs = getFunctionType().getNumResults();
-    if (!getBody().empty())
-        for (size_t i = numInputs; i < numInputs + numOutputs; i++) {
-            for (Operation* user : getBody().getArgument(i).getUsers())
-                if (!isa<OutputOp>(user))
-                    return ::emitError(
-                        user->getLoc(),
-                        "Output ports can only be used to output data into "
-                        "them.");
-        }
+    // // Verify that all output ports are only used in OutputOp
+    // // and all iter args are only used in YieldOp
+    // auto numInputs = getFunctionType().getNumInputs();
+    // auto numOutputs = getFunctionType().getNumResults();
+    // if (!getBody().empty())
+    //     for (size_t i = numInputs; i < numInputs + numOutputs; i++) {
+    //         for (Operation* user : getBody().getArgument(i).getUsers())
+    //             if (!isa<OutputOp>(user))
+    //                 return ::emitError(
+    //                     user->getLoc(),
+    //                     "Output ports can only be used to output data into "
+    //                     "them.");
+    //     }
 
     return success();
 }

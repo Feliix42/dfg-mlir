@@ -9,7 +9,13 @@ LIBDIR=$PWD/libs
 LLVMDIR=$LIBDIR/llvm
 LLVMOUT=$LIBDIR/llvm_build
 
-CPUCOUNT=$(nproc)
+if [ -x "$(nproc)" ]
+then
+    CPUCOUNT=$(nproc)
+else
+    # MacOS
+    CPUCOUNT=$(sysctl -n hw.ncpu)
+fi
 
 mkdir -p $LIBDIR
 
