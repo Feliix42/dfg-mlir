@@ -60,7 +60,7 @@ translateToVitisTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
     ios << "create_clock -period $CLOCK_PERIOD -name default\n";
     ios << "set_top $func\n";
     ios << "csynth_design\n";
-    ios << "export_design -rtl verilog";
+    ios << "export_design -rtl verilog\n";
     ios << "close_solution\n";
     ios.unindent();
     ios << "}\n";
