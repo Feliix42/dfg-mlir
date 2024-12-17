@@ -397,7 +397,7 @@ translateToVivadoTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
 
     // Export the hardware
     ios << "write_hw_platform -fixed -include_bit -force -file "
-           "$project_dir/$project_name_bd.xsa\n";
+           "$project_dir/${project_name}_bd.xsa\n";
     // Exit Vivado
     ios << "exit\n";
 
