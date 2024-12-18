@@ -448,9 +448,7 @@ void ConvertDfgToVitisPass::runOnOperation()
 
     target.addLegalOp<UnrealizedConversionCastOp>();
     target.addLegalDialect<vitis::VitisDialect>();
-    target.addIllegalOp<ProcessOp, RegionOp, LoopOp, YieldOp, PullOp, PushOp>();
-    target.addIllegalDialect<arith::ArithDialect>();
-    target.addLegalDialect<dfg::DfgDialect>();
+    target.addIllegalDialect<arith::ArithDialect, DfgDialect>();
 
     if (failed(applyPartialConversion(
             getOperation(),

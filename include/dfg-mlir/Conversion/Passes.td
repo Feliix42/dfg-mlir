@@ -85,4 +85,17 @@ def ConvertDfgToVitis : Pass<"convert-dfg-to-vitis"> {
     ];
 }
 
+def ConvertLinalgToDfg : Pass<"convert-linalg-to-dfg"> {
+    let summary = "Convert linalg programs to dfg representation.";
+
+    let constructor = "mlir::createConvertLinalgToDfgPass()";
+
+    let dependentDialects = [
+        "dfg::DfgDialect",
+
+        "arith::ArithDialect",
+        "linalg::LinalgDialect"
+    ];
+}
+
 #endif // DFG_MLIR_CONVERSION_PASSES
