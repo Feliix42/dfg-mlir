@@ -45,26 +45,46 @@ Here are all the conversion/lowering passes as well as the transformation passes
 
 ### Conversion Passes
 #### `--insert-olympus-wrappers`
+TBD
+
 #### `--convert-dfg-to-async`
+This pass should convert `dfg` to `async` dialect, however, it's still under construction.
+
 #### `--convert-dfg-nodes-to-func`
+TBD
+
 #### `--convert-dfg-edges-to-llvm`
+TBD
+
 #### `--convert-dfg-to-olympus`
+TBD
+
 #### `--convert-dfg-to-vitis`
+This pass will convert `process` to `vitis.functio˙operations.
 
 ### Transformation Passes
 
 #### `dfg` dialect
 ##### `--dfg-inline-region`
+This transformation will inline the contents of some `dfg.region` into the place where it's embedded. Currently it only inlines all regions for FPGA backend, namely strategy **all**. Later a **smart** will be implemented.
+
 ##### `--dfg-operator-to-process`
+Before converting dfg to other dialects or translating, `operator` must be converted to the `process` with same semantics, which pulls/pushes only once and loops monitoring the input channels.
+
 ##### `--print-operator-to-yaml`
+This will generate yaml files for each `operator`, which can be utilized as inputs to [Mocasin](https://github.com/tud-ccc/mocasin) project.
 
 #### `vitis` dialect
 ##### None
 
 ## Targets
+Here are the translations implemented in this repository. Learn more about the usage in [Examples.td](Examples.md)
 
 ### `--dfg-to-vivado-tcl`
+This translation will generate a tcl script to be used with vivado command line tool. The contents of this script are based on the connection informations in `dfg.region`.
 
 ### `--vitis-to-cpp`
+This translation will transpile an MLIR code in `vitis` dialect into a C++ file with HLS directives.
 
 ### `--vitis-to-tcl`
+This translation will generate a tcl script to be used with vitis_run command line tool with `hls` mode. It will automatically synthesize every `vitis` functions and export IPs for later use.
