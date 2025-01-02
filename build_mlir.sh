@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # LLVM hash to build
-LLVMHASH=2ee2b6aa7a3d9ba6ba13f6881b25e26d7d12c823
+LLVMHASH=45e874e39030bc622ea43fbcfc4fcdd1dd404353
 
 LIBDIR=$PWD/libs
 LLVMDIR=$LIBDIR/llvm
