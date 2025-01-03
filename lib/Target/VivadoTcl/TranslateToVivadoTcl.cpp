@@ -258,18 +258,24 @@ translateToVivadoTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
             return emitError(opi.getLoc(), "cannot emit this operation");
     // Apply automations
     // DMAs
-    for (size_t i = 0; i < std::max(numInputs, numOutputs); i++) {
+    ios << "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { "
+           "Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master "
+           "{/zynq_mpsoc/M_AXI_HPM0_FPD} Slave {/dma_0/S_AXI_LITE} ddr_seg "
+           "{Auto} intc_ip {New AXI SmartConnect} "
+           "master_apm {0}}  [get_bd_intf_pins dma_0/S_AXI_LITE]\n";
+    ios << "set_property name smc_0 [get_bd_cells axi_smc]\n";
+    for (size_t i = 1; i < std::max(numInputs, numOutputs); i++) {
         ios << "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { "
                "Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master "
                "{/zynq_mpsoc/M_AXI_HPM0_FPD} Slave {/dma_"
             << i
-            << "/S_AXI_LITE} ddr_seg {Auto} intc_ip {New AXI Interconnect} "
+            << "/S_AXI_LITE} ddr_seg {Auto} intc_ip {/smc_0} "
                "master_apm {0}}  [get_bd_intf_pins dma_"
             << i << "/S_AXI_LITE]\n";
     }
     bool smcCreated = false;
     for (int i = 0; i < numDmaReadWrites; i++) {
-        auto intcIP = smcCreated ? "/axi_smc" : "New AXI SmartConnect";
+        auto intcIP = smcCreated ? "/smc_1" : "New AXI SmartConnect";
         auto getPin = smcCreated ? "dma_" + std::to_string(i) + "/M_AXI_MM2S"
                                  : "zynq_mpsoc/S_AXI_HPC0_FPD";
         ios << "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config "
@@ -282,19 +288,22 @@ translateToVivadoTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
             << "} master_apm {0}}  "
                "[get_bd_intf_pins "
             << getPin << "]\n";
-        if (!smcCreated) smcCreated = true;
+        if (!smcCreated) {
+            smcCreated = true;
+            ios << "set_property name smc_1 [get_bd_cells axi_smc]\n";
+        }
         ios << "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config "
                "{ Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} "
                "Master {/dma_"
             << i
             << "/M_AXI_S2MM} Slave {/zynq_mpsoc/S_AXI_HPC0_FPD} ddr_seg "
-               "{Auto} intc_ip {/axi_smc} master_apm {0}}  [get_bd_intf_pins "
+               "{Auto} intc_ip {/smc_1} master_apm {0}}  [get_bd_intf_pins "
                "dma_"
             << i << "/M_AXI_S2MM]\n";
     }
     for (int i = 0; i < std::abs(int(numInputs - numOutputs)); i++) {
         auto bias = i + std::min(numInputs, numOutputs);
-        auto intcIP = smcCreated ? "/axi_smc" : "New AXI SmartConnect";
+        auto intcIP = smcCreated ? "/smc_1" : "New AXI SmartConnect";
         auto direction = numInputs > numOutputs
                              ? "dma_" + std::to_string(bias) + "/M_AXI_MM2S"
                              : "dma_" + std::to_string(bias) + "/M_AXI_S2MM";
@@ -327,8 +336,8 @@ translateToVivadoTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
                        "Clk_xbar "
                        "{Auto} Master {/zynq_mpsoc/M_AXI_HPM0_FPD} Slave {/"
                     << name << "_" << i
-                    << "/s_axi_control} ddr_seg {Auto} intc_ip {New AXI "
-                       "Interconnect} master_apm {0}}  [get_bd_intf_pins "
+                    << "/s_axi_control} ddr_seg {Auto} intc_ip {/smc_0} "
+                       "master_apm {0}}  [get_bd_intf_pins "
                     << name << "_" << i << "/s_axi_control]\n";
             }
         }
