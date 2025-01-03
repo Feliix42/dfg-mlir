@@ -38,8 +38,7 @@ LogicalResult StreamType::verify(
     llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,
     Type stream_type)
 {
-    if (!llvm::isa<APAxiUType>(stream_type)
-        && !llvm::isa<APAxiSType>(stream_type))
+    if (!llvm::isa<APAxisType>(stream_type))
         return emitError()
                << "Only ap_axi type or alias is supported in stream";
     return success();

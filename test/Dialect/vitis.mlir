@@ -1,5 +1,5 @@
-!data_type = i32
-!stream_type = !vitis.ap_axis<32, 0, 0, 0, 1>
+!data_type = !vitis.ap_fixed<32,16>
+!stream_type = !vitis.hls_axis<!data_type, 0, 0, 0, 1>
 vitis.func @foo(%a: !vitis.stream<!stream_type>, %b: !vitis.stream<!stream_type>)
 {
     vitis.while_true {
@@ -13,7 +13,8 @@ vitis.func @foo(%a: !vitis.stream<!stream_type>, %b: !vitis.stream<!stream_type>
 }
 vitis.func @mac(%a: !vitis.stream<!stream_type>, %b: !vitis.stream<!stream_type>, %c: !vitis.stream<!stream_type>)
 {
-    %iter_arg = vitis.constant 0 : !data_type
+    %c0_i32 = vitis.constant 0 : i32
+    %iter_arg = vitis.variable init %c0_i32 : !data_type
     vitis.while_true {
         %0 = vitis.stream.read %a : !vitis.stream<!stream_type> -> !stream_type
         %1 = vitis.stream.read %b : !vitis.stream<!stream_type> -> !stream_type
@@ -24,7 +25,7 @@ vitis.func @mac(%a: !vitis.stream<!stream_type>, %b: !vitis.stream<!stream_type>
         %sum = vitis.arith.add %product, %iter_arg : !data_type
         vitis.update %iter_arg, %sum : !data_type
         
-        %result = vitis.define : !stream_type
+        %result = vitis.variable : !stream_type
         vitis.stream.set_data(%sum) %result : !data_type -> !stream_type
 
         %last_a = vitis.stream.get_last %0 : !stream_type -> i1

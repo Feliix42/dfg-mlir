@@ -13,26 +13,31 @@ include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mlir/IR/AttrTypeBase.td"
 
-def Vitis_APAxiUType : Vitis_Type<"APAxiU", []> {
-    let mnemonic = "ap_axiu";
-    let summary = "ap_axiu<DATAWIDTH, keep, user, dest, AXIS_ENABLE_LAST>";
+def Vitis_APFixedType : Vitis_Type<"APFixed", []> {
+    let mnemonic = "ap_fixed";
+    let summary = "ap_fixed<DATAWIDTH, INT_WIDTH>";
     let parameters = (ins "int64_t":$datawidth,
-                          "int64_t":$keep,
-                          "int64_t":$user,
-                          "int64_t":$dest,
-                          "bool":$tlast);
-    let assemblyFormat = "`<` $datawidth `,` $keep `,` $user `,` $dest `,` $tlast `>`";
+                          "int64_t":$int_width);
+    let assemblyFormat = "`<` $datawidth `,` $int_width";
 }
 
-def Vitis_APAxiSType : Vitis_Type<"APAxiS", []> {
-    let mnemonic = "ap_axis";
-    let summary = "ap_axis<DATAWIDTH, keep, user, dest, AXIS_ENABLE_LAST>";
+def Vitis_APFixedUType : Vitis_Type<"APFixedU", []> {
+    let mnemonic = "ap_ufixed";
+    let summary = "ap_fixed<DATAWIDTH, INT_WIDTH>";
     let parameters = (ins "int64_t":$datawidth,
+                          "int64_t":$int_width);
+    let assemblyFormat = "`<` $datawidth `,` $int_width";
+}
+
+def Vitis_APAxisType : Vitis_Type<"APAxis", []> {
+    let mnemonic = "hls_axis";
+    let summary = "hls::axis<DATATYPE, keep, user, dest, AXIS_ENABLE_LAST>";
+    let parameters = (ins "Type":$elem_type,
                           "int64_t":$keep,
                           "int64_t":$user,
                           "int64_t":$dest,
                           "bool":$tlast);
-    let assemblyFormat = "`<` $datawidth `,` $keep `,` $user `,` $dest `,` $tlast `>`";
+    let assemblyFormat = "`<` $elem_type `,` $keep `,` $user `,` $dest `,` $tlast `>`";
 }
 
 def Vitis_StreamType : Vitis_Type<"Stream", []> {

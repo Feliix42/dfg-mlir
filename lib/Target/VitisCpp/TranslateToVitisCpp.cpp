@@ -571,16 +571,25 @@ LogicalResult VitisCppEmitter::emitType(Location loc, Type vitisType)
         else
             return (os << "ap_int<" << datawidth << ">"), success();
     }
-    if (auto type = dyn_cast<APAxiUType>(vitisType)) {
-        auto last = type.getTlast() ? ", AXIS_ENABLE_LAST>" : ">";
-        os << "ap_axiu<" << type.getDatawidth() << ", " << type.getKeep()
-           << ", " << type.getUser() << ", " << type.getDest() << last;
+    if (auto type = dyn_cast<APFixedType>(vitisType)) {
+        os << "ap_fixed<" << type.getDatawidth() << ", " << type.getIntWidth()
+           << ">";
         return success();
     }
-    if (auto type = dyn_cast<APAxiSType>(vitisType)) {
+    if (auto type = dyn_cast<APFixedUType>(vitisType)) {
+        os << "ap_ufixed<" << type.getDatawidth() << ", " << type.getIntWidth()
+           << ">";
+        return success();
+    }
+    if (auto type = dyn_cast<APAxisType>(vitisType)) {
+        auto elemTy = type.getElemType();
         auto last = type.getTlast() ? ", AXIS_ENABLE_LAST>" : ">";
-        os << "ap_axis<" << type.getDatawidth() << ", " << type.getKeep()
-           << ", " << type.getUser() << ", " << type.getDest() << last;
+        os << "hls::axis<";
+        if (failed(emitType(loc, elemTy)))
+            return emitError(loc, "cannot emit element type inside hls::axis ")
+                   << elemTy;
+        os << ", " << type.getKeep() << ", " << type.getUser() << ", "
+           << type.getDest() << last;
         return success();
     }
     if (auto type = dyn_cast<StreamType>(vitisType)) {

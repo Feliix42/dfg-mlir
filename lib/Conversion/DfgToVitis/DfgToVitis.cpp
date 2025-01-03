@@ -220,24 +220,13 @@ struct ConvertPushToStreamWrite : OpConversionPattern<PushOp> {
                 pushedValue,
                 vitisStream);
         else {
-            Type varTy;
-            if (pushedValue.getType().isUnsignedInteger()) {
-                varTy = vitis::APAxiUType::get(
-                    ctx,
-                    pushedValue.getType().getIntOrFloatBitWidth(),
-                    0,
-                    0,
-                    0,
-                    true);
-            } else {
-                varTy = vitis::APAxiSType::get(
-                    ctx,
-                    pushedValue.getType().getIntOrFloatBitWidth(),
-                    0,
-                    0,
-                    0,
-                    true);
-            }
+            Type varTy = vitis::APAxisType::get(
+                ctx,
+                pushedValue.getType(),
+                0,
+                0,
+                0,
+                true);
             auto variableOp =
                 rewriter.create<vitis::VariableOp>(loc, varTy, Value());
             rewriter.create<vitis::StreamSetDataOp>(
@@ -389,27 +378,9 @@ void ConvertDfgToVitisPass::runOnOperation()
         if (!isa<IntegerType>(elemTy))
             return Type();
         else {
-            auto bitwidth = elemTy.getIntOrFloatBitWidth();
-            if (elemTy.isUnsignedInteger())
-                return vitis::StreamType::get(
-                    &getContext(),
-                    vitis::APAxiUType::get(
-                        &getContext(),
-                        bitwidth,
-                        0,
-                        0,
-                        0,
-                        true));
-            else
-                return vitis::StreamType::get(
-                    &getContext(),
-                    vitis::APAxiSType::get(
-                        &getContext(),
-                        bitwidth,
-                        0,
-                        0,
-                        0,
-                        true));
+            return vitis::StreamType::get(
+                &getContext(),
+                vitis::APAxisType::get(&getContext(), elemTy, 0, 0, 0, true));
         }
     });
     converter.addConversion([&](OutputType type) -> Type {
@@ -417,27 +388,9 @@ void ConvertDfgToVitisPass::runOnOperation()
         if (!isa<IntegerType>(elemTy))
             return Type();
         else {
-            auto bitwidth = elemTy.getIntOrFloatBitWidth();
-            if (elemTy.isUnsignedInteger())
-                return vitis::StreamType::get(
-                    &getContext(),
-                    vitis::APAxiUType::get(
-                        &getContext(),
-                        bitwidth,
-                        0,
-                        0,
-                        0,
-                        true));
-            else
-                return vitis::StreamType::get(
-                    &getContext(),
-                    vitis::APAxiSType::get(
-                        &getContext(),
-                        bitwidth,
-                        0,
-                        0,
-                        0,
-                        true));
+            return vitis::StreamType::get(
+                &getContext(),
+                vitis::APAxisType::get(&getContext(), elemTy, 0, 0, 0, true));
         }
     });
 

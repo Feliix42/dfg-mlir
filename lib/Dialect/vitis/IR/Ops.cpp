@@ -90,9 +90,20 @@ ParseResult VariableOp::parse(OpAsmParser &parser, OperationState &result)
     // Add the result type to the operation state
     result.addTypes(variableType);
 
+    unsigned bitwidth = 0;
+    if (isa<IntegerType>(variableType))
+        bitwidth = variableType.getIntOrFloatBitWidth();
+    else {
+        if (auto fixedTy = dyn_cast<APFixedType>(variableType))
+            bitwidth = fixedTy.getDatawidth();
+        if (auto fixedUTy = dyn_cast<APFixedUType>(variableType))
+            bitwidth = fixedUTy.getDatawidth();
+    }
+
     // Resolve the operand if it exists
     if (hasInit) {
-        if (parser.resolveOperand(initOperand, variableType, result.operands))
+        auto initTy = IntegerType::get(parser.getContext(), bitwidth);
+        if (parser.resolveOperand(initOperand, initTy, result.operands))
             return failure();
     }
 
@@ -112,11 +123,22 @@ void VariableOp::print(OpAsmPrinter &p)
 LogicalResult VariableOp::verify()
 {
     if (getInit()) {
-        auto initType = getInit().getType();
-        if (initType != getType())
+        auto initBitwidth = getInit().getType().getIntOrFloatBitWidth();
+        auto type = getType();
+        unsigned bitwidth = 0;
+        if (isa<IntegerType>(type))
+            bitwidth = type.getIntOrFloatBitWidth();
+        else {
+            if (auto fixedTy = dyn_cast<APFixedType>(type))
+                bitwidth = fixedTy.getDatawidth();
+            if (auto fixedUTy = dyn_cast<APFixedUType>(type))
+                bitwidth = fixedUTy.getDatawidth();
+        }
+
+        if (initBitwidth != bitwidth)
             return ::emitError(
                 getLoc(),
-                "Different types between variable and the init value.");
+                "Different bitwidth between variable and the init value.");
     }
     return success();
 }
