@@ -1231,6 +1231,20 @@ LogicalResult LoopOp::verify()
 void ChannelOp::build(
     OpBuilder &builder,
     OperationState &state,
+    Type encapsulatedType)
+{
+    build(
+        builder,
+        state,
+        InputType::get(builder.getContext(), encapsulatedType),
+        OutputType::get(builder.getContext(), encapsulatedType),
+        encapsulatedType,
+        nullptr);
+}
+
+void ChannelOp::build(
+    OpBuilder &builder,
+    OperationState &state,
     Type encapsulatedType,
     int bufferSize)
 {
