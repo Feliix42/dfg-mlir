@@ -269,10 +269,17 @@ LogicalResult RegionOp::verify()
     }
 
     thisRegion.walk([&](ChannelOp channelOp) {
-        auto inputUser = channelOp.getInChan().getUses().begin().getUser();
-        if (auto instantiateOp = dyn_cast<InstantiateOp>(inputUser)) {
-            auto calleeName =
-                instantiateOp.getCallee().getRootReference().str();
+        if (channelOp.getInChan().getUses().empty()) {
+            if (!channelOp.getOutChan().getUses().empty()) {
+                // ignore the problem if both input and output are unused
+                ::emitWarning(channelOp.getLoc(), "Channel input is unused. This is probably a bug in your graph.");
+            }
+        } else {
+            auto inputUser = channelOp.getInChan().getUses().begin().getUser();
+            if (auto instantiateOp = dyn_cast<InstantiateOp>(inputUser)) {
+                auto calleeName =
+                    instantiateOp.getCallee().getRootReference().str();
+            }
         }
     });
 
