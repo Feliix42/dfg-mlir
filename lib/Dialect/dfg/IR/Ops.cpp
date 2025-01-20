@@ -1,4 +1,4 @@
-/// Implements the vitis dialect ops.
+/// Implements the dfg dialect ops.
 ///
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)

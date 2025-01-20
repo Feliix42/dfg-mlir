@@ -23,7 +23,6 @@ def Dfg_RegionOp : Dfg_Op<
         "region",
         [
             Dfg_DataflowGraphOp,
-
             IsolatedFromAbove,
             NoTerminator
         ]>

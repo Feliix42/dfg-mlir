@@ -1,3 +1,5 @@
+add_subdirectory(Bufferize)
 add_subdirectory(InlineRegion)
+add_subdirectory(LowerInsideToScf)
 add_subdirectory(OperatorToProcess)
 add_subdirectory(PrintOperatorToYaml)

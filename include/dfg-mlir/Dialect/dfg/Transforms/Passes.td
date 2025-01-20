@@ -21,6 +21,23 @@ def DfgInlineRegion : Pass<"dfg-inline-region">
     ];
 }
 
+def DfgBufferize : Pass<"dfg-bufferize">
+{
+    let summary = "bufferize the dfg-mlir dialect";
+
+    let constructor = "mlir::dfg::createDfgBufferizePass()";
+    let dependentDialects = [
+        "mlir::bufferization::BufferizationDialect"
+    ];
+}
+
+def DfgLowerInsideToScf : Pass<"dfg-lower-inside-to-scf">
+{
+    let summary = "lower the contents of operator/process to scf level";
+
+    let constructor = "mlir::dfg::createDfgLowerInsideToScfPass()";
+}
+
 def DfgOperatorToProcess : Pass<"dfg-operator-to-process">
 {
     let summary = "convert each operator to process";
