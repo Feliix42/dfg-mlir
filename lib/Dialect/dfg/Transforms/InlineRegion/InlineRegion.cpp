@@ -92,8 +92,7 @@ private:
 
         ConversionTarget target(getContext());
         target.addIllegalOp<EmbedOp>();
-        target.markUnknownOpDynamicallyLegal(
-            [](Operation* op) { return true; });
+        target.markUnknownOpDynamicallyLegal([](Operation*) { return true; });
 
         if (failed(applyPartialConversion(op, target, std::move(patterns))))
             signalPassFailure();

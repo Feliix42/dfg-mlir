@@ -31,11 +31,11 @@ def DfgBufferize : Pass<"dfg-bufferize">
     ];
 }
 
-def DfgLowerInsideToScf : Pass<"dfg-lower-inside-to-scf">
+def DfgLowerInsideToLinalg : Pass<"dfg-lower-inside-to-linalg">
 {
-    let summary = "lower the contents of operator/process to scf level";
+    let summary = "lower the contents of operator/process to linalg level";
 
-    let constructor = "mlir::dfg::createDfgLowerInsideToScfPass()";
+    let constructor = "mlir::dfg::createDfgLowerInsideToLinalgPass()";
 }
 
 def DfgOperatorToProcess : Pass<"dfg-operator-to-process">

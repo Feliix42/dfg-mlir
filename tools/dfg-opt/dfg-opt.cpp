@@ -5,6 +5,7 @@
 
 #include "dfg-mlir/Conversion/Passes.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/LowerInsideToScf/LowerInsideToScf.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
 #include "mlir/IR/Dialect.h"
@@ -24,6 +25,7 @@ int main(int argc, char* argv[])
     registerAllPasses();
     dfg::registerConversionPasses();
     dfg::registerDfgPasses();
+    dfg::registerDfgLowerInsideToScfPipelines();
 
     registry.insert<dfg::DfgDialect, vitis::VitisDialect>();
 
