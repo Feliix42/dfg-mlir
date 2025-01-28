@@ -8,6 +8,7 @@
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/Bufferize/Bufferize.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/InlineRegion/InlineRegion.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/OpereatorToProcess/OperatorToProcess.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -81,6 +82,7 @@ std::unique_ptr<Pass> mlir::dfg::createDfgLowerInsideToLinalgPass()
 void mlir::dfg::addDfgLowerInsideToScfPasses(OpPassManager &pm)
 {
     pm.addPass(dfg::createDfgOperatorToProcessPass());
+    pm.addPass(dfg::createDfgInlineRegionPass());
     pm.addPass(dfg::createDfgBufferizePass());
     pm.addPass(dfg::createDfgLowerInsideToLinalgPass());
     pm.addPass(bufferization::createOneShotBufferizePass());

@@ -21,6 +21,7 @@
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Support/LLVM.h>
+#include <new>
 
 namespace mlir {
 namespace dfg {
@@ -36,12 +37,13 @@ using namespace mlir::dfg;
 
 namespace {
 
-struct BufferizeProcess : public OpRewritePattern<ProcessOp> {
-    BufferizeProcess(MLIRContext* context)
-            : OpRewritePattern<ProcessOp>(context) {};
+template<typename OpT>
+struct BufferizeProcessRegion : public OpRewritePattern<OpT> {
+    BufferizeProcessRegion(MLIRContext* context)
+            : OpRewritePattern<OpT>(context) {};
 
     LogicalResult
-    matchAndRewrite(ProcessOp op, PatternRewriter &rewriter) const override
+    matchAndRewrite(OpT op, PatternRewriter &rewriter) const override
     {
         auto funcTy = op.getFunctionType();
         SmallVector<Type> inputTypes, outputTypes;
@@ -74,15 +76,15 @@ struct BufferizeProcess : public OpRewritePattern<ProcessOp> {
             }
         }
 
-        auto newProcess = rewriter.create<ProcessOp>(
+        auto newOp = rewriter.create<OpT>(
             op.getLoc(),
             op.getSymNameAttr(),
             rewriter.getFunctionType(inputTypes, outputTypes));
-        Block* processBlock = &newProcess.getBody().front();
+        Block* processBlock = &newOp.getBody().front();
         IRMapping mapper;
         for (auto [oldArg, newArg] : llvm::zip(
                  op.getBody().getArguments(),
-                 newProcess.getBody().getArguments()))
+                 newOp.getBody().getArguments()))
             mapper.map(oldArg, newArg);
         rewriter.setInsertionPointToEnd(processBlock);
         for (auto &opi : op.getBody().getOps()) rewriter.clone(opi, mapper);
@@ -134,13 +136,37 @@ struct BufferizePush : public OpRewritePattern<PushOp> {
     }
 };
 
+struct BufferizeChannel : public OpRewritePattern<ChannelOp> {
+    BufferizeChannel(MLIRContext* context)
+            : OpRewritePattern<ChannelOp>(context) {};
+
+    LogicalResult
+    matchAndRewrite(ChannelOp op, PatternRewriter &rewriter) const override
+    {
+        auto tensorTy = dyn_cast<TensorType>(op.getEncapsulatedType());
+        auto memrefTy =
+            MemRefType::get(tensorTy.getShape(), tensorTy.getElementType());
+        auto newChannel = rewriter.create<ChannelOp>(
+            op.getLoc(),
+            memrefTy,
+            op.getBufferSize().has_value() ? op.getBufferSize().value() : 0);
+        op.getResult(0).replaceAllUsesWith(newChannel.getResult(0));
+        op.getResult(1).replaceAllUsesWith(newChannel.getResult(1));
+
+        rewriter.replaceOp(op, newChannel);
+        return success();
+    }
+};
+
 } // namespace
 
 void mlir::dfg::populateBufferizePatterns(RewritePatternSet &patterns)
 {
-    patterns.add<BufferizeProcess>(patterns.getContext());
+    patterns.add<BufferizeProcessRegion<ProcessOp>>(patterns.getContext());
     patterns.add<BufferizePull>(patterns.getContext());
     patterns.add<BufferizePush>(patterns.getContext());
+    patterns.add<BufferizeProcessRegion<RegionOp>>(patterns.getContext());
+    patterns.add<BufferizeChannel>(patterns.getContext());
 }
 
 namespace {
@@ -175,6 +201,22 @@ void DfgBufferizePass::runOnOperation()
     });
     target.addDynamicallyLegalOp<PushOp>([](PushOp op) {
         if (isa<TensorType>(op.getInp().getType())) return false;
+        return true;
+    });
+    target.addDynamicallyLegalOp<RegionOp>([](RegionOp op) {
+        auto funcTy = op.getFunctionType();
+        for (auto inputType : funcTy.getInputs())
+            if (isa<TensorType>(
+                    dyn_cast<OutputType>(inputType).getElementType()))
+                return false;
+        for (auto outputType : funcTy.getResults())
+            if (isa<TensorType>(
+                    dyn_cast<InputType>(outputType).getElementType()))
+                return false;
+        return true;
+    });
+    target.addDynamicallyLegalOp<ChannelOp>([](ChannelOp op) {
+        if (isa<TensorType>(op.getEncapsulatedType())) return false;
         return true;
     });
     target.markUnknownOpDynamicallyLegal([](Operation* op) {
