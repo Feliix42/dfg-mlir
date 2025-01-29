@@ -14,6 +14,7 @@ vitis.func @foo(%a: !vitis.stream<!stream_type>, %b: !vitis.stream<!stream_type>
 vitis.func @mac(%a: !vitis.stream<!stream_type>, %b: !vitis.stream<!stream_type>, %c: !vitis.stream<!stream_type>)
 {
     %c0_i32 = vitis.constant 0 : i32
+    %c0_f32 = vitis.constant 0.0 : f32
     %iter_arg = vitis.variable init %c0_i32 : !data_type
     vitis.while_true {
         %0 = vitis.stream.read %a : !vitis.stream<!stream_type> -> !stream_type

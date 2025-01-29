@@ -18,6 +18,7 @@
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
+#include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/Support/LogicalResult.h>
 
@@ -32,39 +33,6 @@ using namespace mlir::vitis;
 #include "dfg-mlir/Dialect/vitis/IR/Ops.cpp.inc"
 
 //===----------------------------------------------------------------------===//
-
-//===----------------------------------------------------------------------===//
-// ConstantOp
-//===----------------------------------------------------------------------===//
-
-ParseResult ConstantOp::parse(OpAsmParser &parser, OperationState &result)
-{
-    IntegerAttr valueAttr;
-
-    if (parser.parseAttribute(valueAttr, "value", result.attributes)
-        || parser.parseOptionalAttrDict(result.attributes))
-        return failure();
-
-    result.addTypes(valueAttr.getType());
-    return success();
-}
-
-void ConstantOp::print(OpAsmPrinter &p)
-{
-    p << " ";
-    p.printAttribute(getValueAttr());
-    p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"value"});
-}
-
-LogicalResult ConstantOp::verify()
-{
-    auto type = getType();
-    if (!isa<IntegerType>(type))
-        return ::emitError(
-            getLoc(),
-            "Only support integers for vitis code generation.");
-    return success();
-}
 
 //===----------------------------------------------------------------------===//
 // VariableOp
@@ -126,7 +94,7 @@ LogicalResult VariableOp::verify()
         auto initBitwidth = getInit().getType().getIntOrFloatBitWidth();
         auto type = getType();
         unsigned bitwidth = 0;
-        if (isa<IntegerType>(type))
+        if (isa<IntegerType>(type) || isa<FloatType>(type))
             bitwidth = type.getIntOrFloatBitWidth();
         else {
             if (auto fixedTy = dyn_cast<APFixedType>(type))

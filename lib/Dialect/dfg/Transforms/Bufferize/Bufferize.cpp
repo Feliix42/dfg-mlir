@@ -33,8 +33,6 @@ namespace dfg {
 using namespace mlir;
 using namespace mlir::dfg;
 
-#define DEBUG_TYPE "dfg-bufferize"
-
 namespace {
 
 template<typename OpT>
@@ -219,9 +217,7 @@ void DfgBufferizePass::runOnOperation()
         if (isa<TensorType>(op.getEncapsulatedType())) return false;
         return true;
     });
-    target.markUnknownOpDynamicallyLegal([](Operation* op) {
-        return op->getDialect()->getNamespace() != "dfg";
-    });
+    target.markUnknownOpDynamicallyLegal([](Operation*) { return true; });
 
     if (failed(applyPartialConversion(
             getOperation(),

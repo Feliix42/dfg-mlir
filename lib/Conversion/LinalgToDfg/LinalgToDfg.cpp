@@ -10,6 +10,7 @@
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/IRMapping.h"
@@ -46,6 +47,7 @@ void mlir::populateLinalgToDfgConversionPatterns(
     RewritePatternSet &patterns)
 {}
 
+// TODO: To systolic array
 namespace {
 struct ConvertLinalgToDfgPass
         : public impl::ConvertLinalgToDfgBase<ConvertLinalgToDfgPass> {
@@ -64,9 +66,9 @@ void ConvertLinalgToDfgPass::runOnOperation()
 
     populateLinalgToDfgConversionPatterns(converter, patterns);
 
-    target.addLegalOp<UnrealizedConversionCastOp>();
-    target.addLegalDialect<DfgDialect>();
-    target.addIllegalDialect<linalg::LinalgDialect>();
+    // target.addLegalOp<func::FuncOp>();
+    target.addLegalDialect<DfgDialect, arith::ArithDialect>();
+    target.addIllegalDialect<linalg::LinalgDialect, func::FuncDialect>();
 
     if (failed(applyPartialConversion(
             getOperation(),

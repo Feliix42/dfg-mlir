@@ -32,8 +32,7 @@ def Vitis_ConstantOp : Vitis_Op<"constant",
     let summary = "Constant operation";
     let arguments = (ins TypedAttrInterface:$value);
     let results = (outs AnyType:$result);
-    let hasCustomAssemblyFormat = 1;
-    let hasVerifier = 1;
+    let assemblyFormat = "attr-dict $value";
 }
 
 def Vitis_VariableOp : Vitis_Op<"variable", [Pure]>

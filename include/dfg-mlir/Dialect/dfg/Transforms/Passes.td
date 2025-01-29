@@ -9,6 +9,23 @@
 
 include "mlir/Pass/PassBase.td"
 
+def DfgBufferize : Pass<"dfg-bufferize">
+{
+    let summary = "bufferize the dfg-mlir dialect";
+
+    let constructor = "mlir::dfg::createDfgBufferizePass()";
+    let dependentDialects = [
+        "mlir::bufferization::BufferizationDialect"
+    ];
+}
+
+def DfgFlattenMemref : Pass<"dfg-flatten-memref">
+{
+    let summary = "flatten the memrefs inside dfg for vitis conversion";
+
+    let constructor = "mlir::dfg::createDfgFlattenMemrefPass()";
+}
+
 def DfgInlineRegion : Pass<"dfg-inline-region">
 {
     let summary = "inline region based on inline strategy";
@@ -18,16 +35,6 @@ def DfgInlineRegion : Pass<"dfg-inline-region">
     let options = [
         Option<"strategy", "strategy", "std::string", /*default=*/"\"full\"",
             "Strategy to inline regions">
-    ];
-}
-
-def DfgBufferize : Pass<"dfg-bufferize">
-{
-    let summary = "bufferize the dfg-mlir dialect";
-
-    let constructor = "mlir::dfg::createDfgBufferizePass()";
-    let dependentDialects = [
-        "mlir::bufferization::BufferizationDialect"
     ];
 }
 

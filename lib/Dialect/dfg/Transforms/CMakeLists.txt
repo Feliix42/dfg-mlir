@@ -1,4 +1,5 @@
 add_subdirectory(Bufferize)
+add_subdirectory(FlattenMemref)
 add_subdirectory(InlineRegion)
 add_subdirectory(LowerInsideToScf)
 add_subdirectory(OperatorToProcess)

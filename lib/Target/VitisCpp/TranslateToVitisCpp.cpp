@@ -571,6 +571,10 @@ LogicalResult VitisCppEmitter::emitType(Location loc, Type vitisType)
         else
             return (os << "ap_int<" << datawidth << ">"), success();
     }
+    if (auto type = dyn_cast<SizeTType>(vitisType)) {
+        os << "size_t";
+        return success();
+    }
     if (auto type = dyn_cast<APFixedType>(vitisType)) {
         os << "ap_fixed<" << type.getDatawidth() << ", " << type.getIntWidth()
            << ">";
