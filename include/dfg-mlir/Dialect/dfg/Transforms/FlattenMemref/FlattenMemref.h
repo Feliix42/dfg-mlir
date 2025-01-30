@@ -18,7 +18,9 @@ namespace dfg {
 
 //===----------------------------------------------------------------------===//
 
-void populateFlattenMemrefPatterns(RewritePatternSet &patterns);
+void populateFlattenMemrefPatterns(
+    RewritePatternSet &patterns,
+    TypeConverter &converter);
 
 std::unique_ptr<Pass> createDfgFlattenMemrefPass();
 
