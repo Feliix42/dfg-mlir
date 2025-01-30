@@ -26,6 +26,7 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/MLIRContext.h>
+#include <mlir/IR/OpImplementation.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/Types.h>
 #include <mlir/IR/Value.h>
@@ -175,19 +176,20 @@ struct FlattenPull : public OpRewritePattern<PullOp> {
     }
 };
 
-struct FlattenAlloc : public OpRewritePattern<memref::AllocOp> {
+template<typename OpT>
+struct FlattenAlloc : public OpRewritePattern<OpT> {
     TypeConverter converter;
     FlattenAlloc(MLIRContext* context, TypeConverter &converter)
-            : OpRewritePattern<memref::AllocOp>(context),
+            : OpRewritePattern<OpT>(context),
               converter(converter) {};
 
-    LogicalResult matchAndRewrite(memref::AllocOp op, PatternRewriter &rewriter)
-        const override
+    LogicalResult
+    matchAndRewrite(OpT op, PatternRewriter &rewriter) const override
     {
         auto memrefTy = op.getType();
         auto newMemrefTy =
             dyn_cast<MemRefType>(converter.convertType(memrefTy));
-        auto newAlloc = rewriter.create<memref::AllocOp>(
+        auto newAlloc = rewriter.create<OpT>(
             op.getLoc(),
             newMemrefTy,
             op.getAlignmentAttr());
@@ -229,7 +231,12 @@ void mlir::dfg::populateFlattenMemrefPatterns(
         patterns.getContext(),
         converter);
     patterns.add<FlattenPull>(patterns.getContext(), converter);
-    patterns.add<FlattenAlloc>(patterns.getContext(), converter);
+    patterns.add<FlattenAlloc<memref::AllocOp>>(
+        patterns.getContext(),
+        converter);
+    patterns.add<FlattenAlloc<memref::AllocaOp>>(
+        patterns.getContext(),
+        converter);
     patterns.add<FlattenProcessRegion<RegionOp>>(
         patterns.getContext(),
         converter);
