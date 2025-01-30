@@ -8,6 +8,7 @@
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/Bufferize/Bufferize.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/FlattenMemref/FlattenMemref.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/InlineRegion/InlineRegion.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/OpereatorToProcess/OperatorToProcess.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
@@ -29,6 +30,7 @@
 #include <mlir/IR/ValueRange.h>
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Pass/PassRegistry.h>
+#include <mlir/Transforms/Passes.h>
 
 namespace mlir {
 namespace dfg {
@@ -87,6 +89,9 @@ void mlir::dfg::addDfgLowerInsideToScfPasses(OpPassManager &pm)
     pm.addPass(dfg::createDfgLowerInsideToLinalgPass());
     pm.addPass(bufferization::createOneShotBufferizePass());
     pm.addPass(createConvertLinalgToLoopsPass());
+    pm.addPass(dfg::createDfgFlattenMemrefPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
 }
 
 void mlir::dfg::registerDfgLowerInsideToScfPipelines()
