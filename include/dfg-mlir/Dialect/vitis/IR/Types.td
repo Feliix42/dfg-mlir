@@ -17,12 +17,13 @@ def Vitis_SizeTType : Vitis_Type<"SizeT", []> {
     let mnemonic = "size_t";
     let summary = "size_t in C/C++";
 }
+
 def Vitis_ArrayType : Vitis_Type<"Array", []> {
     let mnemonic = "array";
     let summary = "C/C++ arrays with fixed size and data type";
     let parameters = (ins "int64_t":$size,
                           "Type":$elem_type);
-    let assemblyFormat = "`<` $size `x` $elem_type `>`";
+    let assemblyFormat = "`<`$size`x`$elem_type`>`";
 }
 
 def Vitis_APFixedType : Vitis_Type<"APFixed", []> {

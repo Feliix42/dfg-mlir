@@ -14,7 +14,6 @@ vitis.func @foo(%a: !vitis.stream<!stream_type>, %b: !vitis.stream<!stream_type>
 vitis.func @mac(%a: !vitis.stream<!stream_type>, %b: !vitis.stream<!stream_type>, %c: !vitis.stream<!stream_type>)
 {
     %c0_i32 = vitis.constant 0 : i32
-    %c0_f32 = vitis.constant 0.0 : f32
     %iter_arg = vitis.variable init %c0_i32 : !data_type
     vitis.while_true {
         %0 = vitis.stream.read %a : !vitis.stream<!stream_type> -> !stream_type
@@ -38,5 +37,26 @@ vitis.func @mac(%a: !vitis.stream<!stream_type>, %b: !vitis.stream<!stream_type>
 
         vitis.if_break %last
     }
+    vitis.return
+}
+
+vitis.func @test()
+{
+    %c0_f32 = vitis.constant 0.0 : f32
+    %array0 = vitis.variable init %c0_f32 : !vitis.array<4 x f32>
+    %array1 = vitis.variable init %c0_f32 : !vitis.array<4 x f32>
+    %c0 = vitis.constant 0 : index
+    %c1 = vitis.constant 1 : index
+    %c4 = vitis.constant 4 : index
+
+    vitis.for %i0 = %c0 to %c4 step %c1 {
+        vitis.for %i1 = %c0 to %c4 step %c1 {
+            %elem = vitis.array.read %array0[%i1] : !vitis.array<4 x f32>
+            vitis.array.write %elem, %array1[%i1] : !vitis.array<4 x f32>
+        }
+        %elem = vitis.array.read %array0[%i0] : !vitis.array<4 x f32>
+        vitis.array.write %elem, %array1[%i0] : !vitis.array<4 x f32>
+    }
+
     vitis.return
 }

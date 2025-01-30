@@ -18,8 +18,13 @@
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
+#include <functional>
+#include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Diagnostics.h>
+#include <mlir/IR/OperationSupport.h>
+#include <mlir/IR/Types.h>
+#include <mlir/Support/LLVM.h>
 #include <mlir/Support/LogicalResult.h>
 
 #define DEBUG_TYPE "vitis-ops"
@@ -37,6 +42,22 @@ using namespace mlir::vitis;
 //===----------------------------------------------------------------------===//
 // VariableOp
 //===----------------------------------------------------------------------===//
+
+unsigned getBitwidth(Type type, bool &isFloat)
+{
+    if (auto intTy = dyn_cast<IntegerType>(type)) return intTy.getWidth();
+    if (auto floatTy = dyn_cast<FloatType>(type)) {
+        isFloat = true;
+        return floatTy.getWidth();
+    }
+    if (auto fixedTy = dyn_cast<APFixedType>(type))
+        return fixedTy.getDatawidth();
+    if (auto fixedUTy = dyn_cast<APFixedUType>(type))
+        return fixedUTy.getDatawidth();
+    if (auto arrayTy = dyn_cast<vitis::ArrayType>(type))
+        return getBitwidth(arrayTy.getElemType(), isFloat);
+    return 0;
+}
 
 ParseResult VariableOp::parse(OpAsmParser &parser, OperationState &result)
 {
@@ -58,19 +79,25 @@ ParseResult VariableOp::parse(OpAsmParser &parser, OperationState &result)
     // Add the result type to the operation state
     result.addTypes(variableType);
 
-    unsigned bitwidth = 0;
-    if (isa<IntegerType>(variableType))
-        bitwidth = variableType.getIntOrFloatBitWidth();
-    else {
-        if (auto fixedTy = dyn_cast<APFixedType>(variableType))
-            bitwidth = fixedTy.getDatawidth();
-        if (auto fixedUTy = dyn_cast<APFixedUType>(variableType))
-            bitwidth = fixedUTy.getDatawidth();
-    }
-
     // Resolve the operand if it exists
+    bool isFloat = false;
+    unsigned bitwidth = getBitwidth(variableType, isFloat);
     if (hasInit) {
-        auto initTy = IntegerType::get(parser.getContext(), bitwidth);
+        Type initTy;
+        if (!isFloat)
+            initTy = IntegerType::get(parser.getContext(), bitwidth);
+        else {
+            switch (bitwidth) {
+            case 16: initTy = FloatType::getF16(parser.getContext()); break;
+            case 32: initTy = FloatType::getF32(parser.getContext()); break;
+            case 64: initTy = FloatType::getF64(parser.getContext()); break;
+            default:
+                return parser.emitError(
+                    parser.getNameLoc(),
+                    "Unsupported floating point bitwidth for init value.");
+            }
+        }
+
         if (parser.resolveOperand(initOperand, initTy, result.operands))
             return failure();
     }
@@ -93,16 +120,8 @@ LogicalResult VariableOp::verify()
     if (getInit()) {
         auto initBitwidth = getInit().getType().getIntOrFloatBitWidth();
         auto type = getType();
-        unsigned bitwidth = 0;
-        if (isa<IntegerType>(type) || isa<FloatType>(type))
-            bitwidth = type.getIntOrFloatBitWidth();
-        else {
-            if (auto fixedTy = dyn_cast<APFixedType>(type))
-                bitwidth = fixedTy.getDatawidth();
-            if (auto fixedUTy = dyn_cast<APFixedUType>(type))
-                bitwidth = fixedUTy.getDatawidth();
-        }
-
+        bool isFloat = false;
+        unsigned bitwidth = getBitwidth(type, isFloat);
         if (initBitwidth != bitwidth)
             return ::emitError(
                 getLoc(),
@@ -174,6 +193,53 @@ LogicalResult FuncOp::verify()
 //                 "Only support integers for vitis code generation.");
 //     return success();
 // }
+
+//===----------------------------------------------------------------------===//
+// ForOp
+//===----------------------------------------------------------------------===//
+
+ParseResult ForOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    auto &builder = parser.getBuilder();
+    Type type = builder.getIndexType();
+
+    OpAsmParser::Argument inductionVariable;
+    OpAsmParser::UnresolvedOperand lb, ub, step;
+
+    if (parser.parseOperand(inductionVariable.ssaName) || parser.parseEqual()
+        || parser.parseOperand(lb) || parser.parseKeyword("to")
+        || parser.parseOperand(ub) || parser.parseKeyword("step")
+        || parser.parseOperand(step))
+        return failure();
+
+    SmallVector<OpAsmParser::Argument> args;
+    SmallVector<OpAsmParser::UnresolvedOperand> operands;
+    args.push_back(inductionVariable);
+    args.front().type = type;
+    if (parser.resolveOperand(lb, type, result.operands)
+        || parser.resolveOperand(ub, type, result.operands)
+        || parser.resolveOperand(step, type, result.operands))
+        return failure();
+
+    Region* body = result.addRegion();
+    if (parser.parseRegion(*body, args)) return failure();
+
+    if (parser.parseOptionalAttrDict(result.attributes)) return failure();
+
+    return success();
+}
+
+void ForOp::print(OpAsmPrinter &p)
+{
+    p << " " << getInductionVar() << " = " << getLowerBound() << " to "
+      << getUpperBound() << " step " << getStep();
+    p << ' ';
+    p.printRegion(
+        getRegion(),
+        /*printEntryBlockArgs=*/false,
+        /*printBlockTerminators=*/false);
+    p.printOptionalAttrDict((*this)->getAttrs());
+}
 
 //===----------------------------------------------------------------------===//
 // VitisDialect

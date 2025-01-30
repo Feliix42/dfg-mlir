@@ -17,6 +17,7 @@ include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
 
+include "dfg-mlir/Dialect/vitis/IR/ArrayOps.td"
 include "dfg-mlir/Dialect/vitis/IR/ArithOps.td"
 include "dfg-mlir/Dialect/vitis/IR/LoopOps.td"
 include "dfg-mlir/Dialect/vitis/IR/StreamOps.td"
@@ -106,6 +107,43 @@ def Vitis_ReturnOp : Vitis_Op<"return",
     let assemblyFormat = "attr-dict";
 }
 
+def Vitis_IfBreakOp : Vitis_Op<"if_break",
+        [
+            Pure,
+            NoTerminator
+        ]>
+{
+
+    let summary = "if last signal is asserted, break to end exec";
+    let arguments = (ins I1:$condition);
+    let assemblyFormat = "$condition attr-dict";
+}
+
+def Vitis_ForOp : Vitis_Op<"for",
+        [
+            Pure,
+            NoTerminator,
+            AllTypesMatch<["lowerBound", "upperBound", "step"]>
+        ]>
+{
+    let summary = "for-loop";
+    let arguments = (ins Index:$lowerBound,
+                         Index:$upperBound,
+                         Index:$step);
+    let regions = (region SizedRegion<1>:$body);
+
+    let extraClassDeclaration = [{
+        using BodyBuilderFn =
+            function_ref<void(OpBuilder &, Location, Value)>;
+        Value getInductionVar() { return getBody().getArgument(0); }
+        void setLowerBound(Value bound) { getOperation()->setOperand(0, bound); }
+        void setUpperBound(Value bound) { getOperation()->setOperand(1, bound); }
+        void setStep(Value step) { getOperation()->setOperand(2, step); }
+    }];
+
+    let hasCustomAssemblyFormat = 1;
+}
+
 def Vitis_WhileOp : Vitis_Op<"while",
         [
             Pure,
@@ -127,18 +165,6 @@ def Vitis_WhileTrueOp : Vitis_Op<"while_true",
     let summary = "while-true-loop";
     let regions = (region SizedRegion<1>:$body);
     let assemblyFormat = "$body attr-dict";
-}
-
-def Vitis_IfBreakOp : Vitis_Op<"if_break",
-        [
-            Pure,
-            NoTerminator
-        ]>
-{
-
-    let summary = "if last signal is asserted, break to end exec";
-    let arguments = (ins I1:$condition);
-    let assemblyFormat = "$condition attr-dict";
 }
 
 #endif // VITIS_OPS
