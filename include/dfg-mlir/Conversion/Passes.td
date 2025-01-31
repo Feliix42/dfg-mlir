@@ -110,4 +110,15 @@ def ConvertLinalgToDfg : Pass<"convert-linalg-to-dfg"> {
     ];
 }
 
+def ConvertMathToVitis : Pass<"convert-math-to-vitis"> {
+    let summary = "Convert math operations to vitis math lib call.";
+
+    let constructor = "mlir::createConvertMathToVitisPass()";
+
+    let dependentDialects = [
+        "vitis::VitisDialect",
+        "math::MathDialect"
+    ];
+}
+
 #endif // DFG_MLIR_CONVERSION_PASSES
