@@ -110,7 +110,10 @@ struct ConvertAnyOperatorToEquivalentProcess
                 rewriter.eraseOp(newOp);
                 break;
             } else {
+                if (isa<arith::ConstantOp>(opi))
+                    rewriter.setInsertionPoint(loopOp);
                 rewriter.clone(opi, mapper);
+                rewriter.setInsertionPointToEnd(loopBlock);
             }
         }
 
