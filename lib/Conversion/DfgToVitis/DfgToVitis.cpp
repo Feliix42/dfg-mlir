@@ -286,55 +286,6 @@ struct EraseRegion : OpConversionPattern<RegionOp> {
         return success();
     }
 };
-
-struct ConvertArithConstant : OpConversionPattern<arith::ConstantOp> {
-
-    using OpConversionPattern<arith::ConstantOp>::OpConversionPattern;
-
-    ConvertArithConstant(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<arith::ConstantOp>(typeConverter, context) {};
-
-    LogicalResult matchAndRewrite(
-        arith::ConstantOp op,
-        arith::ConstantOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        auto loc = op.getLoc();
-        auto constantAttr = dyn_cast<IntegerAttr>(op.getValue());
-        if (!constantAttr)
-            return rewriter.notifyMatchFailure(
-                loc,
-                "Only integer constants are supported for hardware.");
-
-        auto constantOp = rewriter.create<vitis::ConstantOp>(loc, constantAttr);
-        auto variableOp = rewriter.replaceOpWithNewOp<vitis::VariableOp>(
-            op,
-            op.getType(),
-            constantOp.getResult());
-        op.getResult().replaceAllUsesWith(variableOp.getResult());
-
-        return success();
-    }
-};
-
-template<typename OpFrom, typename OpTo>
-struct ConvertArithBinaryOp : OpConversionPattern<OpFrom> {
-
-    using OpConversionPattern<OpFrom>::OpConversionPattern;
-
-    ConvertArithBinaryOp(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<OpFrom>(typeConverter, context) {};
-
-    LogicalResult matchAndRewrite(
-        OpFrom op,
-        OpFrom::Adaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        rewriter.replaceOpWithNewOp<OpTo>(op, op.getLhs(), op.getRhs());
-        return success();
-    }
-};
-
 } // namespace
 
 void mlir::populateDfgToVitisConversionPatterns(
@@ -349,16 +300,6 @@ void mlir::populateDfgToVitisConversionPatterns(
         patterns.getContext());
     patterns.add<ConvertYieldToUpdates>(typeConverter, patterns.getContext());
     patterns.add<EraseRegion>(typeConverter, patterns.getContext());
-    patterns.add<ConvertArithConstant>(typeConverter, patterns.getContext());
-    patterns.add<ConvertArithBinaryOp<arith::AddIOp, vitis::ArithAddOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<ConvertArithBinaryOp<arith::MulIOp, vitis::ArithMulOp>>(
-        typeConverter,
-        patterns.getContext());
-    patterns.add<ConvertArithBinaryOp<arith::AndIOp, vitis::ArithAndOp>>(
-        typeConverter,
-        patterns.getContext());
 }
 
 namespace {

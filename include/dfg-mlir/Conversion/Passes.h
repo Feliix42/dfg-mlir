@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "dfg-mlir/Conversion/ArithIndexToVitis/ArithIndexToVitis.h"
 #include "dfg-mlir/Conversion/DfgInsertOlympusWrapper/DfgInsertOlympusWrapper.h"
 #include "dfg-mlir/Conversion/DfgToAsync/DfgToAsync.h"
 #include "dfg-mlir/Conversion/DfgToFunc/DfgToFunc.h"

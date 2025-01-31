@@ -9,6 +9,18 @@
 
 include "mlir/Pass/PassBase.td"
 
+def ConvertArithIndexToVitis : Pass<"convert-arith-index-to-vitis"> {
+    let summary = "Convert Arith and Math dialect to vitis";
+
+    let constructor = "mlir::createConvertArithIndexToVitisPass()";
+
+    let dependentDialects = [
+        "arith::ArithDialect",
+        "index::IndexDialect",
+        "vitis::VitisDialect"
+    ];
+}
+
 def ConvertDfgToAsync : Pass<"convert-dfg-to-async"> {
     let summary = "Convert DFG Dialect to Async";
 

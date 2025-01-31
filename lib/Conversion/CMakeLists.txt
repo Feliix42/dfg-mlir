@@ -1,3 +1,4 @@
+add_subdirectory(ArithIndexToVitis)
 add_subdirectory(DfgInsertOlympusWrapper)
 add_subdirectory(DfgToAsync)
 add_subdirectory(DfgToFunc)

@@ -118,6 +118,7 @@ void VariableOp::print(OpAsmPrinter &p)
 LogicalResult VariableOp::verify()
 {
     if (getInit()) {
+        if (isa<IndexType>(getInit().getType())) return success();
         auto initBitwidth = getInit().getType().getIntOrFloatBitWidth();
         auto type = getType();
         bool isFloat = false;
@@ -239,23 +240,6 @@ void ForOp::print(OpAsmPrinter &p)
         /*printEntryBlockArgs=*/false,
         /*printBlockTerminators=*/false);
     p.printOptionalAttrDict((*this)->getAttrs());
-}
-
-//===----------------------------------------------------------------------===//
-// ArithOps
-//===----------------------------------------------------------------------===//
-
-//===----------------------------------------------------------------------===//
-// ArithRemOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult ArithRemOp::verify()
-{
-    if (!isa<IntegerType>(getType()))
-        return ::emitError(
-            getLoc(),
-            "Only support integer in remaining operation.");
-    return success();
 }
 
 //===----------------------------------------------------------------------===//
