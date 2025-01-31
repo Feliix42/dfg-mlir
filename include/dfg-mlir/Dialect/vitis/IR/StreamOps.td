@@ -15,6 +15,7 @@ def Vitis_StreamReadOp : Vitis_StreamOpBase<"read", [MemoryEffectsOpInterface]>
     let summary = "read datas from hls::stream";
     let arguments = (ins AnyType:$stream);
     let results = (outs AnyType:$data_pkt);
+    let assemblyFormat = "$stream attr-dict `:` type($stream) `->` type($data_pkt)";
     let extraClassDeclaration = [{
         void getEffects(
                 SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
