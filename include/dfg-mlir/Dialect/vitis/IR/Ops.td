@@ -123,7 +123,7 @@ def Vitis_IfBreakOp : Vitis_Op<"if_break",
 
 def Vitis_ForOp : Vitis_Op<"for",
         [
-            Pure,
+            RecursiveMemoryEffects,
             NoTerminator,
             AllTypesMatch<["lowerBound", "upperBound", "step"]>
         ]>
@@ -151,7 +151,7 @@ def Vitis_ForOp : Vitis_Op<"for",
 
 def Vitis_WhileOp : Vitis_Op<"while",
         [
-            Pure,
+            RecursiveMemoryEffects,
             NoTerminator
         ]>
 {
@@ -163,7 +163,7 @@ def Vitis_WhileOp : Vitis_Op<"while",
 
 def Vitis_WhileTrueOp : Vitis_Op<"while_true",
         [
-            Pure,
+            RecursiveMemoryEffects,
             NoTerminator
         ]>
 {
