@@ -6,7 +6,7 @@
 
 add_custom_target(VitisIncGen)
 
-# mlir_gen_enums(Vitis)
+mlir_gen_enums(Vitis)
 
 # Interfaces.
 # add_subdirectory(Interfaces)

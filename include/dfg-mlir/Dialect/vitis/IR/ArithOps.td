@@ -33,4 +33,18 @@ def Vitis_ArithCastOp : Vitis_ArithOpBase<"cast", [Pure, SameOperandsAndResultSh
     let assemblyFormat = "$from attr-dict `:` type($from) `to` type($to)";
 }
 
+def Vitis_ArithCmpOp
+    : Vitis_ArithOpBase<"cmp",
+        [Pure,
+         SameTypeOperands,
+         TypesMatchWith<"result type has i1 element type and same shape as operands", 
+                        "lhs", "result", "::getI1SameShape($_self)">]>
+{
+    let arguments = (ins Vitis_CmpPredicateAttr:$predicate,
+                         AnyType:$lhs,
+                         AnyType:$rhs);
+    let results = (outs BoolLike:$result);
+    let assemblyFormat = "$predicate `,` $lhs `,` $rhs attr-dict `:` type($lhs)";
+}
+
 #endif // VITIS_ARITHOPS

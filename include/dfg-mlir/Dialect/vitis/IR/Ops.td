@@ -7,6 +7,7 @@
 #ifndef VITIS_OPS
 #define VITIS_OPS
 
+include "dfg-mlir/Dialect/vitis/Enums.td"
 include "dfg-mlir/Dialect/vitis/IR/Types.td"
 include "dfg-mlir/Dialect/vitis/IR/Dialect.td"
 

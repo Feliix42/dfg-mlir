@@ -32,6 +32,14 @@
 using namespace mlir;
 using namespace mlir::vitis;
 
+static Type getI1SameShape(Type type)
+{
+    auto i1Type = IntegerType::get(type.getContext(), 1);
+    if (auto shapedType = llvm::dyn_cast<ShapedType>(type))
+        return shapedType.cloneWith(std::nullopt, i1Type);
+    return i1Type;
+}
+
 //===- Generated implementation -------------------------------------------===//
 
 #define GET_OP_CLASSES

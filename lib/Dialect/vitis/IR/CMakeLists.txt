@@ -10,4 +10,5 @@ add_mlir_dialect_library(VitisDialect
         MLIRIR
         MLIRParser
         MLIRSideEffectInterfaces
+        VitisEnums
 )
