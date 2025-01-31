@@ -121,4 +121,15 @@ def ConvertMathToVitis : Pass<"convert-math-to-vitis"> {
     ];
 }
 
+def ConvertMemrefToVitis : Pass<"convert-memref-to-vitis"> {
+    let summary = "Convert memref operations to vitis array operations.";
+
+    let constructor = "mlir::createConvertMemrefToVitisPass()";
+
+    let dependentDialects = [
+        "vitis::VitisDialect",
+        "memref::MemRefDialect"
+    ];
+}
+
 #endif // DFG_MLIR_CONVERSION_PASSES
