@@ -21,7 +21,16 @@ class Vitis_BinaryArithOp<string mnemonic, list<Trait> traits = []>
 def Vitis_ArithAddOp : Vitis_BinaryArithOp<"add", []> {}
 def Vitis_ArithSubOp : Vitis_BinaryArithOp<"sub", []> {}
 def Vitis_ArithMulOp : Vitis_BinaryArithOp<"mul", []> {}
+def Vitis_ArithDivOp : Vitis_BinaryArithOp<"div", []> {}
+def Vitis_ArithRemOp : Vitis_BinaryArithOp<"rem", []> { let hasVerifier = 1; }
 def Vitis_ArithAndOp : Vitis_BinaryArithOp<"and", []> {}
 def Vitis_ArithOrOp : Vitis_BinaryArithOp<"or", []> {}
+
+def Vitis_ArithCastOp : Vitis_ArithOpBase<"cast", [Pure, SameOperandsAndResultShape]>
+{
+    let arguments = (ins AnyType:$from);
+    let results = (outs AnyType:$to);
+    let assemblyFormat = "$from attr-dict `:` type($from) `to` type($to)";
+}
 
 #endif // VITIS_ARITHOPS

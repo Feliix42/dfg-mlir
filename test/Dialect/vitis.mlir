@@ -50,12 +50,11 @@ vitis.func @test()
     %c4 = vitis.constant 4 : index
 
     vitis.for %i0 = %c0 to %c4 step %c1 {
-        vitis.for %i1 = %c0 to %c4 step %c1 {
-            %elem = vitis.array.read %array0[%i1] : !vitis.array<4 x f32>
-            vitis.array.write %elem, %array1[%i1] : !vitis.array<4 x f32>
-        }
         %elem = vitis.array.read %array0[%i0] : !vitis.array<4 x f32>
-        vitis.array.write %elem, %array1[%i0] : !vitis.array<4 x f32>
+        %sin = vitis.math.sin %elem : f32
+        %cos = vitis.math.cos %elem : f32
+        %test = vitis.arith.mul %sin, %cos : f32
+        vitis.array.write %test, %array1[%i0] : !vitis.array<4 x f32>
     }
 
     vitis.return

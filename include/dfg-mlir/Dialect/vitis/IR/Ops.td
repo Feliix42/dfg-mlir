@@ -20,6 +20,7 @@ include "mlir/Interfaces/FunctionInterfaces.td"
 include "dfg-mlir/Dialect/vitis/IR/ArrayOps.td"
 include "dfg-mlir/Dialect/vitis/IR/ArithOps.td"
 include "dfg-mlir/Dialect/vitis/IR/LoopOps.td"
+include "dfg-mlir/Dialect/vitis/IR/MathOps.td"
 include "dfg-mlir/Dialect/vitis/IR/StreamOps.td"
 include "dfg-mlir/Dialect/vitis/IR/PragmaOps.td"
 
