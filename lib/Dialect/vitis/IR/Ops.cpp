@@ -207,6 +207,21 @@ LogicalResult FuncOp::verify()
 // ForOp
 //===----------------------------------------------------------------------===//
 
+void ForOp::build(
+    OpBuilder &builder,
+    OperationState &result,
+    Value lb,
+    Value ub,
+    Value step)
+{
+    OpBuilder::InsertionGuard g(builder);
+    result.addOperands({lb, ub, step});
+    Type t = lb.getType();
+    Region* bodyRegion = result.addRegion();
+    Block* bodyBlock = builder.createBlock(bodyRegion);
+    bodyBlock->addArgument(t, result.location);
+}
+
 ParseResult ForOp::parse(OpAsmParser &parser, OperationState &result)
 {
     auto &builder = parser.getBuilder();

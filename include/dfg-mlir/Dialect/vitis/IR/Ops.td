@@ -134,9 +134,12 @@ def Vitis_ForOp : Vitis_Op<"for",
                          Index:$step);
     let regions = (region SizedRegion<1>:$body);
 
+    let skipDefaultBuilders = 1;
+    let builders = [
+        OpBuilder<(ins "Value":$lowerBound, "Value":$upperBound, "Value":$step)>
+    ];
+
     let extraClassDeclaration = [{
-        using BodyBuilderFn =
-            function_ref<void(OpBuilder &, Location, Value)>;
         Value getInductionVar() { return getBody().getArgument(0); }
         void setLowerBound(Value bound) { getOperation()->setOperand(0, bound); }
         void setUpperBound(Value bound) { getOperation()->setOperand(1, bound); }
