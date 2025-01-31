@@ -47,4 +47,16 @@ def Vitis_ArithCmpOp
     let assemblyFormat = "$predicate `,` $lhs `,` $rhs attr-dict `:` type($lhs)";
 }
 
+def Vitis_ArithSelectOp
+    : Vitis_ArithOpBase<"select",
+        [Pure,
+         AllTypesMatch<["true_value", "false_value", "result"]>]>
+{
+    let arguments = (ins BoolLike:$condition,
+                         AnyType:$true_value,
+                         AnyType:$false_value);
+    let results = (outs AnyType:$result);
+    let hasCustomAssemblyFormat = 1;
+}
+
 #endif // VITIS_ARITHOPS

@@ -53,7 +53,8 @@ vitis.func @test()
         %elem = vitis.array.read %array0[%i0] : !vitis.array<4 x f32>
         %sin = vitis.math.sin %elem : f32
         %cos = vitis.math.cos %elem : f32
-        %test = vitis.arith.mul %sin, %cos : f32
+        %cmp = vitis.arith.cmp eq, %i0, %c1 : index
+        %test = vitis.arith.select %cmp, %sin, %cos : f32
         vitis.array.write %test, %array1[%i0] : !vitis.array<4 x f32>
     }
 

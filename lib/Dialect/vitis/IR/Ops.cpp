@@ -251,6 +251,39 @@ void ForOp::print(OpAsmPrinter &p)
 }
 
 //===----------------------------------------------------------------------===//
+// ArithSelectOp
+//===----------------------------------------------------------------------===//
+
+ParseResult ArithSelectOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    Type conditionType, resultType;
+    SmallVector<OpAsmParser::UnresolvedOperand, 3> operands;
+    if (parser.parseOperandList(operands, /*requiredOperandCount=*/3)
+        || parser.parseOptionalAttrDict(result.attributes)
+        || parser.parseColonType(resultType))
+        return failure();
+
+    conditionType = parser.getBuilder().getI1Type();
+    result.addTypes(resultType);
+    if (parser.resolveOperands(
+            operands,
+            {conditionType, resultType, resultType},
+            parser.getNameLoc(),
+            result.operands))
+        return failure();
+
+    return success();
+}
+
+void ArithSelectOp::print(OpAsmPrinter &p)
+{
+    p << " " << getOperands();
+    p.printOptionalAttrDict((*this)->getAttrs());
+    p << " : ";
+    p << getType();
+}
+
+//===----------------------------------------------------------------------===//
 // VitisDialect
 //===----------------------------------------------------------------------===//
 
