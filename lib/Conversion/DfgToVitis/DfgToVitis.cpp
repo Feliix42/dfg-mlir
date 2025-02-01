@@ -6,6 +6,7 @@
 #include "dfg-mlir/Conversion/DfgToVitis/DfgToVitis.h"
 
 #include "dfg-mlir/Conversion/Passes.h"
+#include "dfg-mlir/Conversion/ScfToVitis/ScfToVitis.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -561,6 +562,7 @@ void mlir::addConvertToVitisPasses(OpPassManager &pm)
     pm.addPass(createCSEPass());
     pm.addPass(createConvertArithIndexToVitisPass());
     pm.addPass(createConvertMathToVitisPass());
+    pm.addPass(createConvertScfToVitisPass());
 }
 
 void mlir::registerConvertToVitisPipelines()

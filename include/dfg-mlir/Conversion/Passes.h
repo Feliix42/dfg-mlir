@@ -16,6 +16,7 @@
 #include "dfg-mlir/Conversion/LinalgToDfg/LinalgToDfg.h"
 #include "dfg-mlir/Conversion/MathToVitis/MathToVitis.h"
 #include "dfg-mlir/Conversion/MemrefToVitis/MemrefToVitis.h"
+#include "dfg-mlir/Conversion/ScfToVitis/ScfToVitis.h"
 
 namespace mlir::dfg {
 

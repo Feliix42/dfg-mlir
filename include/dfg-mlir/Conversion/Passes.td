@@ -132,4 +132,15 @@ def ConvertMemrefToVitis : Pass<"convert-memref-to-vitis"> {
     ];
 }
 
+def ConvertScfToVitis : Pass<"convert-scf-to-vitis"> {
+    let summary = "Convert scf operations to vitis array operations.";
+
+    let constructor = "mlir::createConvertScfToVitisPass()";
+
+    let dependentDialects = [
+        "vitis::VitisDialect",
+        "scf::SCFDialect"
+    ];
+}
+
 #endif // DFG_MLIR_CONVERSION_PASSES
