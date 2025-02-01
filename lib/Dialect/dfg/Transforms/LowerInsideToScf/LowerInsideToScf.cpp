@@ -3,15 +3,13 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
+#include "dfg-mlir/Dialect/dfg/Transforms/LowerInsideToScf/LowerInsideToScf.h"
+
+#include "dfg-mlir/Conversion/Passes.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/Bufferize/Bufferize.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/FlattenMemref/FlattenMemref.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/InlineRegion/InlineRegion.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/OpereatorToProcess/OperatorToProcess.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/Passes.h"
@@ -24,6 +22,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Debug.h>
+#include <mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h>
 #include <mlir/Conversion/TosaToLinalg/TosaToLinalg.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectRegistry.h>
@@ -79,25 +78,4 @@ struct DfgLowerInsideToLinalgPass
 std::unique_ptr<Pass> mlir::dfg::createDfgLowerInsideToLinalgPass()
 {
     return std::make_unique<DfgLowerInsideToLinalgPass>();
-}
-
-void mlir::dfg::addDfgLowerInsideToScfPasses(OpPassManager &pm)
-{
-    pm.addPass(dfg::createDfgOperatorToProcessPass());
-    pm.addPass(dfg::createDfgInlineRegionPass());
-    pm.addPass(dfg::createDfgBufferizePass());
-    pm.addPass(dfg::createDfgLowerInsideToLinalgPass());
-    pm.addPass(bufferization::createOneShotBufferizePass());
-    pm.addPass(createConvertLinalgToLoopsPass());
-    pm.addPass(dfg::createDfgFlattenMemrefPass());
-    pm.addPass(createCanonicalizerPass());
-    pm.addPass(createCSEPass());
-}
-
-void mlir::dfg::registerDfgLowerInsideToScfPipelines()
-{
-    PassPipelineRegistration<>(
-        "dfg-lower-inside-to-scf",
-        "Lower inside to scf level",
-        [](OpPassManager &pm) { addDfgLowerInsideToScfPasses(pm); });
 }

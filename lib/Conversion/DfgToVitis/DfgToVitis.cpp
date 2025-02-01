@@ -5,20 +5,28 @@
 
 #include "dfg-mlir/Conversion/DfgToVitis/DfgToVitis.h"
 
+#include "dfg-mlir/Conversion/Passes.h"
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "dfg-mlir/Dialect/vitis/Enums.h"
 #include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
 #include "dfg-mlir/Dialect/vitis/IR/Ops.h"
 #include "dfg-mlir/Dialect/vitis/IR/Types.h"
+#include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/Transforms/Passes.h"
+#include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Pass/PassManager.h"
+// #include "mlir/Transforms/CSE.h"
+#include "mlir/Transforms/Passes.h"
 
 #include "llvm/ADT/APInt.h"
 
@@ -531,4 +539,34 @@ void ConvertDfgToVitisPass::runOnOperation()
 std::unique_ptr<Pass> mlir::createConvertDfgToVitisPass()
 {
     return std::make_unique<ConvertDfgToVitisPass>();
+}
+
+void mlir::addConvertToVitisPasses(OpPassManager &pm)
+{
+    pm.addPass(dfg::createDfgOperatorToProcessPass());
+    pm.addPass(dfg::createDfgInlineRegionPass());
+    pm.addPass(dfg::createDfgBufferizePass());
+    pm.addPass(dfg::createDfgLowerInsideToLinalgPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(bufferization::createOneShotBufferizePass());
+    pm.addPass(createConvertLinalgToLoopsPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(dfg::createDfgFlattenMemrefPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+    pm.addPass(createConvertMemrefToVitisPass());
+    pm.addPass(createConvertDfgToVitisPass());
+    pm.addPass(createReconcileUnrealizedCastsPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+    pm.addPass(createConvertArithIndexToVitisPass());
+    pm.addPass(createConvertMathToVitisPass());
+}
+
+void mlir::registerConvertToVitisPipelines()
+{
+    PassPipelineRegistration<>(
+        "convert-to-vitis",
+        "Lower everything to vitis dialect",
+        [](OpPassManager &pm) { addConvertToVitisPasses(pm); });
 }

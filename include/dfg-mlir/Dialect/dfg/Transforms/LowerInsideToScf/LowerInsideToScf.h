@@ -22,9 +22,5 @@ namespace dfg {
 
 std::unique_ptr<Pass> createDfgLowerInsideToLinalgPass();
 
-void registerDfgLowerInsideToScfPipelines();
-
-void addDfgLowerInsideToScfPasses(OpPassManager &pm);
-
 } // namespace dfg
 } // namespace mlir
