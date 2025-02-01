@@ -92,9 +92,13 @@ ParseResult VariableOp::parse(OpAsmParser &parser, OperationState &result)
     unsigned bitwidth = getBitwidth(variableType, isFloat);
     if (hasInit) {
         Type initTy;
-        if (!isFloat)
-            initTy = IntegerType::get(parser.getContext(), bitwidth);
-        else {
+        if (!isFloat) {
+            if (isa<IndexType>(variableType))
+                initTy = variableType;
+            else
+                initTy = IntegerType::get(parser.getContext(), bitwidth);
+
+        } else {
             switch (bitwidth) {
             case 16: initTy = FloatType::getF16(parser.getContext()); break;
             case 32: initTy = FloatType::getF32(parser.getContext()); break;
