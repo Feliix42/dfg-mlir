@@ -251,7 +251,7 @@ struct ConvertPullToStreamRead : OpConversionPattern<PullOp> {
                             streamReadOp.getResult().getType())
                             .getElemType(),
                         streamReadOp.getResult());
-                    auto arrayWriteOp = rewriter.create<vitis::ArrayWriteOp>(
+                    rewriter.create<vitis::ArrayWriteOp>(
                         curLoc,
                         streamDataOp.getResult(),
                         array.getResult(),
@@ -259,7 +259,7 @@ struct ConvertPullToStreamRead : OpConversionPattern<PullOp> {
                     auto streamLastOp = rewriter.create<vitis::StreamGetLastOp>(
                         curLoc,
                         streamReadOp.getResult());
-                    auto updateLastOp = rewriter.create<vitis::UpdateOp>(
+                    rewriter.create<vitis::UpdateOp>(
                         curLoc,
                         last.getResult(),
                         streamLastOp.getResult());

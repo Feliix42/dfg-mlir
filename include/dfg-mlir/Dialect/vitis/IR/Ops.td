@@ -20,10 +20,8 @@ include "mlir/Interfaces/FunctionInterfaces.td"
 
 include "dfg-mlir/Dialect/vitis/IR/ArrayOps.td"
 include "dfg-mlir/Dialect/vitis/IR/ArithOps.td"
-include "dfg-mlir/Dialect/vitis/IR/LoopOps.td"
 include "dfg-mlir/Dialect/vitis/IR/MathOps.td"
 include "dfg-mlir/Dialect/vitis/IR/StreamOps.td"
-include "dfg-mlir/Dialect/vitis/IR/PragmaOps.td"
 
 def Vitis_ConstantOp : Vitis_Op<"constant",
         [
@@ -38,20 +36,41 @@ def Vitis_ConstantOp : Vitis_Op<"constant",
     let assemblyFormat = "attr-dict $value";
 }
 
-def Vitis_VariableOp : Vitis_Op<"variable", [Pure]>
+def Vitis_VariableOp : Vitis_Op<"variable", [MemoryEffectsOpInterface]>
 {
     let summary = "define a variable as in C";
     let arguments = (ins Optional<AnyType>:$init);
     let results = (outs AnyType:$variable);
+
+    let extraClassDeclaration = [{
+        void getEffects(
+                SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+                &effects)
+        {
+            effects.emplace_back(MemoryEffects::Allocate::get(), getOperation()->getOpResult(0),
+                                 SideEffects::DefaultResource::get());
+        }
+    }];
+
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
 }
 
-def Vitis_UpdateOp : Vitis_Op<"update", [Pure, AllTypesMatch<["variable", "new_value"]>]>
+def Vitis_UpdateOp : Vitis_Op<"update", [AllTypesMatch<["variable", "new_value"]>,
+                                         MemoryEffectsOpInterface]>
 {
     let summary = "update avariable with a new value";
     let arguments = (ins AnyType:$variable, AnyType: $new_value);
     let assemblyFormat = "$variable `,` $new_value  attr-dict `:` type($variable)";
+    let extraClassDeclaration = [{
+        void getEffects(
+                SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+                &effects)
+        {
+            effects.emplace_back(MemoryEffects::Write::get(), &getVariableMutable(),
+                                 SideEffects::DefaultResource::get());
+        }
+    }];
 }
 
 def Vitis_TypedefOp : Vitis_Op<"typedef", []>
