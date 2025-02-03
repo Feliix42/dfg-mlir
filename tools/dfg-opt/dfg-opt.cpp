@@ -25,6 +25,7 @@ int main(int argc, char* argv[])
     dfg::registerConversionPasses();
     dfg::registerDfgPasses();
     registerConvertToVitisPipelines();
+    registerPrepareForVivadoPipelines();
 
     registry.insert<dfg::DfgDialect, vitis::VitisDialect>();
 

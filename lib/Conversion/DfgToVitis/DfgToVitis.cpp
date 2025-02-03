@@ -572,3 +572,26 @@ void mlir::registerConvertToVitisPipelines()
         "Lower everything to vitis dialect",
         [](OpPassManager &pm) { addConvertToVitisPasses(pm); });
 }
+
+void mlir::addPrepareForVivadoPasses(OpPassManager &pm)
+{
+    pm.addPass(dfg::createDfgOperatorToProcessPass());
+    pm.addPass(dfg::createDfgInlineRegionPass());
+    pm.addPass(dfg::createDfgBufferizePass());
+    pm.addPass(dfg::createDfgLowerInsideToLinalgPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(bufferization::createOneShotBufferizePass());
+    pm.addPass(createConvertLinalgToLoopsPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(dfg::createDfgFlattenMemrefPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+}
+
+void mlir::registerPrepareForVivadoPipelines()
+{
+    PassPipelineRegistration<>(
+        "prepare-for-vivado",
+        "Lower everything to vitis dialect",
+        [](OpPassManager &pm) { addPrepareForVivadoPasses(pm); });
+}

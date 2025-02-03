@@ -27,4 +27,7 @@ std::unique_ptr<Pass> createConvertDfgToVitisPass();
 void registerConvertToVitisPipelines();
 void addConvertToVitisPasses(OpPassManager &pm);
 
+void registerPrepareForVivadoPipelines();
+void addPrepareForVivadoPasses(OpPassManager &pm);
+
 } // namespace mlir
