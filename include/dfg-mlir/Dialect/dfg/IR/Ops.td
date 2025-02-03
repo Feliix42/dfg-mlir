@@ -271,7 +271,7 @@ def Dfg_LoopOp : Dfg_Op<
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
         [
-            Pure
+            MemoryEffectsOpInterface
         ]> {
     let summary = "Defines a channel with one input and one output port";
     let description = [{
@@ -309,6 +309,18 @@ def Dfg_ChannelOp : Dfg_Op<
         OpBuilder<(ins "Type":$encapsulatedType,
                        "int":$bufferSize)>
     ];
+
+    let extraClassDeclaration = [{
+        void getEffects(
+                SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+                &effects)
+        {
+            effects.emplace_back(MemoryEffects::Read::get(), getOperation()->getOpResult(0),
+                                 SideEffects::DefaultResource::get());
+            effects.emplace_back(MemoryEffects::Write::get(), getOperation()->getOpResult(0),
+                                 SideEffects::DefaultResource::get());
+        }
+    }];
 
     let hasCustomAssemblyFormat = 1;
 
