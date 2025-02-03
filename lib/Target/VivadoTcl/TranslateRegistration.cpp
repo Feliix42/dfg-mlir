@@ -5,6 +5,10 @@
 #include "dfg-mlir/Dialect//dfg/IR/Dialect.h"
 #include "dfg-mlir/Target/VivadoTcl/VivadoTclEmitter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Index/IR/IndexDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 
 using namespace mlir;
@@ -27,7 +31,12 @@ void registerToVivadoTclTranslation()
         },
         [](DialectRegistry &registry) {
             registry.insert<dfg::DfgDialect>();
+
             registry.insert<arith::ArithDialect>();
+            registry.insert<index::IndexDialect>();
+            registry.insert<math::MathDialect>();
+            registry.insert<memref::MemRefDialect>();
+            registry.insert<scf::SCFDialect>();
         });
 }
 

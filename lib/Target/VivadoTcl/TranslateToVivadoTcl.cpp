@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <llvm/ADT/STLExtras.h>
+#include <mlir/IR/Builders.h>
 #include <mlir/Support/LogicalResult.h>
 #include <string>
 
@@ -29,6 +30,13 @@ namespace dfg {
 llvm::DenseMap<Value, std::string> regionIODmaPorts;
 llvm::DenseMap<Value, std::string> channelIOFifoPorts;
 llvm::StringMap<int> instanceNums;
+
+unsigned getBitwidth(Type type)
+{
+    if (auto memrefTy = dyn_cast<MemRefType>(type))
+        return memrefTy.getElementTypeBitWidth();
+    return type.getIntOrFloatBitWidth();
+}
 
 LogicalResult printOperation(ChannelOp op, raw_ostream &os)
 {
@@ -48,9 +56,7 @@ LogicalResult printOperation(ChannelOp op, raw_ostream &os)
                  : op.getBufferSize() > 1024 ? 1024
                                              : op.getBufferSize();
     os << "set_property CONFIG.TDATA_NUM_BYTES {"
-       << (int)ceil(
-              op.getInChan().getType().getElementType().getIntOrFloatBitWidth()
-              / 8)
+       << (int)ceil(getBitwidth(op.getInChan().getType().getElementType()) / 8)
        << "} $fifo_" << numFifo << "\n";
     os << "set_property CONFIG.FIFO_DEPTH {" << depth << "} $fifo_" << numFifo
        << "\n";
@@ -216,9 +222,9 @@ translateToVivadoTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
             << i << "]\n";
         ios << "set_property CONFIG.c_include_sg {0} $dma_" << i << "\n";
         ios << "set_property CONFIG.c_m_axis_mm2s_tdata_width {"
-            << inTy.getIntOrFloatBitWidth() << "} $dma_" << i << "\n";
+            << getBitwidth(inTy) << "} $dma_" << i << "\n";
         ios << "set_property CONFIG.c_s_axis_s2mm_tdata_width {"
-            << outTy.getIntOrFloatBitWidth() << "} $dma_" << i << "\n";
+            << getBitwidth(outTy) << "} $dma_" << i << "\n";
         regionIODmaPorts[regionOp.getBody().getArgument(i)] =
             "dma_" + std::to_string(i) + "/M_AXIS_MM2S";
         regionIODmaPorts[regionOp.getBody().getArgument(i + numInputs)] =
@@ -237,7 +243,7 @@ translateToVivadoTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
             ios << "set_property CONFIG.c_include_s2mm {0} $dma_" << bias
                 << "\n";
             ios << "set_property CONFIG.c_m_axis_mm2s_tdata_width {"
-                << inTy.getIntOrFloatBitWidth() << "} $dma_" << bias << "\n";
+                << getBitwidth(inTy) << "} $dma_" << bias << "\n";
             regionIODmaPorts[regionOp.getBody().getArgument(bias)] =
                 "dma_" + std::to_string(bias) + "/M_AXIS_MM2S";
         } else {
@@ -246,7 +252,7 @@ translateToVivadoTcl(Operation* op, raw_ostream &os, std::string &targetDevice)
             ios << "set_property CONFIG.c_include_mm2s {0} $dma_" << bias
                 << "\n";
             ios << "set_property CONFIG.c_s_axis_s2mm_tdata_width {"
-                << outTy.getIntOrFloatBitWidth() << "} $dma_" << bias << "\n";
+                << getBitwidth(outTy) << "} $dma_" << bias << "\n";
             regionIODmaPorts[regionOp.getBody().getArgument(bias + numInputs)] =
                 "dma_" + std::to_string(bias) + "/S_AXIS_S2MM";
         }
