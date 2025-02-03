@@ -15,6 +15,7 @@
 #include "llvm/Support/FormatVariadic.h"
 
 #include <llvm/Support/Casting.h>
+#include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/BlockSupport.h>
 #include <mlir/IR/Location.h>
 #include <mlir/Support/LogicalResult.h>
@@ -82,7 +83,8 @@ struct VitisCppEmitter {
     LogicalResult emitType(Location loc, Type type);
     LogicalResult emitTypes(Location loc, ArrayRef<Type> types);
     LogicalResult emitTupleType(Location loc, ArrayRef<Type> types);
-    LogicalResult emitAttribute(Location loc, Attribute attr);
+    LogicalResult
+    emitAttribute(Location loc, Attribute attr, bool trailingSemicolon);
     LogicalResult emitAssignPrefix(Operation &op);
     LogicalResult
     emitVariableDeclaration(OpResult result, bool trailingSemicolon);
@@ -146,7 +148,10 @@ StringRef VitisCppEmitter::getOrCreateName(Block &block)
     return *blockMapper.begin(&block);
 }
 
-LogicalResult VitisCppEmitter::emitAttribute(Location loc, Attribute attr)
+LogicalResult VitisCppEmitter::emitAttribute(
+    Location loc,
+    Attribute attr,
+    bool trailingSemicolon)
 {
     auto printInt = [&](const APInt &val, bool isUnsigned) {
         if (val.getBitWidth() == 1) {
@@ -159,7 +164,21 @@ LogicalResult VitisCppEmitter::emitAttribute(Location loc, Attribute attr)
             val.toString(strValue, 10, !isUnsigned, false);
             os << strValue;
         }
-        os << ";";
+        if (trailingSemicolon) os << ";";
+    };
+    auto printFloat = [&](const APFloat &val) {
+        if (val.isFinite()) {
+            SmallString<128> strValue;
+            // Use default values of toString except don't truncate zeros.
+            val.toString(strValue, 0, 0, false);
+            os << strValue;
+        } else if (val.isNaN()) {
+            os << "NAN";
+        } else if (val.isInfinity()) {
+            if (val.isNegative()) os << "-";
+            os << "INFINITY";
+        }
+        if (trailingSemicolon) os << ";";
     };
 
     // Print integer attributes.
@@ -174,6 +193,18 @@ LogicalResult VitisCppEmitter::emitAttribute(Location loc, Attribute attr)
             printInt(iAttr.getValue(), false);
             return success();
         }
+    }
+
+    // Print floating point attributes.
+    if (auto fAttr = dyn_cast<FloatAttr>(attr)) {
+        if (!isa<Float16Type, Float32Type, Float64Type>(fAttr.getType())) {
+            return emitError(
+                loc,
+                "expected floating point attribute to be f16, f32 or "
+                "f64");
+        }
+        printFloat(fAttr.getValue());
+        return success();
     }
 
     // Print symbolic reference attributes.
@@ -202,7 +233,9 @@ LogicalResult VitisCppEmitter::emitVariableDeclaration(
     if (failed(emitType(result.getOwner()->getLoc(), result.getType())))
         return failure();
     os << " " << getOrCreateName(result);
-    if (trailingSemicolon) os << ";\n";
+    if (auto arrayTy = dyn_cast<ArrayType>(result.getType()))
+        os << "[" << arrayTy.getSize() << "]";
+    if (trailingSemicolon) os << ";";
     return success();
 }
 
@@ -238,7 +271,9 @@ static LogicalResult printOperation(VitisCppEmitter &emitter, ModuleOp moduleOp)
 
     os << "#include\"ap_axi_sdata.h\"\n"
        << "#include\"ap_int.h\"\n"
-       << "#include\"hls_stream.h\"\n\n";
+       << "#include\"ap_fixed.h\"\n"
+       << "#include\"hls_stream.h\"\n"
+       << "#include\"hls_math.h\"\n\n";
 
     os << "extern \"C\" {\n";
     for (Operation &op : moduleOp)
@@ -295,29 +330,32 @@ printOperation(VitisCppEmitter &emitter, vitis::ReturnOp returnOp)
 static LogicalResult
 printOperation(VitisCppEmitter &emitter, vitis::ConstantOp constantOp)
 {
-    // if (failed(emitter.emitAssignPrefix(*constantOp.getOperation())))
-    //     return failure();
-    // return emitter.emitAttribute(constantOp->getLoc(),
-    // constantOp.getValue());
     return success();
 }
 
 static LogicalResult
 printOperation(VitisCppEmitter &emitter, vitis::VariableOp variableOp)
 {
+    raw_indented_ostream &os = emitter.ostream();
+    bool isArray = isa<ArrayType>(variableOp.getType());
+
     if (variableOp.getInit()) {
         if (failed(emitter.emitAssignPrefix(*variableOp.getOperation())))
             return failure();
-        return emitter.emitAttribute(
-            variableOp->getLoc(),
-            variableOp.getInit().getDefiningOp<ConstantOp>().getValue());
+        if (isArray) os << "{";
+        if (failed(emitter.emitAttribute(
+                variableOp->getLoc(),
+                variableOp.getInit().getDefiningOp<ConstantOp>().getValue(),
+                !isArray)))
+            return failure();
+        if (isArray) os << "};";
     } else {
         if (failed(emitter.emitVariableDeclaration(
                 variableOp.getOperation()->getResult(0),
                 true)))
             return failure();
-        return success();
     }
+    return success();
 }
 
 static LogicalResult
@@ -331,13 +369,71 @@ printOperation(VitisCppEmitter &emitter, vitis::UpdateOp updateOp)
 }
 
 static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::IfBreakOp ifBreakOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << "if (" << emitter.getOrCreateName(ifBreakOp.getCondition())
+       << ") break;";
+
+    return success();
+}
+
+static bool hasInnerLoop(Operation* op)
+{
+    bool hasLoop = false;
+    op->walk([&](Operation* childOp) {
+        if (childOp != op && isa<ForOp, WhileOp, WhileTrueOp>(childOp)) {
+            hasLoop = true;
+            return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+    });
+    return hasLoop;
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ForOp forOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+    bool hasLoopInside = hasInnerLoop(forOp.getOperation());
+
+    auto loc = forOp.getLoc();
+    auto lb = forOp.getLowerBound();
+    auto ub = forOp.getUpperBound();
+    auto step = forOp.getStep();
+    auto iVar = forOp.getInductionVar();
+
+    os << "for (";
+    if (failed(emitter.emitType(loc, iVar.getType()))) return failure();
+    os << " " << emitter.getOrCreateName(iVar) << " = "
+       << emitter.getOrCreateName(lb) << ";";
+    os << " " << emitter.getOrCreateName(iVar) << " < "
+       << emitter.getOrCreateName(ub) << ";";
+    os << " " << emitter.getOrCreateName(iVar)
+       << " += " << emitter.getOrCreateName(step) << ")";
+
+    os << " {\n";
+    if (!hasLoopInside) os << "#pragma HLS PIPELINE\n";
+    os.indent();
+    for (auto &opi : forOp.getRegion().getOps())
+        if (failed(emitter.emitOperation(opi, false))) return failure();
+    os.unindent();
+    os << "}";
+
+    return success();
+}
+
+static LogicalResult
 printOperation(VitisCppEmitter &emitter, vitis::WhileOp whileOp)
 {
     VitisCppEmitter::Scope scope(emitter);
     raw_indented_ostream &os = emitter.ostream();
+    bool hasLoopInside = hasInnerLoop(whileOp.getOperation());
 
     os << "while(" << emitter.getOrCreateName(whileOp.getCondition())
-       << ") {\n#pragma HLS PIPELINE II=1\n";
+       << ") {\n";
+    if (!hasLoopInside) os << "#pragma HLS PIPELINE\n";
     os.indent();
 
     Region::BlockListType &blocks = whileOp.getBody().getBlocks();
@@ -356,8 +452,10 @@ printOperation(VitisCppEmitter &emitter, vitis::WhileTrueOp whileTrueOp)
 {
     VitisCppEmitter::Scope scope(emitter);
     raw_indented_ostream &os = emitter.ostream();
+    bool hasLoopInside = hasInnerLoop(whileTrueOp.getOperation());
 
-    os << "while(true) {\n#pragma HLS PIPELINE II=1\n";
+    os << "while(true) {\n";
+    if (!hasLoopInside) os << "#pragma HLS PIPELINE\n";
     os.indent();
 
     Region::BlockListType &blocks = whileTrueOp.getBody().getBlocks();
@@ -367,17 +465,6 @@ printOperation(VitisCppEmitter &emitter, vitis::WhileTrueOp whileTrueOp)
         if (failed(emitter.emitOperation(opi, false))) return failure();
 
     os.unindent() << "}";
-
-    return success();
-}
-
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::IfBreakOp ifBreakOp)
-{
-    raw_indented_ostream &os = emitter.ostream();
-
-    os << "if (" << emitter.getOrCreateName(ifBreakOp.getCondition())
-       << ") break;";
 
     return success();
 }
@@ -477,6 +564,20 @@ printOperation(VitisCppEmitter &emitter, vitis::ArithAddOp addOp)
 }
 
 static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArithSubOp subOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*subOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(subOp.getLhs()) << " - "
+       << emitter.getOrCreateName(subOp.getRhs()) << ";";
+
+    return success();
+}
+
+static LogicalResult
 printOperation(VitisCppEmitter &emitter, vitis::ArithMulOp mulOp)
 {
     raw_indented_ostream &os = emitter.ostream();
@@ -486,6 +587,34 @@ printOperation(VitisCppEmitter &emitter, vitis::ArithMulOp mulOp)
 
     os << emitter.getOrCreateName(mulOp.getLhs()) << " * "
        << emitter.getOrCreateName(mulOp.getRhs()) << ";";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArithDivOp divOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*divOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(divOp.getLhs()) << " / "
+       << emitter.getOrCreateName(divOp.getRhs()) << ";";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArithRemOp remOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*remOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(remOp.getLhs()) << " % "
+       << emitter.getOrCreateName(remOp.getRhs()) << ";";
 
     return success();
 }
@@ -518,6 +647,121 @@ printOperation(VitisCppEmitter &emitter, vitis::ArithOrOp orOp)
     return success();
 }
 
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArithCastOp castOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*castOp.getOperation())))
+        return failure();
+
+    os << "(";
+    if (failed(emitter.emitType(castOp.getLoc(), castOp.getType())))
+        return failure();
+    os << ")";
+    os << emitter.getOrCreateName(castOp.getFrom()) << ";";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArithCmpOp cmpOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*cmpOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(cmpOp.getLhs());
+    switch (cmpOp.getPredicate()) {
+    case vitis::CmpPredicate::eq: os << " == "; break;
+    case vitis::CmpPredicate::ne: os << " != "; break;
+    case vitis::CmpPredicate::lt: os << " < "; break;
+    case vitis::CmpPredicate::le: os << " <= "; break;
+    case vitis::CmpPredicate::gt: os << " > "; break;
+    case vitis::CmpPredicate::ge: os << " >= "; break;
+    case vitis::CmpPredicate::three_way: os << " <=> "; break;
+    }
+    os << emitter.getOrCreateName(cmpOp.getRhs()) << ";";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArithSelectOp selectOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*selectOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(selectOp.getCondition()) << " ? "
+       << emitter.getOrCreateName(selectOp.getTrueValue()) << " : "
+       << emitter.getOrCreateName(selectOp.getFalseValue()) << ";";
+
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// ArrayOps
+//===----------------------------------------------------------------------===//
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArrayReadOp readOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*readOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(readOp.getArray()) << "["
+       << emitter.getOrCreateName(readOp.getIndex()) << "];";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArrayWriteOp writeOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << emitter.getOrCreateName(writeOp.getArray()) << "["
+       << emitter.getOrCreateName(writeOp.getIndex()) << "]";
+    os << " = " << emitter.getOrCreateName(writeOp.getValue()) << ";";
+
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// MathOps
+//===----------------------------------------------------------------------===//
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::MathSinOp sinOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*sinOp.getOperation())))
+        return failure();
+
+    os << "hls::sin(" << emitter.getOrCreateName(sinOp.getValue()) << ");";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::MathCosOp cosOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*cosOp.getOperation())))
+        return failure();
+
+    os << "hls::cos(" << emitter.getOrCreateName(cosOp.getValue()) << ");";
+
+    return success();
+}
+
 //===----------------------------------------------------------------------===//
 // Emitter Functions
 //===----------------------------------------------------------------------===//
@@ -525,6 +769,7 @@ printOperation(VitisCppEmitter &emitter, vitis::ArithOrOp orOp)
 LogicalResult
 VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
 {
+    auto startPos = os.tell();
     LogicalResult status =
         llvm::TypeSwitch<Operation*, LogicalResult>(&op)
             .Case<ModuleOp>([&](auto op) { return printOperation(*this, op); })
@@ -534,9 +779,10 @@ VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
                 vitis::ConstantOp,
                 vitis::VariableOp,
                 vitis::UpdateOp,
+                vitis::IfBreakOp,
+                vitis::ForOp,
                 vitis::WhileOp,
-                vitis::WhileTrueOp,
-                vitis::IfBreakOp>(
+                vitis::WhileTrueOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
                 vitis::StreamReadOp,
@@ -548,14 +794,25 @@ VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
                 vitis::ArithAddOp,
+                vitis::ArithSubOp,
                 vitis::ArithMulOp,
+                vitis::ArithDivOp,
+                vitis::ArithRemOp,
                 vitis::ArithAndOp,
-                vitis::ArithOrOp>(
+                vitis::ArithOrOp,
+                vitis::ArithCastOp,
+                vitis::ArithCmpOp,
+                vitis::ArithSelectOp>(
+                [&](auto op) { return printOperation(*this, op); })
+            .Case<vitis::ArrayReadOp, vitis::ArrayWriteOp>(
+                [&](auto op) { return printOperation(*this, op); })
+            .Case<vitis::MathSinOp, vitis::MathCosOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Default(
                 [](auto op) { return op->emitError("unsupported operation"); });
 
     if (failed(status)) return failure();
+    if (os.tell() == startPos) return success();
     os << (trailingSemicolon ? ";\n" : "\n");
     return success();
 }
@@ -565,14 +822,27 @@ LogicalResult VitisCppEmitter::emitType(Location loc, Type vitisType)
     if (auto type = dyn_cast<IntegerType>(vitisType)) {
         auto datawidth = type.getWidth();
         if (datawidth == 1)
-            return (os << "ap_uint<1>"), success();
+            return (os << "bool"), success();
         else if (type.getSignedness() == IntegerType::Unsigned)
             return (os << "ap_uint<" << datawidth << ">"), success();
         else
             return (os << "ap_int<" << datawidth << ">"), success();
     }
-    if (auto type = dyn_cast<SizeTType>(vitisType)) {
+    if (auto type = dyn_cast<IndexType>(vitisType)) {
         os << "size_t";
+        return success();
+    }
+    if (auto type = dyn_cast<FloatType>(vitisType)) {
+        auto bitwidth = type.getIntOrFloatBitWidth();
+        switch (bitwidth) {
+        case 16: os << "half"; break;
+        case 32: os << "float"; break;
+        case 64: os << "double"; break;
+        }
+        return success();
+    }
+    if (auto type = dyn_cast<ArrayType>(vitisType)) {
+        if (failed(emitType(loc, type.getElemType()))) return failure();
         return success();
     }
     if (auto type = dyn_cast<APFixedType>(vitisType)) {
