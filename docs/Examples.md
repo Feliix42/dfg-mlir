@@ -1,10 +1,9 @@
 # Examples
 
-## Typical MAC operator example (FPGA backend)
-Consider the given code in MLIR:
+## Typical MAC operator
+This code snippet defines an SDF node named `mac` and instantiates it in the top region and connected with FIFO channels.
 
 ```
-// dfg_operator.mlir
 dfg.operator @mac inputs(%a: i32, %b: i32)
                   outputs(%c: i32)
                   iter_args(%sum: i32)
@@ -32,29 +31,65 @@ dfg.region @top inputs(%arg0: i32, %arg1: i32)
 }
 ```
 
-This code snippet defines an SDF node named `mac` and instantiates it in the top region and connected with FIFO channels. To get a working FPGA design first one need to convert all `operator` operations to `process` using
+## FFT2D operator with tensors
+This code snippet defines an SDF node named `fft` and instantiates it in the top region and connected with FIFO channels. Differently from the `MAC` operator above, this operator uses tensors.
 
 ```
-dfg-opt dfg_operator.mlir --dfg-operator-to-process -o dfg.mlir
+dfg.operator @fft inputs(%arg0: tensor<1x4x8xf32>, %arg1 : tensor<1x4x8xf32>)
+                        outputs(%arg2: tensor<1x4x8xf32>, %arg3: tensor<1x4x8xf32>)
+{
+    %0, %1 = tosa.fft2d %arg0, %arg1 {inverse = false} : (tensor<1x4x8xf32>, tensor<1x4x8xf32>) -> (tensor<1x4x8xf32>, tensor<1x4x8xf32>)
+    dfg.output %0, %1 : tensor<1x4x8xf32>, tensor<1x4x8xf32>
+}
+
+dfg.region @top inputs(%arg0: tensor<1x4x8xf32>, %arg1 : tensor<1x4x8xf32>)
+                        outputs(%arg2: tensor<1x4x8xf32>, %arg3: tensor<1x4x8xf32>)
+{
+    %0:2 = dfg.channel(16) : tensor<1x4x8xf32>
+    %1:2 = dfg.channel(16) : tensor<1x4x8xf32>
+    %2:2 = dfg.channel(16) : tensor<1x4x8xf32>
+    %3:2 = dfg.channel(16) : tensor<1x4x8xf32>
+
+    dfg.connect.input %arg0, %0#0 : tensor<1x4x8xf32>
+    dfg.connect.input %arg1, %1#0 : tensor<1x4x8xf32>
+    dfg.connect.output %arg2, %2#1 : tensor<1x4x8xf32>
+    dfg.connect.output %arg3, %3#1 : tensor<1x4x8xf32>
+
+    dfg.instantiate @tosa_test inputs(%0#1, %1#1) outputs(%2#0, %3#0) : (tensor<1x4x8xf32>, tensor<1x4x8xf32>) -> (tensor<1x4x8xf32>, tensor<1x4x8xf32>)
+}
 ```
 
-This transformation pass will convert `operator` to the corresponding KPN `process` including the iteration arguments. Once you reach there, there are several things to do in order to get the hardware design from Vivado/Vitis.
+## Convertion and Translation for FPGA backend
+To get a working FPGA design we provide to conversion pass pipelines, which are
+1. `--convert-to-vitis`
+2. `--prepare-for-vivado`
 
-1. Convert process operations to vitis functions
+The first pipeline will lower up-to-tosa operations to scf level along with bufferizations of tensor values. Then operations in `arith`, `index`, `math`, `scf` and `dfg` except for `dfg.region` will be converted to vitis equivalent operations. The result of this pipeline will be used in translations (i.e. `--vitis-to-tcl` and `vitis-to-cpp`).
+
+The second pipeline doesn't contain any `to-vitis` passes, in which result the `dfg.region` operation will be translated later to a `tcl` script that manage the creation of FPGA design, Synthesis, Implementation and Generation of bitstreams.
+
+Let's assume the input file is named `dfg.mlir`, to get the bitstream file one only needs to execute these commands one by one:
+
+1. Get the HLS Cpp file from current program
 ```
-dfg-opt dfg.mlir --convert-dfg-to-vitis -o vitis.mlir
+dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-to-cpp -o vitis.cpp
 ```
-2. Translate vitis functions to C++ file
+2. Get the TCL script to run High-Level Synthesis
 ```
-dfg-translate vitis.mlir --vitis-to-cpp -o vitis.cpp
+dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-to-tcl -o hls.tcl
 ```
-3. Generate the vitis_hls script to run HLS
+3. Run HLS
 ```
-dfg-translate vitis.mlir --vitis-to-tcl -o run_hls.tcl
+/path/to/Xilinx/Vitis/2024.2/bin/vitis-run --mode hls --tcl hls.tcl
 ```
-4. Generate the vivado script to generate the hardware
+4. Get the TCL script to generate the full design in Vivado
 ```
-dfg-translate dfg.mlir --dfg-to-vivado-tcl -o run_vivado.tcl
+dfg-opt dfg.mlir --prepare-for-vivado | dfg-translate --dfg-to-vivado-tcl -o vivado.tcl
+```
+5. Run Vivado
+```
+/path/to/Xilinx/Vivado/2024.2/bin/vivado -mode tcl -source vivado.tcl
 ```
 
-The generated Tcl scripts can be direcly used with Xilinx executables with the mode tcl. For this example, you should get a `.xsa` file in the directory `/root-to-dfg_opeartor.mlir/vivado_project/top`, which contains the hardware (hwh, bit, etc...).
+In this work, [AMD Vivado Design Suite](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado.html) version 2024.2 is tested without any problems. If one need to use lower version of the tools, please modify the version of Xilinx IPs in [this](../lib/Target/VivadoTcl/TranslateToVivadoTcl.cpp) translation respectively.
+
