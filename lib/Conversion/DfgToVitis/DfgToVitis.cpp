@@ -16,6 +16,8 @@
 #include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
 #include "dfg-mlir/Dialect/vitis/IR/Ops.h"
 #include "dfg-mlir/Dialect/vitis/IR/Types.h"
+#include "dfg-mlir/Dialect/vitis/Transforms/MergeCastChain/MergeCastChain.h"
+#include "dfg-mlir/Dialect/vitis/Transforms/Passes.h"
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
@@ -563,6 +565,9 @@ void mlir::addConvertToVitisPasses(OpPassManager &pm)
     pm.addPass(createConvertArithIndexToVitisPass());
     pm.addPass(createConvertMathToVitisPass());
     pm.addPass(createConvertScfToVitisPass());
+    pm.addPass(vitis::createVitisMergeCastChainPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
 }
 
 void mlir::registerConvertToVitisPipelines()

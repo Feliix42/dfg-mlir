@@ -25,7 +25,7 @@ include "dfg-mlir/Dialect/vitis/IR/StreamOps.td"
 
 def Vitis_ConstantOp : Vitis_Op<"constant",
         [
-            ConstantLike,
+            // ConstantLike,
             Pure,
             AllTypesMatch<["value", "result"]>
         ]>
