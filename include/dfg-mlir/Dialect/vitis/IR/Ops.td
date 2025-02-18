@@ -130,14 +130,15 @@ def Vitis_ReturnOp : Vitis_Op<"return",
 
 def Vitis_IfBreakOp : Vitis_Op<"if_break",
         [
-            Pure,
-            NoTerminator
+            NoTerminator,
+            HasParent<"WhileTrueOp">
         ]>
 {
 
     let summary = "if last signal is asserted, break to end exec";
     let arguments = (ins I1:$condition);
     let assemblyFormat = "$condition attr-dict";
+    let hasCanonicalizer = 1;
 }
 
 def Vitis_ForOp : Vitis_Op<"for",

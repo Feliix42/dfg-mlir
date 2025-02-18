@@ -208,6 +208,27 @@ LogicalResult FuncOp::verify()
 // }
 
 //===----------------------------------------------------------------------===//
+// IfBreakOp
+//===----------------------------------------------------------------------===//
+
+struct KeepIfBreak : public OpRewritePattern<IfBreakOp> {
+    using OpRewritePattern<IfBreakOp>::OpRewritePattern;
+
+    LogicalResult
+    matchAndRewrite(IfBreakOp op, PatternRewriter &rewriter) const override
+    {
+        return failure();
+    }
+};
+
+void IfBreakOp::getCanonicalizationPatterns(
+    RewritePatternSet &results,
+    MLIRContext* context)
+{
+    results.add<KeepIfBreak>(context);
+}
+
+//===----------------------------------------------------------------------===//
 // ForOp
 //===----------------------------------------------------------------------===//
 
