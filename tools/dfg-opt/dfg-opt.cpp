@@ -2,36 +2,26 @@
 ///
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
-#include "dfg-mlir/Conversion/Passes.h"
-#include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/BufferizableOpInterfaceImpl.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
-#include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
-#include "dfg-mlir/Dialect/vitis/Transforms/Passes.h"
-#include "mlir/IR/Dialect.h"
+#include "dfg-mlir/InitAllDialects.h"
+#include "dfg-mlir/InitAllPasses.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
-#include "mlir/Transforms/Passes.h"
 
 using namespace mlir;
 
 int main(int argc, char* argv[])
 {
     DialectRegistry registry;
+
     registerAllDialects(registry);
+    dfg::registerAllDialects(registry);
 
     registerAllPasses();
-    dfg::registerConversionPasses();
-    dfg::registerDfgPasses();
-    dfg::registerBufferizableOpInterfaceExternalModels(registry);
-    vitis::registerVitisPasses();
-    registerConvertToVitisPipelines();
-    registerPrepareForVivadoPipelines();
-
-    registry.insert<dfg::DfgDialect, vitis::VitisDialect>();
+    dfg::registerAllPasses();
 
     return asMainReturnCode(
         MlirOptMain(argc, argv, "dfg-mlir optimizer driver\n", registry));

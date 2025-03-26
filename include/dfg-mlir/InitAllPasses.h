@@ -1,0 +1,28 @@
+/// Register all passes in this project.
+///
+/// @file
+/// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
+
+#include "dfg-mlir/Conversion/Passes.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
+#include "dfg-mlir/Dialect/vitis/Transforms/Passes.h"
+
+#include <mlir/IR/DialectRegistry.h>
+#include <mlir/InitAllDialects.h>
+
+namespace mlir {
+namespace dfg {
+
+inline void registerAllPasses()
+{
+    dfg::registerConversionPasses();
+
+    dfg::registerDfgPasses();
+    vitis::registerVitisPasses();
+
+    dfg::registerConvertToVitisPipelines();
+    dfg::registerPrepareForVivadoPipelines();
+}
+
+} // namespace dfg
+} // namespace mlir

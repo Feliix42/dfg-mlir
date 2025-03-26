@@ -542,7 +542,7 @@ std::unique_ptr<Pass> mlir::createConvertDfgToVitisPass()
     return std::make_unique<ConvertDfgToVitisPass>();
 }
 
-void mlir::addConvertToVitisPasses(OpPassManager &pm)
+void mlir::dfg::addConvertToVitisPasses(OpPassManager &pm)
 {
     pm.addPass(dfg::createDfgOperatorToProcessPass());
     pm.addPass(dfg::createDfgInlineRegionPass());
@@ -570,7 +570,7 @@ void mlir::addConvertToVitisPasses(OpPassManager &pm)
     pm.addPass(createCSEPass());
 }
 
-void mlir::registerConvertToVitisPipelines()
+void mlir::dfg::registerConvertToVitisPipelines()
 {
     PassPipelineRegistration<>(
         "convert-to-vitis",
@@ -578,7 +578,7 @@ void mlir::registerConvertToVitisPipelines()
         [](OpPassManager &pm) { addConvertToVitisPasses(pm); });
 }
 
-void mlir::addPrepareForVivadoPasses(OpPassManager &pm)
+void mlir::dfg::addPrepareForVivadoPasses(OpPassManager &pm)
 {
     pm.addPass(dfg::createDfgOperatorToProcessPass());
     pm.addPass(dfg::createDfgInlineRegionPass());
@@ -595,7 +595,7 @@ void mlir::addPrepareForVivadoPasses(OpPassManager &pm)
     pm.addPass(createCSEPass());
 }
 
-void mlir::registerPrepareForVivadoPipelines()
+void mlir::dfg::registerPrepareForVivadoPipelines()
 {
     PassPipelineRegistration<>(
         "prepare-for-vivado",
