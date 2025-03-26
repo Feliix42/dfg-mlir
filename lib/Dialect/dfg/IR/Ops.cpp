@@ -15,7 +15,9 @@
 #include "mlir/IR/TypeUtilities.h"
 
 #include <llvm/Support/LogicalResult.h>
+#include <mlir/IR/BuiltinTypeInterfaces.h>
 #include <mlir/IR/Diagnostics.h>
+#include <mlir/IR/DialectRegistry.h>
 
 #define DEBUG_TYPE "dfg-ops"
 
@@ -419,6 +421,14 @@ LogicalResult EmbedOp::verify()
     return success();
 }
 
+FunctionType EmbedOp::getFunctionType()
+{
+    return FunctionType::get(
+        getContext(),
+        getInputs().getTypes(),
+        getOutputs().getTypes());
+}
+
 //===----------------------------------------------------------------------===//
 // ConnectInputOp
 //===----------------------------------------------------------------------===//
@@ -453,13 +463,22 @@ LogicalResult ConnectInputOp::verify()
 {
     auto regionPortTy = getRegionPort().getType().getElementType();
     auto channelPortTy = getChannelPort().getType().getElementType();
+    auto isRegionPortShaped = isa<ShapedType>(regionPortTy);
+    auto isChannelPortShaped = isa<ShapedType>(channelPortTy);
+    auto isBothShaped = isRegionPortShaped && isChannelPortShaped;
 
-    if (regionPortTy != channelPortTy)
-        return ::emitError(
-            getLoc(),
-            "Region and channel port types don't match");
+    if (isBothShaped) {
+        auto regionShapedTy = cast<ShapedType>(regionPortTy);
+        auto channelShapedTy = cast<ShapedType>(channelPortTy);
+        if ((regionShapedTy.getShape() == channelShapedTy.getShape())
+            && (regionShapedTy.getElementType()
+                == channelShapedTy.getElementType()))
+            return success();
+    } else if (!isBothShaped && (regionPortTy == channelPortTy)) {
+        return success();
+    }
 
-    return success();
+    return ::emitError(getLoc(), "Region and channel port types don't match");
 }
 
 //===----------------------------------------------------------------------===//
@@ -496,13 +515,22 @@ LogicalResult ConnectOutputOp::verify()
 {
     auto regionPortTy = getRegionPort().getType().getElementType();
     auto channelPortTy = getChannelPort().getType().getElementType();
+    auto isRegionPortShaped = isa<ShapedType>(regionPortTy);
+    auto isChannelPortShaped = isa<ShapedType>(channelPortTy);
+    auto isBothShaped = isRegionPortShaped && isChannelPortShaped;
 
-    if (regionPortTy != channelPortTy)
-        return ::emitError(
-            getLoc(),
-            "Region and channel port types don't match");
+    if (isBothShaped) {
+        auto regionShapedTy = cast<ShapedType>(regionPortTy);
+        auto channelShapedTy = cast<ShapedType>(channelPortTy);
+        if ((regionShapedTy.getShape() == channelShapedTy.getShape())
+            && (regionShapedTy.getElementType()
+                == channelShapedTy.getElementType()))
+            return success();
+    } else if (!isBothShaped && (regionPortTy == channelPortTy)) {
+        return success();
+    }
 
-    return success();
+    return ::emitError(getLoc(), "Region and channel port types don't match");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1504,6 +1532,14 @@ LogicalResult InstantiateOp::verify()
     return success();
 }
 
+FunctionType InstantiateOp::getFunctionType()
+{
+    return FunctionType::get(
+        getContext(),
+        getInputs().getTypes(),
+        getOutputs().getTypes());
+}
+
 //===----------------------------------------------------------------------===//
 // PullOp
 //===----------------------------------------------------------------------===//
@@ -1531,17 +1567,6 @@ void PullOp::print(OpAsmPrinter &p)
     p << " " << getChan() << " : " << getType();
 }
 
-LogicalResult PullOp::verify()
-{
-    Block* block = getOperation()->getBlock();
-    for (auto &opi : block->getOperations())
-        if (isa<UnorderedPullOp>(opi))
-            return ::emitError(
-                getLoc(),
-                "Pull and unordered pull can not be used together.");
-    return success();
-}
-
 //===----------------------------------------------------------------------===//
 // PushOp
 //===----------------------------------------------------------------------===//
@@ -1566,72 +1591,6 @@ ParseResult PushOp::parse(OpAsmParser &parser, OperationState &result)
 }
 
 void PushOp::print(OpAsmPrinter &p)
-{
-    p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType();
-}
-
-LogicalResult PushOp::verify()
-{
-    Block* block = getOperation()->getBlock();
-    for (auto &opi : block->getOperations())
-        if (isa<UnorderedPushOp>(opi))
-            return ::emitError(
-                getLoc(),
-                "Push and unordered push can not be used together.");
-    return success();
-}
-
-//===----------------------------------------------------------------------===//
-// UnorderedPullOp
-//===----------------------------------------------------------------------===//
-
-ParseResult UnorderedPullOp::parse(OpAsmParser &parser, OperationState &result)
-{
-    OpAsmParser::UnresolvedOperand inputChan;
-    Type dataTy;
-
-    if (parser.parseOperand(inputChan) || parser.parseColon()
-        || parser.parseType(dataTy))
-        return failure();
-
-    result.addTypes(dataTy);
-
-    Type channelTy = OutputType::get(dataTy.getContext(), dataTy);
-    if (parser.resolveOperand(inputChan, channelTy, result.operands))
-        return failure();
-
-    return success();
-}
-
-void UnorderedPullOp::print(OpAsmPrinter &p)
-{
-    p << " " << getChan() << " : " << getType();
-}
-
-//===----------------------------------------------------------------------===//
-// UnorderedPushOp
-//===----------------------------------------------------------------------===//
-
-ParseResult UnorderedPushOp::parse(OpAsmParser &parser, OperationState &result)
-{
-    OpAsmParser::UnresolvedOperand inp;
-    OpAsmParser::UnresolvedOperand outputChan;
-    Type dataTy;
-
-    if (parser.parseLParen() || parser.parseOperand(inp) || parser.parseRParen()
-        || parser.parseOperand(outputChan) || parser.parseColon()
-        || parser.parseType(dataTy))
-        return failure();
-
-    Type channelTy = InputType::get(dataTy.getContext(), dataTy);
-    if (parser.resolveOperand(inp, dataTy, result.operands)
-        || parser.resolveOperand(outputChan, channelTy, result.operands))
-        return failure();
-
-    return success();
-}
-
-void UnorderedPushOp::print(OpAsmPrinter &p)
 {
     p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType();
 }

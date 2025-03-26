@@ -64,6 +64,10 @@ def Dfg_EmbedOp : Dfg_Op<
 
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
+
+    let extraClassDeclaration = [{
+        FunctionType getFunctionType();
+    }];
 }
 
 def Dfg_ConnectInputOp : Dfg_Op<
@@ -327,21 +331,6 @@ def Dfg_ChannelOp : Dfg_Op<
     let hasVerifier = 1;
 }
 
-def Dfg_SetChannelStyleOp : Dfg_Op<
-    "set_channel_style",
-    [
-        HasParent<"ModuleOp">
-    ]>
-{
-    let summary = "Set up global channel style";
-
-    let arguments = (ins Dfg_ChannelStyleDefaultAttr:$channel_style);
-
-    let assemblyFormat = [{
-        $channel_style attr-dict
-    }];
-}
-
 def Dfg_InstantiateOp : Dfg_Op<
     "instantiate",
     [
@@ -375,6 +364,10 @@ def Dfg_InstantiateOp : Dfg_Op<
 
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
+
+    let extraClassDeclaration = [{
+        FunctionType getFunctionType();
+    }];
 }
 
 def Dfg_PushOp : Dfg_Op<
@@ -407,7 +400,6 @@ def Dfg_PushOp : Dfg_Op<
     let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
 
     let hasCustomAssemblyFormat = 1;
-    let hasVerifier = 1;
 }
 
 def Dfg_PullOp : Dfg_Op<
@@ -441,35 +433,7 @@ def Dfg_PullOp : Dfg_Op<
     let results = (outs AnyType: $outp);
 
     let hasCustomAssemblyFormat = 1;
-    let hasVerifier = 1;
 }
-
-
-def Dfg_UnorderedPushOp : Dfg_Op<
-    "unordered_push",
-    [
-        TypesMatchWith<"Channel type matches pushed type",
-                       "chan", "inp",
-                       "$_self.dyn_cast<InputType>().getElementType()">
-    ]
-> {
-    let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
-    let hasCustomAssemblyFormat = 1;
-}
-
-def Dfg_UnorderedPullOp : Dfg_Op<
-    "unordered_pull",
-    [
-        TypesMatchWith<"Channel type matches pulled type",
-                       "chan", "outp",
-                       "$_self.dyn_cast<OutputType>().getElementType()">
-    ]
-> {
-    let arguments = (ins Dfg_OutputType: $chan);
-    let results = (outs AnyType: $outp);
-    let hasCustomAssemblyFormat = 1;
-}
-
 
 def Dfg_PushNOp : Dfg_Op<
     "push_n",
