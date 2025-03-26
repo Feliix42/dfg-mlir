@@ -14,6 +14,9 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 
+#include <llvm/Support/LogicalResult.h>
+#include <mlir/IR/Diagnostics.h>
+
 #define DEBUG_TYPE "dfg-ops"
 
 using namespace mlir;
@@ -446,6 +449,19 @@ void ConnectInputOp::print(OpAsmPrinter &p)
       << getRegionPort().getType().getElementType();
 }
 
+LogicalResult ConnectInputOp::verify()
+{
+    auto regionPortTy = getRegionPort().getType().getElementType();
+    auto channelPortTy = getChannelPort().getType().getElementType();
+
+    if (regionPortTy != channelPortTy)
+        return ::emitError(
+            getLoc(),
+            "Region and channel port types don't match");
+
+    return success();
+}
+
 //===----------------------------------------------------------------------===//
 // ConnectOutputOp
 //===----------------------------------------------------------------------===//
@@ -474,6 +490,19 @@ void ConnectOutputOp::print(OpAsmPrinter &p)
 {
     p << " " << getRegionPort() << ", " << getChannelPort() << " : "
       << getRegionPort().getType().getElementType();
+}
+
+LogicalResult ConnectOutputOp::verify()
+{
+    auto regionPortTy = getRegionPort().getType().getElementType();
+    auto channelPortTy = getChannelPort().getType().getElementType();
+
+    if (regionPortTy != channelPortTy)
+        return ::emitError(
+            getLoc(),
+            "Region and channel port types don't match");
+
+    return success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -1687,71 +1716,6 @@ LogicalResult PushNOp::verify()
             "The element types of the input memref and the channel "
             "must match");
 
-    return success();
-}
-
-//===----------------------------------------------------------------------===//
-// Intermediate HW operations
-//===----------------------------------------------------------------------===//
-
-//===----------------------------------------------------------------------===//
-// HWConnectOp
-//===----------------------------------------------------------------------===//
-
-ParseResult HWConnectOp::parse(OpAsmParser &parser, OperationState &result)
-{
-    OpAsmParser::UnresolvedOperand portArgument;
-    OpAsmParser::UnresolvedOperand portQueue;
-    Type dataTy;
-
-    if (parser.parseOperand(portArgument) || parser.parseComma()
-        || parser.parseOperand(portQueue) || parser.parseColon()
-        || parser.parseType(dataTy))
-        return failure();
-
-    Type channelTy = InputType::get(dataTy.getContext(), dataTy);
-    if (parser.resolveOperand(portArgument, channelTy, result.operands)
-        || parser.resolveOperand(portQueue, channelTy, result.operands))
-        return failure();
-
-    return success();
-}
-
-void HWConnectOp::print(OpAsmPrinter &p)
-{
-    p << " " << getPortArgument() << ", " << getPortQueue() << " : "
-      << getPortArgument().getType().getElementType();
-}
-
-//===----------------------------------------------------------------------===//
-// HWLoopOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult HWLoopOp::verify()
-{
-    if (getDone().getType().getWidth() != 1)
-        return ::emitError(getLoc(), "The type of the result must be i1.");
-    return success();
-}
-
-//===----------------------------------------------------------------------===//
-// HWWaitOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult HWWaitOp::verify()
-{
-    for (auto operand : getOutputPorts()) {
-        auto type = operand.getType();
-        if (isa<InputType>(type) || isa<IntegerType>(type))
-            continue;
-        else
-            return ::emitError(
-                getLoc(),
-                "The type of the waiting values must be either a output "
-                "channel or an integer.");
-    }
-    if (getDone().getType().getWidth() != 1)
-        return ::emitError(getLoc(), "The type of the result must be i1.");
     return success();
 }
 

@@ -11,7 +11,6 @@ include "dfg-mlir/Dialect/dfg/Enums.td"
 include "dfg-mlir/Dialect/dfg/IR/Types.td"
 include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.td"
 include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
-include "dfg-mlir/Dialect/dfg/IR/HWOps.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
@@ -77,6 +76,7 @@ def Dfg_ConnectInputOp : Dfg_Op<
                          Dfg_InputType:$channelPort);
 
     let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
 }
 
 def Dfg_ConnectOutputOp : Dfg_Op<
@@ -89,11 +89,13 @@ def Dfg_ConnectOutputOp : Dfg_Op<
                          Dfg_OutputType:$channelPort);
 
     let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
 }
 
 def Dfg_ProcessOp : Dfg_Op<
         "process",
         [
+            AffineScope,
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
             IsolatedFromAbove,
@@ -153,12 +155,12 @@ def Dfg_ProcessOp : Dfg_Op<
 }
 
 def Dfg_OperatorOp : Dfg_Op<"operator", [
+            AffineScope,
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
             IsolatedFromAbove,
             HasParent<"ModuleOp">,
             NoTerminator
-            // SingleBlockImplicitTerminator<"YieldOp">,
         ]> {
     let summary = "define an SDF node in DFG";
 
@@ -196,7 +198,6 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
 }
 
 def Dfg_OutputOp : Dfg_Op<"output", [
-            // Terminator,
             HasParent<"OperatorOp">
         ]> {
     let summary = "Yield op for a dfg.operator";
@@ -208,7 +209,6 @@ def Dfg_OutputOp : Dfg_Op<"output", [
 }
 
 def Dfg_YieldOp : Dfg_Op<"yield", [
-            // Terminator,
             ParentOneOf<["OperatorOp", "LoopOp"]>
         ]> {
     let summary = "Yield op for a dfg.operator";
@@ -345,8 +345,7 @@ def Dfg_SetChannelStyleOp : Dfg_Op<
 def Dfg_InstantiateOp : Dfg_Op<
     "instantiate",
     [
-        AttrSizedOperandSegments//,
-        // HasParent<"RegionOp">
+        AttrSizedOperandSegments
     ]> {
     let summary = "Instantiates an process with the given inputs, forming (part of) a data flow graph.";
     let description = [{
@@ -407,10 +406,6 @@ def Dfg_PushOp : Dfg_Op<
 
     let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
 
-    // let assemblyFormat = [{
-    //     `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
-    // }];
-
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
 }
@@ -444,10 +439,6 @@ def Dfg_PullOp : Dfg_Op<
 
     let arguments = (ins Dfg_OutputType: $chan);
     let results = (outs AnyType: $outp);
-
-    // let assemblyFormat = [{
-    //     $chan attr-dict `:` functional-type($chan, $outp)
-    // }];
 
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
@@ -506,10 +497,6 @@ def Dfg_PushNOp : Dfg_Op<
 
     let arguments = (ins AnyMemRef: $inp, Dfg_InputType: $chan);
 
-    // let assemblyFormat = [{
-    //     `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
-    // }];
-
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
 }
@@ -541,69 +528,8 @@ def Dfg_PullNOp : Dfg_Op<
     let arguments = (ins Dfg_OutputType: $chan);
     let results = (outs AnyMemRef: $outp);
 
-    // let assemblyFormat = [{
-    //     $chan attr-dict `:` functional-type($chan, $outp)
-    // }];
-
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
 }
-
-//===----------------------------------------------------------------------===//
-// Intermediate HW operations
-//===----------------------------------------------------------------------===//
-
-// // Template for hw ops.
-// class Dfg_HWOpBase<string mnemonic, list<Trait> traits = []>
-//         : Dfg_Op< "hw." # mnemonic, traits> {}
-
-// def Dfg_HWConnectOp
-//         : Dfg_HWOpBase<"connect", []>
-// {
-//     let summary = "intermediate connect between ports";
-
-//     let description = [{
-//         This op will replace the dfg.push during conversion
-//         of StdToCirct. It represents the actual connection
-//         between top module ports and head/tail fifo buffer
-//         ports.
-//     }];
-
-//     let arguments = (ins
-//         Dfg_InputType: $portArgument,
-//         Dfg_InputType: $portQueue
-//     );
-
-//     let hasCustomAssemblyFormat = 1;
-// }
-
-// // def Dfg_HWJoinOp
-// //         : Dfg_HWOpBase<"join", []>
-// // {
-// //     let summary = "";
-// //     let description = [{}];
-
-// //     let arguments = (ins
-// //         AnyType: $toPush,
-// //         Dfg_OutputType: $channel
-// //     );
-// // }
-
-// def Dfg_HWInstanceOp
-//         : Dfg_HWOpBase<"instance", []>
-// {
-//     let summary = "";
-//     let description = [{}];
-
-//     let arguments = (ins
-//         SymbolRefAttr:$module,
-//         Variadic<AnyType>:$operands
-//     );
-//     let results = (outs Variadic<AnyType>:$results);
-
-//     let assemblyFormat = [{
-//         $module `(` $operands `)` attr-dict `:` functional-type($operands, $results)
-//     }];
-// }
 
 #endif
