@@ -40,7 +40,7 @@ struct ProcessOpLowering : public OpConversionPattern<ProcessOp> {
     using OpConversionPattern<ProcessOp>::OpConversionPattern;
 
     ProcessOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ProcessOp>(typeConverter, context) {};
+            : OpConversionPattern<ProcessOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         ProcessOp op,
@@ -85,7 +85,7 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
     using OpConversionPattern<InstantiateOp>::OpConversionPattern;
 
     InstantiateOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<InstantiateOp>(typeConverter, context) {};
+            : OpConversionPattern<InstantiateOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         InstantiateOp op,
@@ -124,7 +124,7 @@ struct LoopOpLowering : public OpConversionPattern<LoopOp> {
     using OpConversionPattern<LoopOp>::OpConversionPattern;
 
     LoopOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<LoopOp>(typeConverter, context) {};
+            : OpConversionPattern<LoopOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         LoopOp op,
@@ -274,6 +274,7 @@ void ConvertDfgToFuncPass::runOnOperation()
             ValueRange(),
             ArrayAttr{},
             omp::ClauseProcBindKindAttr{},
+            omp::ReductionModifierAttr{},
             ValueRange(),
             DenseBoolArrayAttr{},
             nullptr);

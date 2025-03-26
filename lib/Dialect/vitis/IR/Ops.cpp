@@ -100,9 +100,9 @@ ParseResult VariableOp::parse(OpAsmParser &parser, OperationState &result)
 
         } else {
             switch (bitwidth) {
-            case 16: initTy = FloatType::getF16(parser.getContext()); break;
-            case 32: initTy = FloatType::getF32(parser.getContext()); break;
-            case 64: initTy = FloatType::getF64(parser.getContext()); break;
+            case 16: initTy = Float16Type::get(parser.getContext()); break;
+            case 32: initTy = Float32Type::get(parser.getContext()); break;
+            case 64: initTy = Float64Type::get(parser.getContext()); break;
             default:
                 return parser.emitError(
                     parser.getNameLoc(),

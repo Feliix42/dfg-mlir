@@ -55,7 +55,7 @@ struct DfgLowerInsideToLinalgPass
         RewritePatternSet patterns(&getContext());
 
         // From tosa to linalg.
-        tosa::populateTosaDecomposeConv2D(&getContext(), patterns);
+        tosa::populateTosaDecomposeDepthwise(&getContext(), patterns);
         tosa::populateTosaDecomposeTransposeConv(&getContext(), patterns);
         tosa::populateTosaDecomposeDepthwise(&getContext(), patterns);
         tosa::populateTosaToLinalgConversionPatterns(converter, &patterns);
