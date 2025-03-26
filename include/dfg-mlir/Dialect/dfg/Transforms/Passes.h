@@ -5,12 +5,11 @@
 
 #pragma once
 
-#include "dfg-mlir/Dialect/dfg/Transforms/Bufferize/Bufferize.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/FlattenMemref/FlattenMemref.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/InlineRegion/InlineRegion.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/LowerInsideToScf/LowerInsideToScf.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/OpereatorToProcess/OperatorToProcess.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/PrintOperatorToYaml/PrintOperatorToYaml.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/FlattenMemref.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/InlineRegion.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/LowerInsideToScf.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/OperatorToProcess.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/PrintOperatorToYaml.h"
 
 namespace mlir::dfg {
 

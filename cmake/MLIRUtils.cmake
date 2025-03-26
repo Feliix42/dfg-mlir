@@ -57,3 +57,14 @@ function(mlir_gen_passes prefix)
     add_public_tablegen_target(${prefix}PassesIncGen)
     add_dependencies(${prefix}IncGen ${prefix}PassesIncGen)
 endfunction()
+
+function(mlir_gen_transforms prefix)
+    set(LLVM_TARGET_DEFINITIONS Passes.td)
+
+    mlir_tablegen(Passes.h.inc -gen-pass-decls -name ${prefix})
+    mlir_tablegen(Passes.capi.h.inc -gen-pass-capi-header --prefix ${prefix})
+    mlir_tablegen(Passes.capi.cpp.inc -gen-pass-capi-impl --prefix ${prefix})
+
+    add_public_tablegen_target(${prefix}TransformsIncGen)
+    add_dependencies(${prefix}IncGen ${prefix}TransformsIncGen)
+endfunction()

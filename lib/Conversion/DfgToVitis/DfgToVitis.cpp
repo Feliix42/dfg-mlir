@@ -16,7 +16,6 @@
 #include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
 #include "dfg-mlir/Dialect/vitis/IR/Ops.h"
 #include "dfg-mlir/Dialect/vitis/IR/Types.h"
-#include "dfg-mlir/Dialect/vitis/Transforms/MergeCastChain/MergeCastChain.h"
 #include "dfg-mlir/Dialect/vitis/Transforms/Passes.h"
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -28,7 +27,6 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
-// #include "mlir/Transforms/CSE.h"
 #include "mlir/Transforms/Passes.h"
 
 #include "llvm/ADT/APInt.h"
@@ -64,7 +62,7 @@ struct ConvertProcessToFunc : OpConversionPattern<ProcessOp> {
     using OpConversionPattern<ProcessOp>::OpConversionPattern;
 
     ConvertProcessToFunc(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ProcessOp>(typeConverter, context) {};
+            : OpConversionPattern<ProcessOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         ProcessOp op,
@@ -114,7 +112,7 @@ struct ConvertLoopToWhile : OpConversionPattern<LoopOp> {
     using OpConversionPattern<LoopOp>::OpConversionPattern;
 
     ConvertLoopToWhile(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<LoopOp>(typeConverter, context) {};
+            : OpConversionPattern<LoopOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         LoopOp op,
@@ -147,7 +145,7 @@ struct ConvertPullToStreamRead : OpConversionPattern<PullOp> {
     using OpConversionPattern<PullOp>::OpConversionPattern;
 
     ConvertPullToStreamRead(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<PullOp>(typeConverter, context) {};
+            : OpConversionPattern<PullOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         PullOp op,
@@ -316,7 +314,7 @@ struct ConvertPushToStreamWrite : OpConversionPattern<PushOp> {
     using OpConversionPattern<PushOp>::OpConversionPattern;
 
     ConvertPushToStreamWrite(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<PushOp>(typeConverter, context) {};
+            : OpConversionPattern<PushOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         PushOp op,
@@ -436,7 +434,7 @@ struct ConvertYieldToUpdates : OpConversionPattern<YieldOp> {
     using OpConversionPattern<YieldOp>::OpConversionPattern;
 
     ConvertYieldToUpdates(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<YieldOp>(typeConverter, context) {};
+            : OpConversionPattern<YieldOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         YieldOp op,
@@ -459,7 +457,7 @@ struct EraseRegion : OpConversionPattern<RegionOp> {
     using OpConversionPattern<RegionOp>::OpConversionPattern;
 
     EraseRegion(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<RegionOp>(typeConverter, context) {};
+            : OpConversionPattern<RegionOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         RegionOp op,
@@ -548,10 +546,12 @@ void mlir::addConvertToVitisPasses(OpPassManager &pm)
 {
     pm.addPass(dfg::createDfgOperatorToProcessPass());
     pm.addPass(dfg::createDfgInlineRegionPass());
-    pm.addPass(dfg::createDfgBufferizePass());
     pm.addPass(dfg::createDfgLowerInsideToLinalgPass());
     pm.addPass(createCanonicalizerPass());
     pm.addPass(bufferization::createOneShotBufferizePass());
+    pm.addPass(createReconcileUnrealizedCastsPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
     pm.addPass(createConvertLinalgToLoopsPass());
     pm.addPass(createCanonicalizerPass());
     pm.addPass(dfg::createDfgFlattenMemrefPass());
@@ -582,10 +582,12 @@ void mlir::addPrepareForVivadoPasses(OpPassManager &pm)
 {
     pm.addPass(dfg::createDfgOperatorToProcessPass());
     pm.addPass(dfg::createDfgInlineRegionPass());
-    pm.addPass(dfg::createDfgBufferizePass());
     pm.addPass(dfg::createDfgLowerInsideToLinalgPass());
     pm.addPass(createCanonicalizerPass());
     pm.addPass(bufferization::createOneShotBufferizePass());
+    pm.addPass(createReconcileUnrealizedCastsPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
     pm.addPass(createConvertLinalgToLoopsPass());
     pm.addPass(createCanonicalizerPass());
     pm.addPass(dfg::createDfgFlattenMemrefPass());

@@ -3,7 +3,7 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
-#include "dfg-mlir/Dialect/dfg/Transforms/LowerInsideToScf/LowerInsideToScf.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/LowerInsideToScf.h"
 
 #include "dfg-mlir/Conversion/Passes.h"
 #include "dfg-mlir/Conversion/Utils.h"

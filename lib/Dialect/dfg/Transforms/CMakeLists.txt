@@ -1,6 +1,23 @@
-add_subdirectory(Bufferize)
-add_subdirectory(FlattenMemref)
-add_subdirectory(InlineRegion)
-add_subdirectory(LowerInsideToScf)
-add_subdirectory(OperatorToProcess)
-add_subdirectory(PrintOperatorToYaml)
+add_mlir_conversion_library(MLIRDfgTransforms
+    BufferizableOpInterfaceImpl.cpp
+    FlattenMemref.cpp
+    InlineRegion.cpp
+    LowerInsideToScf.cpp
+    OperatorToProcess.cpp
+    PrintOperatorToYaml.cpp
+
+    DEPENDS
+    DfgTransformsIncGen
+
+    LINK_COMPONENTS
+    Core
+
+    LINK_LIBS PUBLIC
+    MLIRDialectUtils
+    MLIRTransformUtils
+    MLIRBufferizationDialect
+    MLIRIR
+    MLIRPass
+    MLIRTransforms
+    MLIRSupport
+)

@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
+#include "dfg-mlir/Dialect/dfg/Transforms/PrintOperatorToYaml.h"
+
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"

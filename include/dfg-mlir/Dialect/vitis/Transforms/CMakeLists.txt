@@ -1,1 +1,1 @@
-mlir_gen_passes(Vitis)
+mlir_gen_transforms(Vitis)

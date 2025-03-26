@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
+#include "dfg-mlir/Dialect/dfg/Transforms/OperatorToProcess.h"
+
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -34,7 +36,7 @@ namespace {
 struct ConvertAnyOperatorToEquivalentProcess
         : public OpRewritePattern<OperatorOp> {
     ConvertAnyOperatorToEquivalentProcess(MLIRContext* context)
-            : OpRewritePattern<OperatorOp>(context) {};
+            : OpRewritePattern<OperatorOp>(context){};
 
     LogicalResult
     matchAndRewrite(OperatorOp op, PatternRewriter &rewriter) const override

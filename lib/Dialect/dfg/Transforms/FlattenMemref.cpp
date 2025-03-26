@@ -3,7 +3,7 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
-#include "dfg-mlir/Dialect/dfg/Transforms/FlattenMemref/FlattenMemref.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/FlattenMemref.h"
 
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
@@ -130,7 +130,7 @@ struct FlattenProcessRegion : public OpRewritePattern<OpT> {
     TypeConverter converter;
     FlattenProcessRegion(MLIRContext* context, TypeConverter &converter)
             : OpRewritePattern<OpT>(context),
-              converter(converter) {};
+              converter(converter){};
 
     LogicalResult
     matchAndRewrite(OpT op, PatternRewriter &rewriter) const override
@@ -158,7 +158,7 @@ struct FlattenPull : public OpRewritePattern<PullOp> {
     TypeConverter converter;
     FlattenPull(MLIRContext* context, TypeConverter &converter)
             : OpRewritePattern<PullOp>(context),
-              converter(converter) {};
+              converter(converter){};
 
     LogicalResult
     matchAndRewrite(PullOp op, PatternRewriter &rewriter) const override
@@ -181,7 +181,7 @@ struct FlattenAlloc : public OpRewritePattern<OpT> {
     TypeConverter converter;
     FlattenAlloc(MLIRContext* context, TypeConverter &converter)
             : OpRewritePattern<OpT>(context),
-              converter(converter) {};
+              converter(converter){};
 
     LogicalResult
     matchAndRewrite(OpT op, PatternRewriter &rewriter) const override
@@ -205,7 +205,7 @@ struct FlattenChannel : public OpRewritePattern<ChannelOp> {
     TypeConverter converter;
     FlattenChannel(MLIRContext* context, TypeConverter &converter)
             : OpRewritePattern<ChannelOp>(context),
-              converter(converter) {};
+              converter(converter){};
 
     LogicalResult
     matchAndRewrite(ChannelOp op, PatternRewriter &rewriter) const override

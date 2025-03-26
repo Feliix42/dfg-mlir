@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "dfg-mlir/Dialect/vitis/Transforms/MergeCastChain/MergeCastChain.h"
+#include "dfg-mlir/Dialect/vitis/Transforms/MergeCastChain.h"
 
 namespace mlir::vitis {
 

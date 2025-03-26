@@ -3,6 +3,8 @@
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
+#include "dfg-mlir/Dialect/vitis/Transforms/MergeCastChain.h"
+
 #include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
 #include "dfg-mlir/Dialect/vitis/IR/Ops.h"
 #include "dfg-mlir/Dialect/vitis/Transforms/Passes.h"
@@ -31,7 +33,7 @@ using namespace vitis;
 namespace {
 struct ReplaceCastValue : public OpRewritePattern<ArithCastOp> {
     ReplaceCastValue(MLIRContext* context)
-            : OpRewritePattern<ArithCastOp>(context) {};
+            : OpRewritePattern<ArithCastOp>(context){};
 
     LogicalResult
     matchAndRewrite(ArithCastOp op, PatternRewriter &rewriter) const override

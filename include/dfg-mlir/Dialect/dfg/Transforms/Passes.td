@@ -9,16 +9,6 @@
 
 include "mlir/Pass/PassBase.td"
 
-def DfgBufferize : Pass<"dfg-bufferize">
-{
-    let summary = "bufferize the dfg-mlir dialect";
-
-    let constructor = "mlir::dfg::createDfgBufferizePass()";
-    let dependentDialects = [
-        "mlir::bufferization::BufferizationDialect"
-    ];
-}
-
 def DfgFlattenMemref : Pass<"dfg-flatten-memref">
 {
     let summary = "flatten the memrefs inside dfg for vitis conversion";
