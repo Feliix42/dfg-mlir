@@ -11,9 +11,8 @@
 #include <mlir/InitAllDialects.h>
 
 namespace mlir {
-namespace dfg {
 
-inline void registerAllPasses()
+inline void registerAllDFGMLIRPasses()
 {
     dfg::registerDFGMLIRConversionPasses();
 
@@ -24,5 +23,4 @@ inline void registerAllPasses()
     dfg::registerPrepareForVivadoPipelines();
 }
 
-} // namespace dfg
 } // namespace mlir

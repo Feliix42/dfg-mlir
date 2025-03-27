@@ -9,20 +9,10 @@
 
 using namespace mlir;
 
-// namespace mlir {
-// namespace vitis {
-// void registerToVitisCppTranslation();
-// void registerToVitisTclTranslation();
-// } // namespace vitis
-// namespace dfg {
-// void registerToVivadoTclTranslation();
-// } // namespace dfg
-// } // namespace mlir
-
 int main(int argc, char* argv[])
 {
     registerAllTranslations();
-    dfg::registerAllTranslations();
+    registerAllDFGMLIRTranslations();
 
     return failed(
         mlirTranslateMain(argc, argv, "DFG Translation Testing Tool"));

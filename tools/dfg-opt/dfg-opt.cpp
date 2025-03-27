@@ -18,10 +18,10 @@ int main(int argc, char* argv[])
     DialectRegistry registry;
 
     registerAllDialects(registry);
-    dfg::registerAllDialects(registry);
+    registerAllDFGMLIRDialects(registry);
 
     registerAllPasses();
-    dfg::registerAllPasses();
+    registerAllDFGMLIRPasses();
 
     return asMainReturnCode(
         MlirOptMain(argc, argv, "dfg-mlir optimizer driver\n", registry));

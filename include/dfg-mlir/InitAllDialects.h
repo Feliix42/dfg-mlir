@@ -11,21 +11,19 @@
 #include <mlir/InitAllDialects.h>
 
 namespace mlir {
-namespace dfg {
 
-inline void registerAllDialects(DialectRegistry &registry)
+inline void registerAllDFGMLIRDialects(DialectRegistry &registry)
 {
     registry.insert<dfg::DfgDialect, vitis::VitisDialect>();
 
     dfg::registerBufferizableOpInterfaceExternalModels(registry);
 }
 
-inline void registerAllDialects(MLIRContext &context)
+inline void registerAllDFGMLIRDialects(MLIRContext &context)
 {
     DialectRegistry registry;
-    dfg::registerAllDialects(registry);
+    registerAllDFGMLIRDialects(registry);
     context.appendDialectRegistry(registry);
 }
 
-} // namespace dfg
 } // namespace mlir

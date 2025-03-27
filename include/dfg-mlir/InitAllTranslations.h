@@ -11,8 +11,9 @@ void registerToVitisTclTranslation();
 } // namespace vitis
 namespace dfg {
 void registerToVivadoTclTranslation();
+} // namespace dfg
 
-inline void registerAllTranslations()
+inline void registerAllDFGMLIRTranslations()
 {
     static bool initOnce = []() {
         dfg::registerToVivadoTclTranslation();
@@ -22,6 +23,5 @@ inline void registerAllTranslations()
     }();
     (void)initOnce;
 }
-} // namespace dfg
 
 } // namespace mlir

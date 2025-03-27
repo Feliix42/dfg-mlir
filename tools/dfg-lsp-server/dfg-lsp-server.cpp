@@ -20,7 +20,7 @@ int main(int argc, char* argv[])
 {
     DialectRegistry registry;
     registerAllDialects(registry);
-    dfg::registerAllDialects(registry);
+    registerAllDFGMLIRDialects(registry);
 
     return asMainReturnCode(MlirLspServerMain(argc, argv, registry));
 }
