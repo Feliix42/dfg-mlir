@@ -20,6 +20,7 @@
 
 #include <functional>
 #include <llvm/Support/LogicalResult.h>
+#include <mlir/IR/BuiltinTypeInterfaces.h>
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/OperationSupport.h>
@@ -181,51 +182,15 @@ void FuncOp::print(OpAsmPrinter &p)
 LogicalResult FuncOp::verify()
 {
     auto funcTy = getFunctionType();
-    if (funcTy.getNumResults() != 0)
-        return ::emitError(getLoc(), "Now only void return type is supported.");
-    else if (funcTy.getNumInputs() != 0) {
+    if (funcTy.getNumInputs() != 0) {
         for (auto type : funcTy.getInputs())
-            if (!isa<StreamType>(type))
+            if (!isa<StreamType, PointerType>(type))
                 return ::emitError(
                     getLoc(),
-                    "Now only stream or alias is supported as argument type.");
+                    "Now only stream or pointer type is supported as argument "
+                    "type.");
     }
     return success();
-}
-
-//===----------------------------------------------------------------------===//
-// ReturnOp
-//===----------------------------------------------------------------------===//
-
-// LogicalResult ReturnOp::verify()
-// {
-//     for (auto type : getOperandTypes())
-//         if (!isa<IntegerType>(type))
-//             return ::emitError(
-//                 getLoc(),
-//                 "Only support integers for vitis code generation.");
-//     return success();
-// }
-
-//===----------------------------------------------------------------------===//
-// IfBreakOp
-//===----------------------------------------------------------------------===//
-
-struct KeepIfBreak : public OpRewritePattern<IfBreakOp> {
-    using OpRewritePattern<IfBreakOp>::OpRewritePattern;
-
-    LogicalResult
-    matchAndRewrite(IfBreakOp op, PatternRewriter &rewriter) const override
-    {
-        return failure();
-    }
-};
-
-void IfBreakOp::getCanonicalizationPatterns(
-    RewritePatternSet &results,
-    MLIRContext* context)
-{
-    results.add<KeepIfBreak>(context);
 }
 
 //===----------------------------------------------------------------------===//

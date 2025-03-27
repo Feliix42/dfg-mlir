@@ -38,11 +38,16 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/BuiltinTypeInterfaces.h>
+#include <mlir/IR/Diagnostics.h>
+#include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/TypeRange.h>
 #include <mlir/IR/Types.h>
 #include <mlir/IR/Value.h>
+#include <mlir/Support/LLVM.h>
 #include <mlir/Transforms/DialectConversion.h>
 #include <optional>
+#include <string>
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTDFGTOVITIS
@@ -54,7 +59,6 @@ using namespace mlir::dfg;
 
 namespace {
 
-// SmallVector<TypedValue<OutputType>> loopedChannels;
 SmallVector<Value> loopedChannels, iterArgValues;
 Value lastSignal, lastSignalPlaceholder;
 
@@ -71,72 +75,46 @@ struct ConvertProcessToFunc : OpConversionPattern<ProcessOp> {
     {
         auto converter = getTypeConverter();
         auto loc = op->getLoc();
-
-        SmallVector<Type> types;
-        for (auto inTy : adaptor.getFunctionType().getInputs())
-            types.push_back(converter->convertType(inTy));
-        for (auto outTy : adaptor.getFunctionType().getResults())
-            types.push_back(converter->convertType(outTy));
+        auto funcTy = cast<FunctionType>(
+            converter->convertType(adaptor.getFunctionType()));
 
         loopedChannels.clear();
         iterArgValues.clear();
         auto funcOp = rewriter.create<vitis::FuncOp>(
             loc,
             op.getSymName(),
-            rewriter.getFunctionType(types, {}),
+            funcTy,
             ArrayAttr{},
             ArrayAttr{});
         auto funcLoc = funcOp.getLoc();
         Block* funcEntryBlock = rewriter.createBlock(&funcOp.getBody());
         IRMapping mapper;
-        for (auto type : types) funcEntryBlock->addArgument(type, funcLoc);
+        for (auto type : funcTy.getInputs())
+            funcEntryBlock->addArgument(type, funcLoc);
 
         rewriter.setInsertionPointToStart(funcEntryBlock);
         for (auto [arg, newArg] :
              llvm::zip(op.getBody().getArguments(), funcOp.getArguments())) {
-            auto castOp = rewriter.create<UnrealizedConversionCastOp>(
+            auto casted = converter->materializeSourceConversion(
+                rewriter,
                 funcLoc,
-                TypeRange{arg.getType()},
+                arg.getType(),
                 newArg);
-            mapper.map(arg, castOp->getResult(0));
+            mapper.map(arg, casted);
         }
-        for (auto &op : op.getBody().getOps()) rewriter.clone(op, mapper);
-        rewriter.create<vitis::ReturnOp>(funcOp->getLoc(), TypeRange{});
+        for (auto &op : op.getBody().getOps()) {
+            if (auto loopOp = dyn_cast<LoopOp>(op)) {
+                for (auto &loopBodyOp : loopOp.getBody().getOps())
+                    rewriter.clone(loopBodyOp, mapper);
+                iterArgValues.append(
+                    loopOp.getIterArgs().begin(),
+                    loopOp.getIterArgs().end());
+            } else {
+                rewriter.clone(op, mapper);
+            }
+        }
 
-        rewriter.eraseOp(op);
-        return success();
-    }
-};
-
-struct ConvertLoopToWhile : OpConversionPattern<LoopOp> {
-    using OpConversionPattern<LoopOp>::OpConversionPattern;
-
-    ConvertLoopToWhile(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<LoopOp>(typeConverter, context){};
-
-    LogicalResult matchAndRewrite(
-        LoopOp op,
-        LoopOpAdaptor adaptor,
-        ConversionPatternRewriter &rewriter) const override
-    {
-        auto loc = op.getLoc();
-        loopedChannels.append(op.getInChans().begin(), op.getInChans().end());
-        iterArgValues.append(op.getIterArgs().begin(), op.getIterArgs().end());
-
-        auto whileTrueOp = rewriter.create<vitis::WhileTrueOp>(loc);
-        Block &whileBody = whileTrueOp.getBody().emplaceBlock();
-        rewriter.setInsertionPointToStart(&whileBody);
-        IRMapping mapper;
-        for (auto &opi : op.getBody().getOps()) rewriter.clone(opi, mapper);
-        lastSignalPlaceholder =
-            rewriter
-                .create<vitis::ConstantOp>(
-                    loc,
-                    rewriter.getIntegerAttr(rewriter.getI1Type(), 0))
-                .getResult();
-        rewriter.create<vitis::IfBreakOp>(loc, lastSignalPlaceholder);
-
-        rewriter.eraseOp(op);
+        rewriter.replaceOp(op, funcOp);
         return success();
     }
 };
@@ -158,155 +136,60 @@ struct ConvertPullToStreamRead : OpConversionPattern<PullOp> {
 
         auto vitisStream =
             pullChan.getDefiningOp<UnrealizedConversionCastOp>()->getOperand(0);
-        auto userOps = pulledValue.getUsers();
 
-        vitis::StreamReadOp readOp;
-        if (!isa<MemRefType>(pulledValue.getType()))
-            readOp = rewriter.create<vitis::StreamReadOp>(
+        if (!isa<MemRefType>(pulledValue.getType())) {
+            auto readOp = rewriter.create<vitis::StreamReadOp>(
                 loc,
                 dyn_cast<vitis::StreamType>(vitisStream.getType())
                     .getStreamType(),
                 vitisStream);
+            rewriter.replaceOp(op, readOp.getResult());
+            return success();
+        } else {
+            // Create an array to store the pulled data
+            auto memrefTy = cast<MemRefType>(pulledValue.getType());
+            auto size = memrefTy.getShape().front();
+            auto elemTy = memrefTy.getElementType();
+            auto array = rewriter.create<vitis::VariableOp>(
+                loc,
+                vitis::ArrayType::get(rewriter.getContext(), size, elemTy),
+                Value{});
+            // Create a loop to repeatedly read from the channel
+            auto cstLb = rewriter.create<arith::ConstantOp>(
+                loc,
+                rewriter.getIndexType(),
+                rewriter.getIndexAttr(0));
+            auto cstUb = rewriter.create<arith::ConstantOp>(
+                loc,
+                rewriter.getIndexType(),
+                rewriter.getIndexAttr(size));
+            auto cstStep = rewriter.create<arith::ConstantOp>(
+                loc,
+                rewriter.getIndexType(),
+                rewriter.getIndexAttr(1));
+            auto forOp = rewriter.create<vitis::ForOp>(
+                loc,
+                cstLb.getResult(),
+                cstUb.getResult(),
+                cstStep.getResult());
+            rewriter.setInsertionPointToEnd(&forOp.getBody().front());
+            auto curLoc = forOp.getLoc();
+            auto streamReadOp = rewriter.create<vitis::StreamReadOp>(
+                curLoc,
+                dyn_cast<vitis::StreamType>(vitisStream.getType())
+                    .getStreamType(),
+                vitisStream);
+            rewriter.create<vitis::ArrayWriteOp>(
+                curLoc,
+                streamReadOp.getResult(),
+                array.getResult(),
+                forOp.getInductionVar());
 
-        // If the pulled value is a memref, this is the last signal
-        Value lastVar;
-        for (auto user : userOps) {
-            if (isa<PushOp>(user)) {
-                user->replaceUsesOfWith(pulledValue, readOp.getResult());
-            } else {
-                auto pulledType = pulledValue.getType();
-                // If the pulled value is a memref, create a for-loop to read
-                // the data into an array
-                if (auto memrefTy = dyn_cast<MemRefType>(pulledType)) {
-                    auto elemTy = memrefTy.getElementType();
-                    auto size = memrefTy.getShape().front();
-                    auto array = rewriter.create<vitis::VariableOp>(
-                        loc,
-                        vitis::ArrayType::get(
-                            rewriter.getContext(),
-                            size,
-                            elemTy),
-                        Value{});
-                    user->replaceUsesOfWith(pulledValue, array.getResult());
-                    auto last = rewriter.create<vitis::VariableOp>(
-                        loc,
-                        rewriter.getI1Type(),
-                        Value{});
-                    lastVar = last.getResult();
-
-                    // Deal with memref.load/store ops
-                    rewriter.setInsertionPoint(user);
-                    // If it's used in memref.load
-                    if (auto loadOp = dyn_cast<memref::LoadOp>(user)) {
-                        auto arrayRead = rewriter.create<vitis::ArrayReadOp>(
-                            loadOp.getLoc(),
-                            memrefTy.getElementType(),
-                            array.getResult(),
-                            loadOp.getIndices().front());
-                        rewriter.replaceOp(user, arrayRead);
-                    }
-                    // If it's used in memref.store
-                    else if (auto storeOp = dyn_cast<memref::StoreOp>(user)) {
-                        auto arrayWrite = rewriter.create<vitis::ArrayWriteOp>(
-                            storeOp.getLoc(),
-                            storeOp.getValueToStore(),
-                            array.getResult(),
-                            storeOp.getIndices().front());
-                        rewriter.replaceOp(user, arrayWrite);
-                    }
-                    rewriter.setInsertionPoint(op);
-
-                    // Create the index constants outside of the loop
-                    rewriter.setInsertionPoint(
-                        op->getParentOfType<vitis::WhileTrueOp>());
-                    auto cstLb = rewriter.create<arith::ConstantOp>(
-                        loc,
-                        rewriter.getIndexType(),
-                        rewriter.getIndexAttr(0));
-                    auto cstUb = rewriter.create<arith::ConstantOp>(
-                        loc,
-                        rewriter.getIndexType(),
-                        rewriter.getIndexAttr(size));
-                    auto cstStep = rewriter.create<arith::ConstantOp>(
-                        loc,
-                        rewriter.getIndexType(),
-                        rewriter.getIndexAttr(1));
-                    rewriter.setInsertionPoint(op);
-                    // Create the loop
-                    auto forOp = rewriter.create<vitis::ForOp>(
-                        loc,
-                        cstLb.getResult(),
-                        cstUb.getResult(),
-                        cstStep.getResult());
-                    rewriter.setInsertionPointToEnd(&forOp.getBody().front());
-                    auto curLoc = forOp.getLoc();
-                    auto streamReadOp = rewriter.create<vitis::StreamReadOp>(
-                        curLoc,
-                        dyn_cast<vitis::StreamType>(vitisStream.getType())
-                            .getStreamType(),
-                        vitisStream);
-                    auto streamDataOp = rewriter.create<vitis::StreamGetDataOp>(
-                        curLoc,
-                        dyn_cast<vitis::APAxisType>(
-                            streamReadOp.getResult().getType())
-                            .getElemType(),
-                        streamReadOp.getResult());
-                    rewriter.create<vitis::ArrayWriteOp>(
-                        curLoc,
-                        streamDataOp.getResult(),
-                        array.getResult(),
-                        forOp.getInductionVar());
-                    auto streamLastOp = rewriter.create<vitis::StreamGetLastOp>(
-                        curLoc,
-                        streamReadOp.getResult());
-                    rewriter.create<vitis::UpdateOp>(
-                        curLoc,
-                        last.getResult(),
-                        streamLastOp.getResult());
-                    rewriter.setInsertionPoint(op);
-                }
-                // If it's a scalar value, create a stream get data op
-                else {
-                    auto dataOp = rewriter.create<vitis::StreamGetDataOp>(
-                        loc,
-                        pulledType,
-                        readOp.getResult());
-                    user->replaceUsesOfWith(pulledValue, dataOp.getResult());
-                }
-            }
+            rewriter.replaceOp(op, array.getResult());
+            return success();
         }
 
-        if (isInSmallVector<Value>(pullChan, loopedChannels)) {
-            size_t idx = getVectorIdx<Value>(pullChan, loopedChannels).value();
-            if (isa<MemRefType>(pulledValue.getType())) {
-                loopedChannels[idx] = lastVar;
-            } else {
-                auto lastOp = rewriter.create<vitis::StreamGetLastOp>(
-                    loc,
-                    readOp.getResult());
-                loopedChannels[idx] = lastOp.getResult();
-            }
-
-            // If this is the last pull, calculate the last signal
-            if (idx == loopedChannels.size() - 1) {
-                for (size_t i = 0; i < loopedChannels.size(); i++) {
-                    if (i == 0)
-                        lastSignal = loopedChannels[i];
-                    else {
-                        auto andOp = rewriter.create<arith::AndIOp>(
-                            loc,
-                            lastSignal,
-                            loopedChannels[i]);
-                        lastSignal = andOp.getResult();
-                    }
-                }
-                lastSignalPlaceholder.replaceAllUsesWith(lastSignal);
-                rewriter.eraseOp(lastSignalPlaceholder.getDefiningOp());
-            }
-        }
-
-        rewriter.eraseOp(op);
-        return success();
+        return rewriter.notifyMatchFailure(loc, "Unable to convert pull.");
     }
 };
 
@@ -322,27 +205,26 @@ struct ConvertPushToStreamWrite : OpConversionPattern<PushOp> {
         ConversionPatternRewriter &rewriter) const override
     {
         auto loc = op.getLoc();
-        auto ctx = rewriter.getContext();
         auto pushChan = op.getChan();
         auto pushedValue = op.getInp();
 
         auto vitisStream =
             pushChan.getDefiningOp<UnrealizedConversionCastOp>()->getOperand(0);
 
-        if (pushedValue.getType().getDialect().getNamespace() == "vitis")
-            rewriter.create<vitis::StreamWriteOp>(
+        if (!isa<MemRefType>(pushedValue.getType())) {
+            auto writeOp = rewriter.create<vitis::StreamWriteOp>(
                 loc,
                 pushedValue,
                 vitisStream);
-        else if (auto memrefTy = dyn_cast<MemRefType>(pushedValue.getType())) {
-            auto pushedType = memrefTy.getElementType();
+            rewriter.replaceOp(op, writeOp);
+            return success();
+        } else {
+            // The array was casted back to memref using unrealized casts
+            auto array = pushedValue.getDefiningOp()->getOperand(0);
+            // Create an array to store the pulled data
+            auto memrefTy = cast<MemRefType>(pushedValue.getType());
             auto size = memrefTy.getShape().front();
-            rewriter.setInsertionPoint(
-                op->getParentOfType<vitis::WhileTrueOp>());
-            auto cstFalse = rewriter.create<arith::ConstantOp>(
-                loc,
-                rewriter.getI1Type(),
-                rewriter.getIntegerAttr(rewriter.getI1Type(), 0));
+            // Create a loop to repeatedly read from the channel
             auto cstLb = rewriter.create<arith::ConstantOp>(
                 loc,
                 rewriter.getIndexType(),
@@ -355,78 +237,27 @@ struct ConvertPushToStreamWrite : OpConversionPattern<PushOp> {
                 loc,
                 rewriter.getIndexType(),
                 rewriter.getIndexAttr(1));
-            auto cstMaxIdx = rewriter.create<arith::ConstantOp>(
-                loc,
-                rewriter.getIndexType(),
-                rewriter.getIndexAttr(size - 1));
-            rewriter.setInsertionPoint(op);
-            // Create the loop
             auto forOp = rewriter.create<vitis::ForOp>(
                 loc,
                 cstLb.getResult(),
                 cstUb.getResult(),
                 cstStep.getResult());
             rewriter.setInsertionPointToEnd(&forOp.getBody().front());
-
             auto curLoc = forOp.getLoc();
-            Type varTy = vitis::APAxisType::get(ctx, pushedType, 0, 0, 0, true);
-            auto variableOp =
-                rewriter.create<vitis::VariableOp>(curLoc, varTy, Value());
-            auto data = rewriter.create<vitis::ArrayReadOp>(
+            auto arrayReadOp = rewriter.create<vitis::ArrayReadOp>(
                 curLoc,
-                pushedValue.getDefiningOp()->getOperand(0),
+                array,
                 forOp.getInductionVar());
-            rewriter.create<vitis::StreamSetDataOp>(
-                curLoc,
-                data.getResult(),
-                variableOp.getResult());
-            auto cmpOp = rewriter.create<vitis::ArithCmpOp>(
-                curLoc,
-                vitis::CmpPredicateAttr::get(
-                    rewriter.getContext(),
-                    vitis::CmpPredicate::eq),
-                forOp.getInductionVar(),
-                cstMaxIdx.getResult());
-            auto selectOp = rewriter.create<vitis::ArithSelectOp>(
-                curLoc,
-                cmpOp.getResult(),
-                lastSignal,
-                cstFalse.getResult());
-            rewriter.create<vitis::StreamSetLastOp>(
-                loc,
-                selectOp.getResult(),
-                variableOp.getResult());
             rewriter.create<vitis::StreamWriteOp>(
-                loc,
-                variableOp.getResult(),
+                curLoc,
+                arrayReadOp.getResult(),
                 vitisStream);
-        } else {
-            Type varTy = vitis::APAxisType::get(
-                ctx,
-                pushedValue.getType(),
-                0,
-                0,
-                0,
-                true);
-            auto variableOp =
-                rewriter.create<vitis::VariableOp>(loc, varTy, Value());
 
-            rewriter.create<vitis::StreamSetDataOp>(
-                loc,
-                pushedValue,
-                variableOp.getResult());
-            rewriter.create<vitis::StreamSetLastOp>(
-                loc,
-                lastSignal,
-                variableOp.getResult());
-            rewriter.create<vitis::StreamWriteOp>(
-                loc,
-                variableOp.getResult(),
-                vitisStream);
+            rewriter.replaceOp(op, forOp);
+            return success();
         }
 
-        rewriter.eraseOp(op);
-        return success();
+        return rewriter.notifyMatchFailure(loc, "Unable to convert pull.");
     }
 };
 
@@ -475,12 +306,12 @@ void mlir::populateDfgToVitisConversionPatterns(
     RewritePatternSet &patterns)
 {
     patterns.add<ConvertProcessToFunc>(typeConverter, patterns.getContext());
-    patterns.add<ConvertLoopToWhile>(typeConverter, patterns.getContext());
     patterns.add<ConvertPullToStreamRead>(typeConverter, patterns.getContext());
     patterns.add<ConvertPushToStreamWrite>(
         typeConverter,
         patterns.getContext());
-    patterns.add<ConvertYieldToUpdates>(typeConverter, patterns.getContext());
+    // patterns.add<ConvertYieldToUpdates>(typeConverter,
+    // patterns.getContext());
     patterns.add<EraseRegion>(typeConverter, patterns.getContext());
 }
 
@@ -491,42 +322,74 @@ struct ConvertDfgToVitisPass
 };
 } // namespace
 
+namespace {
+struct DfgTypeConverter : public TypeConverter {
+public:
+    DfgTypeConverter(MLIRContext* context) : context(context)
+    {
+        addConversion([](Type type) { return type; });
+        addConversion([this](InputType type) -> Type {
+            auto channelTy = type.getElementType();
+            Type elemTy;
+            if (auto memrefTy = dyn_cast<MemRefType>(channelTy))
+                elemTy = memrefTy.getElementType();
+            else
+                elemTy = channelTy;
+            return vitis::StreamType::get(this->context, elemTy);
+        });
+        addConversion([this](OutputType type) -> Type {
+            auto channelTy = type.getElementType();
+            Type elemTy;
+            if (auto memrefTy = dyn_cast<MemRefType>(channelTy))
+                elemTy = memrefTy.getElementType();
+            else
+                elemTy = channelTy;
+            return vitis::StreamType::get(this->context, elemTy);
+        });
+        addConversion([this](FunctionType type) -> Type {
+            SmallVector<Type> args;
+            for (auto inTy : type.getInputs())
+                args.push_back(this->convertType(inTy));
+            for (auto outTy : type.getResults())
+                args.push_back(this->convertType(outTy));
+            return FunctionType::get(this->context, args, TypeRange{});
+        });
+        addSourceMaterialization(materializeAsUnrealizedCast);
+        addArgumentMaterialization(materializeAsUnrealizedCast);
+        addTargetMaterialization(materializeAsUnrealizedCast);
+    }
+
+private:
+    MLIRContext* context;
+    static Value materializeAsUnrealizedCast(
+        OpBuilder &builder,
+        Type resultType,
+        ValueRange inputs,
+        Location loc)
+    {
+        if (inputs.size() != 1) return Value();
+        return builder
+            .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+            .getResult(0);
+    }
+};
+} // namespace
+
 void ConvertDfgToVitisPass::runOnOperation()
 {
-    TypeConverter converter;
+    auto &context = getContext();
 
-    converter.addConversion([&](Type type) { return type; });
-    converter.addConversion([&](InputType type) -> Type {
-        auto channelTy = type.getElementType();
-        Type elemTy;
-        if (auto memrefTy = dyn_cast<MemRefType>(channelTy))
-            elemTy = memrefTy.getElementType();
-        else
-            elemTy = channelTy;
-        return vitis::StreamType::get(
-            &getContext(),
-            vitis::APAxisType::get(&getContext(), elemTy, 0, 0, 0, true));
-    });
-    converter.addConversion([&](OutputType type) -> Type {
-        auto channelTy = type.getElementType();
-        Type elemTy;
-        if (auto memrefTy = dyn_cast<MemRefType>(channelTy))
-            elemTy = memrefTy.getElementType();
-        else
-            elemTy = channelTy;
-        return vitis::StreamType::get(
-            &getContext(),
-            vitis::APAxisType::get(&getContext(), elemTy, 0, 0, 0, true));
-    });
-
-    ConversionTarget target(getContext());
-    RewritePatternSet patterns(&getContext());
+    DfgTypeConverter converter(&context);
+    ConversionTarget target(context);
+    RewritePatternSet patterns(&context);
 
     populateDfgToVitisConversionPatterns(converter, patterns);
 
     target.addLegalOp<UnrealizedConversionCastOp>();
     target.addLegalDialect<vitis::VitisDialect>();
-    target.addIllegalDialect<DfgDialect>();
+    // target.addIllegalDialect<DfgDialect>();
+    target.addLegalDialect<DfgDialect>();
+    target.addIllegalOp<ProcessOp, RegionOp, PullOp, PushOp>();
     target.markUnknownOpDynamicallyLegal([](Operation*) { return true; });
 
     if (failed(applyPartialConversion(

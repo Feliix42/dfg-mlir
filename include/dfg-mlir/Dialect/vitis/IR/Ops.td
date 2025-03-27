@@ -73,18 +73,12 @@ def Vitis_UpdateOp : Vitis_Op<"update", [AllTypesMatch<["variable", "new_value"]
     }];
 }
 
-def Vitis_TypedefOp : Vitis_Op<"typedef", []>
-{
-    let summary = "typedef";
-    let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type);
-    let assemblyFormat = "$sym_name `:` $type attr-dict";   
-}
-
 def Vitis_FuncOp : Vitis_Op<"func",
         [
             AutomaticAllocationScope,
             FunctionOpInterface,
-            IsolatedFromAbove
+            IsolatedFromAbove,
+            NoTerminator
         ]>
 {
     let summary = "Function";
@@ -114,31 +108,48 @@ def Vitis_FuncOp : Vitis_Op<"func",
     let hasVerifier = 1;
 }
 
-def Vitis_ReturnOp : Vitis_Op<"return",
+def Vitis_CallOp : Vitis_Op<"call",
         [
-            Pure,
-            HasParent<"FuncOp">,
-            Terminator
+            CallOpInterface,
         ]>
 {
-    let summary = "return";
-    // let arguments = (ins Optional<AnyType>:$operand);
-    // let assemblyFormat = "attr-dict ($operand^ `:` type($operand))?";
-    // let hasVerifier = 1;
-    let assemblyFormat = "attr-dict";
-}
+    let summary = "funtion call";
 
-def Vitis_IfBreakOp : Vitis_Op<"if_break",
-        [
-            NoTerminator,
-            HasParent<"WhileTrueOp">
-        ]>
-{
+    let arguments = (ins
+        FlatSymbolRefAttr:$callee,
+        Variadic<AnyType>:$operands,
+        OptionalAttr<DictArrayAttr>:$arg_attrs,
+        OptionalAttr<DictArrayAttr>:$res_attrs
+    );
+    let results = (outs Variadic<AnyType>);
 
-    let summary = "if last signal is asserted, break to end exec";
-    let arguments = (ins I1:$condition);
-    let assemblyFormat = "$condition attr-dict";
-    let hasCanonicalizer = 1;
+    let assemblyFormat = [{
+        $callee `(` $operands `)` attr-dict `:` functional-type($operands, results)
+    }];
+
+    let extraClassDeclaration = [{
+        /// Get the argument operands to the called function.
+        operand_range getArgOperands() {
+            return {arg_operand_begin(), arg_operand_end()};
+        }
+
+        MutableOperandRange getArgOperandsMutable() {
+            return getOperandsMutable();
+        }
+
+        operand_iterator arg_operand_begin() { return operand_begin(); }
+        operand_iterator arg_operand_end() { return operand_end(); }
+
+        /// Return the callee of this operation.
+        CallInterfaceCallable getCallableForCallee() {
+            return (*this)->getAttrOfType<SymbolRefAttr>("callee");
+        }
+
+        /// Set the callee for this operation.
+        void setCalleeFromCallable(CallInterfaceCallable callee) {
+            (*this)->setAttr("callee", cast<SymbolRefAttr>(callee));
+        }
+    }];
 }
 
 def Vitis_ForOp : Vitis_Op<"for",
@@ -179,17 +190,6 @@ def Vitis_WhileOp : Vitis_Op<"while",
     let arguments = (ins I1:$condition);
     let regions = (region SizedRegion<1>:$body);
     let assemblyFormat = "$condition $body attr-dict";
-}
-
-def Vitis_WhileTrueOp : Vitis_Op<"while_true",
-        [
-            RecursiveMemoryEffects,
-            NoTerminator
-        ]>
-{
-    let summary = "while-true-loop";
-    let regions = (region SizedRegion<1>:$body);
-    let assemblyFormat = "$body attr-dict";
 }
 
 #endif // VITIS_OPS

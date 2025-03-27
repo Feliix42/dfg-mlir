@@ -275,11 +275,8 @@ static LogicalResult printOperation(VitisCppEmitter &emitter, ModuleOp moduleOp)
        << "#include\"hls_stream.h\"\n"
        << "#include\"hls_math.h\"\n\n";
 
-    os << "extern \"C\" {\n";
     for (Operation &op : moduleOp)
         if (failed(emitter.emitOperation(op, false))) return failure();
-    os << "}";
-
     return success();
 }
 
@@ -317,13 +314,6 @@ printOperation(VitisCppEmitter &emitter, vitis::FuncOp funcOp)
         if (failed(emitter.emitOperation(opi, false))) return failure();
 
     os.unindent() << "}";
-    return success();
-}
-
-// TODO: Curretnly only support void return, deal with this later
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::ReturnOp returnOp)
-{
     return success();
 }
 
@@ -368,22 +358,11 @@ printOperation(VitisCppEmitter &emitter, vitis::UpdateOp updateOp)
     return success();
 }
 
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::IfBreakOp ifBreakOp)
-{
-    raw_indented_ostream &os = emitter.ostream();
-
-    os << "if (" << emitter.getOrCreateName(ifBreakOp.getCondition())
-       << ") break;";
-
-    return success();
-}
-
 static bool hasInnerLoop(Operation* op)
 {
     bool hasLoop = false;
     op->walk([&](Operation* childOp) {
-        if (childOp != op && isa<ForOp, WhileOp, WhileTrueOp>(childOp)) {
+        if (childOp != op && isa<ForOp, WhileOp>(childOp)) {
             hasLoop = true;
             return WalkResult::interrupt();
         }
@@ -414,7 +393,7 @@ printOperation(VitisCppEmitter &emitter, vitis::ForOp forOp)
        << " += " << emitter.getOrCreateName(step) << ")";
 
     os << " {\n";
-    if (!hasLoopInside) os << "#pragma HLS PIPELINE\n";
+    if (!hasLoopInside) os << "#pragma HLS PIPELINE style=flp\n";
     os.indent();
     for (auto &opi : forOp.getRegion().getOps())
         if (failed(emitter.emitOperation(opi, false))) return failure();
@@ -440,28 +419,6 @@ printOperation(VitisCppEmitter &emitter, vitis::WhileOp whileOp)
     for (Block &block : blocks) emitter.getOrCreateName(block);
 
     for (auto &opi : whileOp.getBody().getOps())
-        if (failed(emitter.emitOperation(opi, false))) return failure();
-
-    os.unindent() << "}";
-
-    return success();
-}
-
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::WhileTrueOp whileTrueOp)
-{
-    VitisCppEmitter::Scope scope(emitter);
-    raw_indented_ostream &os = emitter.ostream();
-    bool hasLoopInside = hasInnerLoop(whileTrueOp.getOperation());
-
-    os << "while(true) {\n";
-    if (!hasLoopInside) os << "#pragma HLS PIPELINE\n";
-    os.indent();
-
-    Region::BlockListType &blocks = whileTrueOp.getBody().getBlocks();
-    for (Block &block : blocks) emitter.getOrCreateName(block);
-
-    for (auto &opi : whileTrueOp.getBody().getOps())
         if (failed(emitter.emitOperation(opi, false))) return failure();
 
     os.unindent() << "}";
@@ -732,6 +689,32 @@ printOperation(VitisCppEmitter &emitter, vitis::ArrayWriteOp writeOp)
     return success();
 }
 
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArrayPointerReadOp readOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitAssignPrefix(*readOp.getOperation())))
+        return failure();
+
+    os << emitter.getOrCreateName(readOp.getArray()) << "["
+       << emitter.getOrCreateName(readOp.getIndex()) << "];";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::ArrayPointerWriteOp writeOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << emitter.getOrCreateName(writeOp.getArray()) << "["
+       << emitter.getOrCreateName(writeOp.getIndex()) << "]";
+    os << " = " << emitter.getOrCreateName(writeOp.getValue()) << ";";
+
+    return success();
+}
+
 //===----------------------------------------------------------------------===//
 // MathOps
 //===----------------------------------------------------------------------===//
@@ -773,16 +756,14 @@ VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
     LogicalResult status =
         llvm::TypeSwitch<Operation*, LogicalResult>(&op)
             .Case<ModuleOp>([&](auto op) { return printOperation(*this, op); })
-            .Case<vitis::FuncOp, vitis::ReturnOp>(
+            .Case<vitis::FuncOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
                 vitis::ConstantOp,
                 vitis::VariableOp,
                 vitis::UpdateOp,
-                vitis::IfBreakOp,
                 vitis::ForOp,
-                vitis::WhileOp,
-                vitis::WhileTrueOp>(
+                vitis::WhileOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
                 vitis::StreamReadOp,
@@ -804,7 +785,11 @@ VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
                 vitis::ArithCmpOp,
                 vitis::ArithSelectOp>(
                 [&](auto op) { return printOperation(*this, op); })
-            .Case<vitis::ArrayReadOp, vitis::ArrayWriteOp>(
+            .Case<
+                vitis::ArrayReadOp,
+                vitis::ArrayWriteOp,
+                vitis::ArrayPointerReadOp,
+                vitis::ArrayPointerWriteOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<vitis::MathSinOp, vitis::MathCosOp>(
                 [&](auto op) { return printOperation(*this, op); })
@@ -855,21 +840,15 @@ LogicalResult VitisCppEmitter::emitType(Location loc, Type vitisType)
            << ">";
         return success();
     }
-    if (auto type = dyn_cast<APAxisType>(vitisType)) {
-        auto elemTy = type.getElemType();
-        auto last = type.getTlast() ? ", AXIS_ENABLE_LAST>" : ">";
-        os << "hls::axis<";
-        if (failed(emitType(loc, elemTy)))
-            return emitError(loc, "cannot emit element type inside hls::axis ")
-                   << elemTy;
-        os << ", " << type.getKeep() << ", " << type.getUser() << ", "
-           << type.getDest() << last;
-        return success();
-    }
     if (auto type = dyn_cast<StreamType>(vitisType)) {
         os << "hls::stream<";
         if (failed(emitType(loc, type.getStreamType()))) return failure();
         os << ">";
+        return success();
+    }
+    if (auto type = dyn_cast<PointerType>(vitisType)) {
+        if (failed(emitType(loc, type.getPointerType()))) return failure();
+        os << "*";
         return success();
     }
 

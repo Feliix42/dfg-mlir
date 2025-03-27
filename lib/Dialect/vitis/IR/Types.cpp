@@ -18,6 +18,8 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <mlir/IR/BuiltinTypeInterfaces.h>
+
 #define DEBUG_TYPE "vitis-types"
 
 using namespace mlir;
@@ -38,9 +40,21 @@ LogicalResult StreamType::verify(
     llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,
     Type stream_type)
 {
-    if (!llvm::isa<APAxisType>(stream_type))
-        return emitError()
-               << "Only ap_axi type or alias is supported in stream";
+    if (!llvm::isa<IntegerType, FloatType>(stream_type))
+        return emitError() << "Only scalar type is supported in stream";
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// PointerType
+//===----------------------------------------------------------------------===//
+
+LogicalResult PointerType::verify(
+    llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,
+    Type pointer_type)
+{
+    if (!llvm::isa<IntegerType, FloatType>(pointer_type))
+        return emitError() << "Only scalar type is supported in stream";
     return success();
 }
 
