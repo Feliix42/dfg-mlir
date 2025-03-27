@@ -289,10 +289,17 @@ LogicalResult RegionOp::verify()
     }
 
     thisRegion.walk([&](ChannelOp channelOp) {
-        auto inputUser = channelOp.getInChan().getUses().begin().getUser();
-        if (auto instantiateOp = dyn_cast<InstantiateOp>(inputUser)) {
-            auto calleeName =
-                instantiateOp.getCallee().getRootReference().str();
+        if (channelOp.getInChan().getUses().empty()) {
+            if (!channelOp.getOutChan().getUses().empty()) {
+                // ignore the problem if both input and output are unused
+                ::emitWarning(channelOp.getLoc(), "Channel input is unused. This is probably a bug in your graph.");
+            }
+        } else {
+            auto inputUser = channelOp.getInChan().getUses().begin().getUser();
+            if (auto instantiateOp = dyn_cast<InstantiateOp>(inputUser)) {
+                auto calleeName =
+                    instantiateOp.getCallee().getRootReference().str();
+            }
         }
     });
 
@@ -1314,6 +1321,20 @@ void ChannelOp::getAsmResultNames(
 
     setNameFn(getResult(0), "in_chan_" + std::to_string(count));
     setNameFn(getResult(1), "out_chan_" + std::to_string(count));
+}
+
+void ChannelOp::build(
+    OpBuilder &builder,
+    OperationState &state,
+    Type encapsulatedType)
+{
+    build(
+        builder,
+        state,
+        InputType::get(builder.getContext(), encapsulatedType),
+        OutputType::get(builder.getContext(), encapsulatedType),
+        encapsulatedType,
+        nullptr);
 }
 
 void ChannelOp::build(

@@ -313,6 +313,7 @@ def Dfg_ChannelOp : Dfg_Op<
     );
 
     let builders = [
+        OpBuilder<(ins "Type":$encapsulatedType)>,
         OpBuilder<(ins "Type":$encapsulatedType,
                        "int":$bufferSize)>
     ];
