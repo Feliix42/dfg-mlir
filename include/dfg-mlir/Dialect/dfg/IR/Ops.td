@@ -8,14 +8,15 @@
 #define DFG_OPS
 
 include "dfg-mlir/Dialect/dfg/Enums.td"
-include "dfg-mlir/Dialect/dfg/IR/Types.td"
 include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.td"
 include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
-include "mlir/Interfaces/InferTypeOpInterface.td"
-include "mlir/Interfaces/SideEffectInterfaces.td"
+include "dfg-mlir/Dialect/dfg/IR/Types.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/IR/OpAsmInterface.td"
 include "mlir/IR/RegionKindInterface.td"
 
 def Dfg_RegionOp : Dfg_Op<
@@ -23,7 +24,8 @@ def Dfg_RegionOp : Dfg_Op<
         [
             Dfg_DataflowGraphOp,
             IsolatedFromAbove,
-            NoTerminator
+            NoTerminator,
+            DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>
         ]>
 {
     let summary = "Defines a region in a graph.";
@@ -104,7 +106,8 @@ def Dfg_ProcessOp : Dfg_Op<
             // AttrSizedOperandSegments,
             IsolatedFromAbove,
             HasParent<"ModuleOp">,
-            NoTerminator
+            NoTerminator,
+            DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>
         ]> {
     let summary = "Defines a process in the KPN MoC";
     let description = [{
@@ -142,6 +145,9 @@ def Dfg_ProcessOp : Dfg_Op<
                        CArg<"ArrayRef<int64_t>", "{}">:$multiplicity)>
     ];
 
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
+
     let extraClassDeclaration = [{
         /// Returns whether the process is externally defined
         bool isExternal();
@@ -152,10 +158,6 @@ def Dfg_ProcessOp : Dfg_Op<
 
         bool isDeclaration() { return isExternal(); }
     }];
-
-    let hasCustomAssemblyFormat = 1;
-
-    let hasVerifier = 1;
 }
 
 def Dfg_OperatorOp : Dfg_Op<"operator", [
@@ -275,7 +277,8 @@ def Dfg_LoopOp : Dfg_Op<
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
         [
-            MemoryEffectsOpInterface
+            MemoryEffectsOpInterface,
+            DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
         ]> {
     let summary = "Defines a channel with one input and one output port";
     let description = [{
@@ -314,6 +317,9 @@ def Dfg_ChannelOp : Dfg_Op<
                        "int":$bufferSize)>
     ];
 
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
+
     let extraClassDeclaration = [{
         void getEffects(
                 SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
@@ -325,10 +331,6 @@ def Dfg_ChannelOp : Dfg_Op<
                                  SideEffects::DefaultResource::get());
         }
     }];
-
-    let hasCustomAssemblyFormat = 1;
-
-    let hasVerifier = 1;
 }
 
 def Dfg_InstantiateOp : Dfg_Op<
@@ -407,7 +409,8 @@ def Dfg_PullOp : Dfg_Op<
     [
         TypesMatchWith<"Channel type matches pulled type",
                        "chan", "outp",
-                       "$_self.dyn_cast<OutputType>().getElementType()">
+                       "$_self.dyn_cast<OutputType>().getElementType()">,
+        DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
     ]
 > {
     let summary = "Pulls a value from a channel.";

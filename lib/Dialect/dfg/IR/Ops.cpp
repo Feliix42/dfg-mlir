@@ -18,6 +18,7 @@
 #include <mlir/IR/BuiltinTypeInterfaces.h>
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/DialectRegistry.h>
+#include <string>
 
 #define DEBUG_TYPE "dfg-ops"
 
@@ -67,6 +68,20 @@ static ParseResult parseChannelArgumentList(
 //===----------------------------------------------------------------------===//
 // RegionOp
 //===----------------------------------------------------------------------===//
+
+void RegionOp::getAsmBlockArgumentNames(
+    Region &region,
+    OpAsmSetValueNameFn setNameFn)
+{
+    unsigned numInputs = getFunctionType().getNumInputs();
+    for (unsigned i = 0, e = region.getNumArguments(); i < e; ++i)
+        if (i < numInputs)
+            setNameFn(region.getArgument(i), ("in" + std::to_string(i)));
+        else
+            setNameFn(
+                region.getArgument(i),
+                ("out" + std::to_string(i - numInputs)));
+}
 
 void RegionOp::build(
     OpBuilder &builder,
@@ -649,6 +664,20 @@ ParseResult ProcessOp::parse(OpAsmParser &parser, OperationState &result)
     return success();
 }
 
+void ProcessOp::getAsmBlockArgumentNames(
+    Region &region,
+    OpAsmSetValueNameFn setNameFn)
+{
+    unsigned numInputs = getFunctionType().getNumInputs();
+    for (unsigned i = 0, e = region.getNumArguments(); i < e; ++i)
+        if (i < numInputs)
+            setNameFn(region.getArgument(i), ("in" + std::to_string(i)));
+        else
+            setNameFn(
+                region.getArgument(i),
+                ("out" + std::to_string(i - numInputs)));
+}
+
 void ProcessOp::print(OpAsmPrinter &p)
 {
     Operation* op = getOperation();
@@ -712,21 +741,8 @@ void ProcessOp::print(OpAsmPrinter &p)
     }
 }
 
-// TODO: ProcessOp should allow ops outside of loop
 LogicalResult ProcessOp::verify()
 {
-    // If there is a LoopOp, it must be the first op in the body
-    // if (!getBody().empty()) {
-    //     auto ops = getBody().getOps();
-    //     bool isFirstLoop, hasLoop = false;
-    //     for (const auto &op : ops)
-    //         if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
-    //     if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
-    //         isFirstLoop = true;
-    //     if (hasLoop && !isFirstLoop)
-    //         return emitError("The LoopOp must be the first op of ProcessOp");
-    // }
-
     // Ensure that all inputs are of type OutputType and all outputs of type
     // InputType
     FunctionType fnSig = getFunctionType();
@@ -1285,6 +1301,21 @@ LogicalResult LoopOp::verify()
 // ChannelOp
 //===----------------------------------------------------------------------===//
 
+void ChannelOp::getAsmResultNames(
+    function_ref<void(Value, StringRef)> setNameFn)
+{
+    Block* block = getOperation()->getBlock();
+    int count = 0;
+
+    for (auto &opi : *block) {
+        if (&opi == getOperation()) break;
+        if (opi.getName() == getOperation()->getName()) ++count;
+    }
+
+    setNameFn(getResult(0), "in_chan_" + std::to_string(count));
+    setNameFn(getResult(1), "out_chan_" + std::to_string(count));
+}
+
 void ChannelOp::build(
     OpBuilder &builder,
     OperationState &state,
@@ -1543,6 +1574,19 @@ FunctionType InstantiateOp::getFunctionType()
 //===----------------------------------------------------------------------===//
 // PullOp
 //===----------------------------------------------------------------------===//
+
+void PullOp::getAsmResultNames(function_ref<void(Value, StringRef)> setNameFn)
+{
+    Block* block = getOperation()->getBlock();
+    int count = 0;
+
+    for (auto &opi : *block) {
+        if (&opi == getOperation()) break;
+        if (opi.getName() == getOperation()->getName()) ++count;
+    }
+
+    setNameFn(getResult(), "pull" + std::to_string(count));
+}
 
 ParseResult PullOp::parse(OpAsmParser &parser, OperationState &result)
 {
