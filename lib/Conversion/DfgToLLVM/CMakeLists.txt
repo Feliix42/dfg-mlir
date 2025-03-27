@@ -14,5 +14,5 @@ add_mlir_conversion_library(DfgToLLVM
         MLIRControlFlowDialect
         MLIRLLVMCommonConversion
         MLIRLLVMDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )

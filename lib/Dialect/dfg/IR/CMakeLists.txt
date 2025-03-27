@@ -1,4 +1,4 @@
-add_mlir_dialect_library(DfgDialect
+add_mlir_dialect_library(DFGMLIRDfgDialect
         Dialect.cpp
         Ops.cpp
         Types.cpp

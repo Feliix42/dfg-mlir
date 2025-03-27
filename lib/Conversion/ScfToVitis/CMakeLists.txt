@@ -12,6 +12,6 @@ add_mlir_conversion_library(ScfToVitis
         MLIRTransformUtils
         MLIRControlFlowDialect
         MLIRSCFDialect
-        DfgDialect
-        VitisDialect
+        DFGMLIRDfgDialect
+        DFGMLIRVitisDialect
 )

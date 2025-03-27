@@ -12,6 +12,6 @@ MemrefToVitis.cpp
         MLIRTransformUtils
         MLIRControlFlowDialect
         MLIRMemRefDialect
-        DfgDialect
-        VitisDialect
+        DFGMLIRDfgDialect
+        DFGMLIRVitisDialect
 )

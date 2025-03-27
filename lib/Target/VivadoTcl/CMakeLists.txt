@@ -3,7 +3,7 @@ add_mlir_translation_library(VivadoTargetTcl
     TranslateToVivadoTcl.cpp
 
     LINK_LIBS PUBLIC
-    DfgDialect
+    DFGMLIRDfgDialect
     MLIRIR
     MLIRSupport
     MLIRTranslateLib

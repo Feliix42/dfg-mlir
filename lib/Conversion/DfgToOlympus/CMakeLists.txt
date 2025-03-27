@@ -11,6 +11,6 @@ add_mlir_conversion_library(DfgToOlympus
         MLIRDialectUtils
         MLIRTransformUtils
         MLIRFuncDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )
 

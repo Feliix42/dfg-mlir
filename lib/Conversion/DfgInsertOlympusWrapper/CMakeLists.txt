@@ -11,6 +11,6 @@ add_mlir_conversion_library(DfgInsertOlympusWrapper
         MLIRDialectUtils
         MLIRTransformUtils
         MLIRFuncDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )
 

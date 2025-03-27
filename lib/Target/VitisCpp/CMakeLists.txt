@@ -3,7 +3,7 @@ add_mlir_translation_library(VitisTargetCpp
     TranslateToVitisCpp.cpp
 
     LINK_LIBS PUBLIC
-    VitisDialect
+    DFGMLIRVitisDialect
     MLIRIR
     MLIRSupport
     MLIRTranslateLib

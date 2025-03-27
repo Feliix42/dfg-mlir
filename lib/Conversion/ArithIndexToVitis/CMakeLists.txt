@@ -13,6 +13,6 @@ ArithIndexToVitis.cpp
         MLIRControlFlowDialect
         MLIRArithDialect
         MLIRMathDialect
-        DfgDialect
-        VitisDialect
+        DFGMLIRDfgDialect
+        DFGMLIRVitisDialect
 )

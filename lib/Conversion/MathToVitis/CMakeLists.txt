@@ -12,6 +12,6 @@ MathToVitis.cpp
         MLIRTransformUtils
         MLIRControlFlowDialect
         MLIRMathDialect
-        DfgDialect
-        VitisDialect
+        DFGMLIRDfgDialect
+        DFGMLIRVitisDialect
 )

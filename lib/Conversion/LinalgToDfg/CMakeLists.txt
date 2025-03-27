@@ -11,5 +11,5 @@ LinalgToDfg.cpp
         MLIRDialectUtils
         MLIRTransformUtils
         MLIRControlFlowDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )

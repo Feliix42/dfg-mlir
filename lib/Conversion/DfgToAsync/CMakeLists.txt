@@ -11,5 +11,5 @@ add_mlir_conversion_library(DfgToAsync
         MLIRDialectUtils
         MLIRTransformUtils
         MLIRAsyncDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )

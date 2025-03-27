@@ -12,5 +12,5 @@ add_mlir_conversion_library(DfgToFunc
         MLIRTransformUtils
         MLIRFuncDialect
         MLIRControlFlowDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )

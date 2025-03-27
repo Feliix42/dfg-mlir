@@ -1,4 +1,4 @@
-add_mlir_dialect_library(VitisDialect
+add_mlir_dialect_library(DFGMLIRVitisDialect
         Dialect.cpp
         Ops.cpp
         Types.cpp

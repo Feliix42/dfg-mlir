@@ -11,6 +11,6 @@ add_mlir_conversion_library(DfgToVitis
         MLIRDialectUtils
         MLIRTransformUtils
         MLIRControlFlowDialect
-        DfgDialect
-        VitisDialect
+        DFGMLIRDfgDialect
+        DFGMLIRVitisDialect
 )
