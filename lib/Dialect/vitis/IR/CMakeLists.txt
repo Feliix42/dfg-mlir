@@ -4,11 +4,11 @@ add_mlir_dialect_library(VitisDialect
         Types.cpp
 
     DEPENDS
-        VitisIncGen
+        DFGMLIRVitisIncGen
 
     LINK_LIBS PUBLIC
         MLIRIR
         MLIRParser
         MLIRSideEffectInterfaces
-        VitisEnums
+        DFGMLIRVitisEnums
 )

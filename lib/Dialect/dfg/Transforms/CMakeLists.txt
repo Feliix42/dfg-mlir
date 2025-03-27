@@ -7,7 +7,7 @@ add_mlir_conversion_library(MLIRDfgTransforms
     PrintOperatorToYaml.cpp
 
     DEPENDS
-    DfgTransformsIncGen
+        DFGMLIRDfgTransformsIncGen
 
     LINK_COMPONENTS
     Core

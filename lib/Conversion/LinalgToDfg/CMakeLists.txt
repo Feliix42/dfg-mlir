@@ -2,7 +2,7 @@ add_mlir_conversion_library(LinalgToDfg
 LinalgToDfg.cpp
 
     DEPENDS
-        ConversionIncGen
+        DFGMLIRConversionIncGen
 
     LINK_COMPONENTS
         Core

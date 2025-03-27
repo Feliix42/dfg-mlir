@@ -2,7 +2,7 @@ add_mlir_conversion_library(MergeCastChain
     MergeCastChain.cpp
 
     DEPENDS
-    VitisTransformsIncGen
+        DFGMLIRVitisTransformsIncGen
 
     LINK_COMPONENTS
     Core

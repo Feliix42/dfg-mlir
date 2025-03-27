@@ -4,12 +4,12 @@ add_mlir_dialect_library(DfgDialect
         Types.cpp
 
     DEPENDS
-        DfgIncGen
+        DFGMLIRDfgIncGen
 
     LINK_LIBS PUBLIC
         MLIRIR
         MLIRParser
         MLIRSideEffectInterfaces
-        DfgEnums
-        DfgInterfaces
+        DFGMLIRDfgEnums
+        DFGMLIRDfgInterfaces
 )

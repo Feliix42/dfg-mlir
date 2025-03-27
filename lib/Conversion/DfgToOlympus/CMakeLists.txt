@@ -2,7 +2,7 @@ add_mlir_conversion_library(DfgToOlympus
         DfgToOlympus.cpp
 
     DEPENDS
-        ConversionIncGen
+        DFGMLIRConversionIncGen
 
     LINK_COMPONENTS
         Core

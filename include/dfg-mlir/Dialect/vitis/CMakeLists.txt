@@ -4,7 +4,7 @@
 # MLIR Vitis dialect generated includes.
 ################################################################################
 
-add_custom_target(VitisIncGen)
+add_custom_target(DFGMLIRVitisIncGen)
 
 mlir_gen_enums(Vitis)
 

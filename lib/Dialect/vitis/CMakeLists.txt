@@ -2,7 +2,7 @@
 add_subdirectory(IR)
 add_subdirectory(Transforms)
 
-add_library(VitisEnums OBJECT
+add_library(DFGMLIRVitisEnums OBJECT
 Enums.cpp
 )
-add_dependencies(VitisEnums VitisEnumsIncGen)
+add_dependencies(DFGMLIRVitisEnums DFGMLIRVitisEnumsIncGen)

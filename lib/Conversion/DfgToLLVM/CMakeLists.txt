@@ -2,7 +2,7 @@ add_mlir_conversion_library(DfgToLLVM
         DfgToLLVM.cpp
 
     DEPENDS
-        ConversionIncGen
+        DFGMLIRConversionIncGen
 
     LINK_COMPONENTS
         Core

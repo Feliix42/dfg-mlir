@@ -2,7 +2,7 @@ add_mlir_conversion_library(DfgToFunc
         DfgToFunc.cpp
 
     DEPENDS
-        ConversionIncGen
+        DFGMLIRConversionIncGen
 
     LINK_COMPONENTS
         Core

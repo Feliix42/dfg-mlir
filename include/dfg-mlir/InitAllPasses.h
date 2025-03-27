@@ -15,10 +15,10 @@ namespace dfg {
 
 inline void registerAllPasses()
 {
-    dfg::registerConversionPasses();
+    dfg::registerDFGMLIRConversionPasses();
 
-    dfg::registerDfgPasses();
-    vitis::registerVitisPasses();
+    dfg::registerDFGMLIRDfgPasses();
+    vitis::registerDFGMLIRVitisPasses();
 
     dfg::registerConvertToVitisPipelines();
     dfg::registerPrepareForVivadoPipelines();
