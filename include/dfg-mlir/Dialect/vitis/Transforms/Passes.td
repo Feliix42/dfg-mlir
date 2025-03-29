@@ -9,6 +9,13 @@
 
 include "mlir/Pass/PassBase.td"
 
+def VitisInsertIncludes : Pass<"vitis-insert-includes">
+{
+    let summary = "insert include headers based on the content";
+
+    let constructor = "mlir::vitis::createVitisInsertIncludesPass()";
+}
+
 def VitisMergeCastChain : Pass<"merge-cast-chain">
 {
     let summary = "merge the chain of cast operations into one cast";

@@ -20,7 +20,6 @@ inline void registerAllDFGMLIRPasses()
     vitis::registerDFGMLIRVitisPasses();
 
     dfg::registerConvertToVitisPipelines();
-    dfg::registerPrepareForVivadoPipelines();
 }
 
 } // namespace mlir

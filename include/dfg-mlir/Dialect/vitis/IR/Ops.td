@@ -23,6 +23,15 @@ include "dfg-mlir/Dialect/vitis/IR/ArithOps.td"
 include "dfg-mlir/Dialect/vitis/IR/MathOps.td"
 include "dfg-mlir/Dialect/vitis/IR/StreamOps.td"
 
+def Vitis_IncludeOp : Vitis_Op<"include", []>
+{
+    let summary = "C/C++ include statement";
+    let arguments = (ins
+        Arg<StrAttr, "source file to include">:$include
+    );
+    let hasCustomAssemblyFormat = 1;
+}
+
 def Vitis_ConstantOp : Vitis_Op<"constant",
         [
             // ConstantLike,
@@ -126,6 +135,14 @@ def Vitis_CallOp : Vitis_Op<"call",
     let assemblyFormat = [{
         $callee `(` $operands `)` attr-dict `:` functional-type($operands, results)
     }];
+
+    let builders = [
+        OpBuilder<(ins "FuncOp":$callee, CArg<"ValueRange", "{}">:$operands), [{
+            $_state.addOperands(operands);
+            $_state.addAttribute("callee", SymbolRefAttr::get(callee));
+            $_state.addTypes(callee.getFunctionType().getResults());
+        }]>
+    ];
 
     let extraClassDeclaration = [{
         /// Get the argument operands to the called function.

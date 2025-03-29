@@ -269,14 +269,26 @@ static LogicalResult printOperation(VitisCppEmitter &emitter, ModuleOp moduleOp)
     VitisCppEmitter::Scope scope(emitter);
     raw_indented_ostream &os = emitter.ostream();
 
-    os << "#include\"ap_axi_sdata.h\"\n"
-       << "#include\"ap_int.h\"\n"
-       << "#include\"ap_fixed.h\"\n"
-       << "#include\"hls_stream.h\"\n"
-       << "#include\"hls_math.h\"\n\n";
+    // os << "#include\"ap_axi_sdata.h\"\n"
+    //    << "#include\"ap_int.h\"\n"
+    //    << "#include\"ap_fixed.h\"\n"
+    //    << "#include\"hls_stream.h\"\n"
+    //    << "#include\"hls_math.h\"\n\n";
 
     for (Operation &op : moduleOp)
         if (failed(emitter.emitOperation(op, false))) return failure();
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::IncludeOp includeOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << "#include \"";
+    os << includeOp.getInclude();
+    os << "\"";
+
     return success();
 }
 
@@ -297,14 +309,17 @@ printOperation(VitisCppEmitter &emitter, vitis::FuncOp funcOp)
             [&](BlockArgument arg) -> LogicalResult {
                 if (failed(emitter.emitType(funcOp.getLoc(), arg.getType())))
                     return failure();
-                os << " &" << emitter.getOrCreateName(arg);
+                os << " ";
+                if (isa<StreamType>(arg.getType())) os << "&";
+                os << emitter.getOrCreateName(arg);
                 return success();
             })))
         return failure();
     os << ") {\n";
-    for (size_t i = 0; i < funcOp.getNumArguments(); i++)
-        os << "#pragma HLS INTERFACE mode=axis port=v" << i + 1 << "\n";
-    os << "#pragma HLS INTERFACE mode=s_axilite port=return bundle=control\n";
+    // for (size_t i = 0; i < funcOp.getNumArguments(); i++)
+    //     os << "#pragma HLS INTERFACE mode=axis port=v" << i + 1 << "\n";
+    // os << "#pragma HLS INTERFACE mode=s_axilite port=return
+    // bundle=control\n";
     os.indent();
 
     Region::BlockListType &blocks = funcOp.getBlocks();
@@ -314,6 +329,27 @@ printOperation(VitisCppEmitter &emitter, vitis::FuncOp funcOp)
         if (failed(emitter.emitOperation(opi, false))) return failure();
 
     os.unindent() << "}";
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::CallOp callOp)
+{
+    VitisCppEmitter::Scope scope(emitter);
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << callOp.getCallee();
+    os << "(";
+    if (failed(interleaveCommaWithError(
+            callOp.getOperands(),
+            os,
+            [&](Value arg) -> LogicalResult {
+                os << emitter.getOrCreateName(arg);
+                return success();
+            })))
+        return failure();
+    os << ");";
+
     return success();
 }
 
@@ -756,7 +792,7 @@ VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
     LogicalResult status =
         llvm::TypeSwitch<Operation*, LogicalResult>(&op)
             .Case<ModuleOp>([&](auto op) { return printOperation(*this, op); })
-            .Case<vitis::FuncOp>(
+            .Case<vitis::IncludeOp, vitis::FuncOp, vitis::CallOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
                 vitis::ConstantOp,

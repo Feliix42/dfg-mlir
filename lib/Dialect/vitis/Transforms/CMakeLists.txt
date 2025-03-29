@@ -1,4 +1,5 @@
 add_mlir_conversion_library(MergeCastChain
+    InsertIncludes.cpp
     MergeCastChain.cpp
 
     DEPENDS

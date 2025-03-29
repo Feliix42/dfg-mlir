@@ -49,6 +49,24 @@ static Type getI1SameShape(Type type)
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
+// IncludeOp
+//===----------------------------------------------------------------------===//
+
+ParseResult IncludeOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    StringAttr include;
+    OptionalParseResult includeParseResult =
+        parser.parseOptionalAttribute(include, "include", result.attributes);
+    if (!includeParseResult.has_value())
+        return parser.emitError(parser.getNameLoc())
+               << "expected string attribute";
+
+    return success();
+}
+
+void IncludeOp::print(OpAsmPrinter &p) { p << "\"" << getInclude() << "\""; }
+
+//===----------------------------------------------------------------------===//
 // VariableOp
 //===----------------------------------------------------------------------===//
 

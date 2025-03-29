@@ -292,7 +292,10 @@ LogicalResult RegionOp::verify()
         if (channelOp.getInChan().getUses().empty()) {
             if (!channelOp.getOutChan().getUses().empty()) {
                 // ignore the problem if both input and output are unused
-                ::emitWarning(channelOp.getLoc(), "Channel input is unused. This is probably a bug in your graph.");
+                ::emitWarning(
+                    channelOp.getLoc(),
+                    "Channel input is unused. This is probably a bug in your "
+                    "graph.");
             }
         } else {
             auto inputUser = channelOp.getInChan().getUses().begin().getUser();
