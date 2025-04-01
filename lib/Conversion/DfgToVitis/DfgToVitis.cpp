@@ -149,32 +149,20 @@ struct ConvertPullToStreamRead : OpConversionPattern<PullOp> {
         } else {
             // Create an array to store the pulled data
             auto memrefTy = cast<MemRefType>(pulledValue.getType());
-            auto size = memrefTy.getShape().front();
+            auto shape = memrefTy.getShape();
+            // auto size = memrefTy.getNumElements();
             auto elemTy = memrefTy.getElementType();
             auto array = rewriter.create<vitis::VariableOp>(
                 loc,
-                vitis::ArrayType::get(rewriter.getContext(), size, elemTy),
-                Value{});
-            // Create a loop to repeatedly read from the channel
-            auto cstLb = rewriter.create<arith::ConstantOp>(
-                loc,
-                rewriter.getIndexType(),
-                rewriter.getIndexAttr(0));
-            auto cstUb = rewriter.create<arith::ConstantOp>(
-                loc,
-                rewriter.getIndexType(),
-                rewriter.getIndexAttr(size));
-            auto cstStep = rewriter.create<arith::ConstantOp>(
-                loc,
-                rewriter.getIndexType(),
-                rewriter.getIndexAttr(1));
-            auto forOp = rewriter.create<vitis::ForOp>(
-                loc,
-                cstLb.getResult(),
-                cstUb.getResult(),
-                cstStep.getResult());
-            rewriter.setInsertionPointToEnd(&forOp.getBody().front());
-            auto curLoc = forOp.getLoc();
+                vitis::ArrayType::get(shape, elemTy));
+            // Create a nested loop to pull from stream
+            SmallVector<Value> indices;
+            for (auto dim : shape) {
+                auto forOp = rewriter.create<vitis::ForOp>(loc, 0, dim);
+                rewriter.setInsertionPointToEnd(&forOp.getBody().front());
+                indices.push_back(forOp.getInductionVar());
+            }
+            auto curLoc = rewriter.getUnknownLoc();
             auto streamReadOp = rewriter.create<vitis::StreamReadOp>(
                 curLoc,
                 dyn_cast<vitis::StreamType>(vitisStream.getType())
@@ -184,7 +172,7 @@ struct ConvertPullToStreamRead : OpConversionPattern<PullOp> {
                 curLoc,
                 streamReadOp.getResult(),
                 array.getResult(),
-                forOp.getInductionVar());
+                indices);
 
             rewriter.replaceOp(op, array.getResult());
             return success();
@@ -222,39 +210,23 @@ struct ConvertPushToStreamWrite : OpConversionPattern<PushOp> {
         } else {
             // The array was casted back to memref using unrealized casts
             auto array = pushedValue.getDefiningOp()->getOperand(0);
-            // Create an array to store the pulled data
             auto memrefTy = cast<MemRefType>(pushedValue.getType());
-            auto size = memrefTy.getShape().front();
-            // Create a loop to repeatedly read from the channel
-            auto cstLb = rewriter.create<arith::ConstantOp>(
-                loc,
-                rewriter.getIndexType(),
-                rewriter.getIndexAttr(0));
-            auto cstUb = rewriter.create<arith::ConstantOp>(
-                loc,
-                rewriter.getIndexType(),
-                rewriter.getIndexAttr(size));
-            auto cstStep = rewriter.create<arith::ConstantOp>(
-                loc,
-                rewriter.getIndexType(),
-                rewriter.getIndexAttr(1));
-            auto forOp = rewriter.create<vitis::ForOp>(
-                loc,
-                cstLb.getResult(),
-                cstUb.getResult(),
-                cstStep.getResult());
-            rewriter.setInsertionPointToEnd(&forOp.getBody().front());
-            auto curLoc = forOp.getLoc();
-            auto arrayReadOp = rewriter.create<vitis::ArrayReadOp>(
-                curLoc,
-                array,
-                forOp.getInductionVar());
+            // Create a nested loop to repeatedly read from the channel
+            SmallVector<Value> indices;
+            for (auto dim : memrefTy.getShape()) {
+                auto forOp = rewriter.create<vitis::ForOp>(loc, 0, dim);
+                rewriter.setInsertionPointToEnd(&forOp.getBody().front());
+                indices.push_back(forOp.getInductionVar());
+            }
+            auto curLoc = rewriter.getUnknownLoc();
+            auto arrayReadOp =
+                rewriter.create<vitis::ArrayReadOp>(curLoc, array, indices);
             rewriter.create<vitis::StreamWriteOp>(
                 curLoc,
                 arrayReadOp.getResult(),
                 vitisStream);
 
-            rewriter.replaceOp(op, forOp);
+            rewriter.eraseOp(op);
             return success();
         }
 
@@ -340,8 +312,7 @@ struct ConvertChannelToStream : OpConversionPattern<ChannelOp> {
 
         auto streamVar = rewriter.create<vitis::VariableOp>(
             loc,
-            vitis::StreamType::get(rewriter.getContext(), channelTy),
-            Value{});
+            vitis::StreamType::get(rewriter.getContext(), channelTy));
         auto cast = rewriter.create<UnrealizedConversionCastOp>(
             loc,
             TypeRange{op.getInChan().getType(), op.getOutChan().getType()},
@@ -379,7 +350,7 @@ struct ConvertConnectToCall : OpConversionPattern<ConnectDirection> {
         unsigned size = 1;
         if (auto shapedTy = dyn_cast<ShapedType>(elemTy)) {
             elemTy = shapedTy.getElementType();
-            size = shapedTy.getShape().front();
+            size = shapedTy.getNumElements();
         }
 
         auto regionPortDefOp =
@@ -751,9 +722,6 @@ void mlir::dfg::addConvertToVitisPasses(OpPassManager &pm)
     pm.addPass(createCSEPass());
     pm.addPass(createConvertLinalgToLoopsPass());
     pm.addPass(createCanonicalizerPass());
-    pm.addPass(dfg::createDfgFlattenMemrefPass());
-    pm.addPass(createCanonicalizerPass());
-    pm.addPass(createCSEPass());
     pm.addPass(createConvertMemrefToVitisPass());
     pm.addPass(createConvertDfgToVitisPass());
     pm.addPass(createReconcileUnrealizedCastsPass());
@@ -766,12 +734,13 @@ void mlir::dfg::addConvertToVitisPasses(OpPassManager &pm)
     pm.addPass(createCanonicalizerPass());
     pm.addPass(createCSEPass());
     pm.addPass(vitis::createVitisInsertIncludesPass());
+    pm.addPass(createCanonicalizerPass());
 }
 
 void mlir::dfg::registerConvertToVitisPipelines()
 {
     PassPipelineRegistration<>(
         "convert-to-vitis",
-        "Lower everything to vitis dialect",
+        "Convert everything to vitis dialect",
         [](OpPassManager &pm) { addConvertToVitisPasses(pm); });
 }

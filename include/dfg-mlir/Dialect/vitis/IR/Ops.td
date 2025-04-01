@@ -32,37 +32,31 @@ def Vitis_IncludeOp : Vitis_Op<"include", []>
     let hasCustomAssemblyFormat = 1;
 }
 
-def Vitis_ConstantOp : Vitis_Op<"constant",
+def Vitis_VariableOp : Vitis_Op<"variable",
         [
-            // ConstantLike,
-            Pure,
-            AllTypesMatch<["value", "result"]>
+            DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
         ]>
 {
-    let summary = "Constant operation";
-    let arguments = (ins TypedAttrInterface:$value);
-    let results = (outs AnyType:$result);
-    let assemblyFormat = "attr-dict $value";
-}
-
-def Vitis_VariableOp : Vitis_Op<"variable", [MemoryEffectsOpInterface]>
-{
     let summary = "define a variable as in C";
-    let arguments = (ins Optional<AnyType>:$init);
+    let arguments = (ins OptionalAttr<AnyAttr>:$init, UnitAttr:$is_const);
     let results = (outs AnyType:$variable);
 
-    let extraClassDeclaration = [{
-        void getEffects(
-                SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-                &effects)
-        {
-            effects.emplace_back(MemoryEffects::Allocate::get(), getOperation()->getOpResult(0),
-                                 SideEffects::DefaultResource::get());
-        }
-    }];
+    let skipDefaultBuilders = 1;
+    let builders = [
+        OpBuilder<(ins "Type":$type,
+                       CArg<"Attribute", "{}">:$init,
+                       CArg<"bool", "false">:$is_const)>
+    ];
 
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
+    let hasCanonicalizer = 1;
+
+    let extraClassDeclaration = [{
+        bool isVariableConst() {
+            return getOperation()->hasAttr("is_const");
+        }
+    }];
 }
 
 def Vitis_UpdateOp : Vitis_Op<"update", [AllTypesMatch<["variable", "new_value"]>,
@@ -70,8 +64,13 @@ def Vitis_UpdateOp : Vitis_Op<"update", [AllTypesMatch<["variable", "new_value"]
 {
     let summary = "update avariable with a new value";
     let arguments = (ins AnyType:$variable, AnyType: $new_value);
+
     let assemblyFormat = "$variable `,` $new_value  attr-dict `:` type($variable)";
+
     let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // MemoryEffectsOpInterface Methods
+        //===------------------------------------------------------------------===//
         void getEffects(
                 SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
                 &effects)
@@ -97,6 +96,9 @@ def Vitis_FuncOp : Vitis_Op<"func",
                          OptionalAttr<DictArrayAttr>:$res_attrs);
     let regions = (region AnyRegion:$body);
 
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
+
     let extraClassDeclaration = [{
         //===------------------------------------------------------------------===//
         // FunctionOpInterface Methods
@@ -113,8 +115,6 @@ def Vitis_FuncOp : Vitis_Op<"func",
         /// Returns the result types of this function.
         ArrayRef<Type> getResultTypes() { return getFunctionType().getResults(); }
     }];
-    let hasCustomAssemblyFormat = 1;
-    let hasVerifier = 1;
 }
 
 def Vitis_CallOp : Vitis_Op<"call",
@@ -132,10 +132,6 @@ def Vitis_CallOp : Vitis_Op<"call",
     );
     let results = (outs Variadic<AnyType>);
 
-    let assemblyFormat = [{
-        $callee `(` $operands `)` attr-dict `:` functional-type($operands, results)
-    }];
-
     let builders = [
         OpBuilder<(ins "FuncOp":$callee, CArg<"ValueRange", "{}">:$operands), [{
             $_state.addOperands(operands);
@@ -144,7 +140,14 @@ def Vitis_CallOp : Vitis_Op<"call",
         }]>
     ];
 
+    let assemblyFormat = [{
+        $callee `(` $operands `)` attr-dict `:` functional-type($operands, results)
+    }];
+
     let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // CallOpInterface Methods
+        //===------------------------------------------------------------------===//
         /// Get the argument operands to the called function.
         operand_range getArgOperands() {
             return {arg_operand_begin(), arg_operand_end()};
@@ -173,28 +176,28 @@ def Vitis_ForOp : Vitis_Op<"for",
         [
             RecursiveMemoryEffects,
             NoTerminator,
-            AllTypesMatch<["lowerBound", "upperBound", "step"]>
+            DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>
         ]>
 {
     let summary = "for-loop";
-    let arguments = (ins Index:$lowerBound,
-                         Index:$upperBound,
-                         Index:$step);
+    let arguments = (ins IndexAttr:$lowerBound,
+                         IndexAttr:$upperBound,
+                         IndexAttr:$step);
     let regions = (region SizedRegion<1>:$body);
 
     let skipDefaultBuilders = 1;
     let builders = [
-        OpBuilder<(ins "Value":$lowerBound, "Value":$upperBound, "Value":$step)>
+        OpBuilder<(ins "int64_t":$lowerBound, "int64_t":$upperBound, CArg<"int64_t", "1">:$step)>,
+        OpBuilder<(ins "Attribute":$lowerBound, "Attribute":$upperBound, "Attribute":$step)>
     ];
+
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
+    let hasCanonicalizer = 1;
 
     let extraClassDeclaration = [{
         Value getInductionVar() { return getBody().getArgument(0); }
-        void setLowerBound(Value bound) { getOperation()->setOperand(0, bound); }
-        void setUpperBound(Value bound) { getOperation()->setOperand(1, bound); }
-        void setStep(Value step) { getOperation()->setOperand(2, step); }
     }];
-
-    let hasCustomAssemblyFormat = 1;
 }
 
 def Vitis_WhileOp : Vitis_Op<"while",

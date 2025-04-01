@@ -18,15 +18,25 @@
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <llvm/ADT/APFloat.h>
+#include <llvm/ADT/APInt.h>
+#include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/LogicalResult.h>
+#include <mlir/IR/Attributes.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Diagnostics.h>
+#include <mlir/IR/IRMapping.h>
 #include <mlir/IR/OperationSupport.h>
 #include <mlir/IR/Types.h>
+#include <mlir/IR/Visitors.h>
 #include <mlir/Support/LLVM.h>
 #include <mlir/Support/LogicalResult.h>
+#include <string>
 
 #define DEBUG_TYPE "vitis-ops"
 
@@ -64,73 +74,86 @@ ParseResult IncludeOp::parse(OpAsmParser &parser, OperationState &result)
     return success();
 }
 
-void IncludeOp::print(OpAsmPrinter &p) { p << "\"" << getInclude() << "\""; }
+void IncludeOp::print(OpAsmPrinter &p) { p << " \"" << getInclude() << "\""; }
 
 //===----------------------------------------------------------------------===//
 // VariableOp
 //===----------------------------------------------------------------------===//
 
-unsigned getBitwidth(Type type, bool &isFloat)
+void VariableOp::getAsmResultNames(
+    function_ref<void(Value, StringRef)> setNameFn)
 {
-    if (auto intTy = dyn_cast<IntegerType>(type)) return intTy.getWidth();
-    if (auto floatTy = dyn_cast<FloatType>(type)) {
-        isFloat = true;
-        return floatTy.getWidth();
-    }
-    if (auto fixedTy = dyn_cast<APFixedType>(type))
-        return fixedTy.getDatawidth();
-    if (auto fixedUTy = dyn_cast<APFixedUType>(type))
-        return fixedUTy.getDatawidth();
-    if (auto arrayTy = dyn_cast<vitis::ArrayType>(type))
-        return getBitwidth(arrayTy.getElemType(), isFloat);
-    return 0;
+    auto thisOp = getOperation();
+    auto parentFunc = thisOp->getParentOfType<FuncOp>();
+    if (!parentFunc) return;
+
+    auto resultTy = getType();
+    unsigned count = 0;
+    parentFunc.walk([&](VariableOp varOp) -> WalkResult {
+        if (varOp.getOperation() == thisOp) return WalkResult::interrupt();
+        if ((varOp.getType() == resultTy)
+            && (varOp.isVariableConst() == isVariableConst()))
+            ++count;
+        return WalkResult::advance();
+    });
+
+    std::string prefix = isVariableConst() ? "const" : "var";
+    std::string suffix;
+    if (isa<IntegerType>(resultTy))
+        suffix = "_int_";
+    else if (isa<IndexType>(resultTy))
+        suffix = "_index_";
+    else if (isa<FloatType>(resultTy))
+        suffix = "_float_";
+    else if (isa<StreamType>(resultTy))
+        suffix = "_stream_";
+    setNameFn(getResult(), prefix + suffix + std::to_string(count));
+}
+
+void VariableOp::build(
+    OpBuilder &builder,
+    OperationState &result,
+    Type type,
+    Attribute init,
+    bool is_const)
+{
+    result.addTypes(type);
+    if (init) result.addAttribute(getInitAttrName(result.name), init);
+    if (is_const) result.addAttribute("is_const", builder.getUnitAttr());
 }
 
 ParseResult VariableOp::parse(OpAsmParser &parser, OperationState &result)
 {
-    // Define variables for parsing
-    OpAsmParser::UnresolvedOperand initOperand;
-    Type variableType;
-
-    // Attempt to parse the optional 'init' keyword and operand
-    bool hasInit = succeeded(parser.parseOptionalKeyword("init"));
-    if (hasInit) {
-        if (parser.parseOperand(initOperand)) return failure();
+    Type type;
+    if (failed(parser.parseKeyword("as")))
+        return parser.emitError(
+            parser.getCurrentLocation(),
+            "expected keyword 'as'");
+    // If it's const value
+    bool isConst = false;
+    if (succeeded(parser.parseOptionalKeyword("const"))) {
+        result.addAttribute("is_const", parser.getBuilder().getUnitAttr());
+        isConst = true;
     }
+    if (failed(parser.parseType(type)))
+        return parser.emitError(parser.getCurrentLocation(), "expected type");
+    result.addTypes(type);
 
-    // Parse attributes and result type
-    if (parser.parseOptionalAttrDict(result.attributes)
-        || parser.parseColonType(variableType))
-        return failure();
-
-    // Add the result type to the operation state
-    result.addTypes(variableType);
-
-    // Resolve the operand if it exists
-    bool isFloat = false;
-    unsigned bitwidth = getBitwidth(variableType, isFloat);
-    if (hasInit) {
-        Type initTy;
-        if (!isFloat) {
-            if (isa<IndexType>(variableType))
-                initTy = variableType;
-            else
-                initTy = IntegerType::get(parser.getContext(), bitwidth);
-
-        } else {
-            switch (bitwidth) {
-            case 16: initTy = Float16Type::get(parser.getContext()); break;
-            case 32: initTy = Float32Type::get(parser.getContext()); break;
-            case 64: initTy = Float64Type::get(parser.getContext()); break;
-            default:
-                return parser.emitError(
-                    parser.getNameLoc(),
-                    "Unsupported floating point bitwidth for init value.");
-            }
-        }
-
-        if (parser.resolveOperand(initOperand, initTy, result.operands))
-            return failure();
+    Attribute initAttr;
+    if (succeeded(parser.parseOptionalEqual())) {
+        if (failed(parser.parseAttribute(
+                initAttr,
+                type,
+                getInitAttrName(result.name).data(),
+                result.attributes)))
+            return parser.emitError(
+                parser.getCurrentLocation(),
+                "expected initial attribute");
+    } else {
+        if (isConst)
+            return parser.emitError(
+                parser.getCurrentLocation(),
+                "const value must have initial attribute");
     }
 
     return success();
@@ -138,28 +161,150 @@ ParseResult VariableOp::parse(OpAsmParser &parser, OperationState &result)
 
 void VariableOp::print(OpAsmPrinter &p)
 {
-    // Print the optional 'init' operand
-    if (getInit()) p << " init " << getInit();
-
-    // Print attributes and result type
-    p.printOptionalAttrDict((*this)->getAttrs());
-    p << " : " << getType();
+    p << " as ";
+    if (isVariableConst()) p << "const ";
+    p << getType();
+    if (getInit()) {
+        p << " = ";
+        p.printAttributeWithoutType(getInitAttr());
+    }
 }
 
 LogicalResult VariableOp::verify()
 {
-    if (getInit()) {
-        if (isa<IndexType>(getInit().getType())) return success();
-        auto initBitwidth = getInit().getType().getIntOrFloatBitWidth();
-        auto type = getType();
-        bool isFloat = false;
-        unsigned bitwidth = getBitwidth(type, isFloat);
-        if (initBitwidth != bitwidth)
-            return ::emitError(
-                getLoc(),
-                "Different bitwidth between variable and the init value.");
-    }
+    if (isa<PointerType>(getType()))
+        return ::emitError(
+            getLoc(),
+            "Dynamic memory usage is not supported in HLS.");
+    if (getInit()
+        && !isa<IntegerType, IndexType, FloatType, ArrayType>(getType()))
+        return ::emitError(getLoc(), "Unsupported type to have init value.");
     return success();
+}
+
+namespace {
+struct RemoveUnusedVariable final : public OpRewritePattern<VariableOp> {
+    using OpRewritePattern<VariableOp>::OpRewritePattern;
+
+    LogicalResult
+    matchAndRewrite(VariableOp op, PatternRewriter &rewriter) const override
+    {
+        if (op.getResult().getUses().empty()) {
+            rewriter.eraseOp(op);
+            return success();
+        }
+        return failure();
+    }
+};
+
+struct RemoveSameConstVariable final : public OpRewritePattern<VariableOp> {
+    using OpRewritePattern<VariableOp>::OpRewritePattern;
+
+    LogicalResult
+    matchAndRewrite(VariableOp op, PatternRewriter &rewriter) const override
+    {
+        // If there is not a const value, pass
+        if (!op.isVariableConst()) return failure();
+
+        auto initAttr = op.getInitAttr();
+        auto constTy = op.getType();
+        auto parentFunc = op.getOperation()->getParentOfType<FuncOp>();
+        // Store all the variable op before current one
+        SmallVector<VariableOp> constVarInFunc;
+        parentFunc->walk([&](VariableOp varOp) -> WalkResult {
+            if (varOp.isVariableConst()) {
+                if (varOp != op) {
+                    constVarInFunc.push_back(varOp);
+                    return WalkResult::advance();
+                } else {
+                    return WalkResult::interrupt();
+                }
+            }
+            return WalkResult::advance();
+        });
+        // Reverse to make sure dominance
+        std::reverse(constVarInFunc.begin(), constVarInFunc.end());
+        // Find the nearest same const, and replace with it
+        for (auto varOp : constVarInFunc) {
+            // TODO
+            // If it's not define in the scope of this function, exit
+            if (varOp->getParentOp() != parentFunc) break;
+            // Else, check if it's the same const value
+            if (varOp.getInitAttr() == initAttr && varOp.getType() == constTy) {
+                op.getResult().replaceAllUsesWith(varOp.getResult());
+                rewriter.eraseOp(op);
+                return success();
+            }
+        }
+        return failure();
+    }
+};
+
+struct RemoveUnitDimension final : public OpRewritePattern<VariableOp> {
+    using OpRewritePattern<VariableOp>::OpRewritePattern;
+
+    LogicalResult
+    matchAndRewrite(VariableOp op, PatternRewriter &rewriter) const override
+    {
+        auto arrayType = dyn_cast<ArrayType>(op.getType());
+        if (!arrayType) return failure();
+
+        auto shape = arrayType.getShape();
+        auto elementTy = arrayType.getElementType();
+
+        // If any dimension is unit
+        bool hasUnitDim =
+            llvm::any_of(shape, [](int64_t dim) { return dim == 1; });
+        if (!hasUnitDim) return failure();
+
+        // Create new array
+        SmallVector<int64_t> newShape;
+        SmallVector<int64_t> collapsedDims;
+        for (int64_t i = 0; i < (int64_t)shape.size(); ++i)
+            if (shape[i] != 1)
+                newShape.push_back(shape[i]);
+            else
+                collapsedDims.push_back(i);
+        auto newArrayType = ArrayType::get(newShape, elementTy);
+        auto newArrayVar =
+            rewriter.create<VariableOp>(op.getLoc(), newArrayType);
+
+        // If there is initial value
+        if (op.getInit()) {
+            auto initAttr = op.getInitAttr();
+            if (auto denseAttr = dyn_cast<DenseElementsAttr>(initAttr)) {
+                auto values = denseAttr.getValues<Attribute>();
+                SmallVector<Attribute> valuesAttr(values.begin(), values.end());
+                auto newDenseAttr =
+                    DenseElementsAttr::get(newArrayType, valuesAttr);
+                newArrayVar.setInitAttr(newDenseAttr);
+                if (op.isVariableConst())
+                    newArrayVar.setIsConstAttr(rewriter.getUnitAttr());
+            }
+        }
+        // Add attributes to mark the original shape and the collapsed dimension
+        // newArrayVar->setAttr(
+        //     "original_shape",
+        //     rewriter.getIndexArrayAttr(shape));
+        newArrayVar->setAttr(
+            "collapsed_dims",
+            rewriter.getIndexArrayAttr(collapsedDims));
+
+        op.getResult().replaceAllUsesWith(newArrayVar.getResult());
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+} // namespace
+
+void VariableOp::getCanonicalizationPatterns(
+    RewritePatternSet &results,
+    MLIRContext* context)
+{
+    results.add<
+        RemoveUnusedVariable,
+        RemoveSameConstVariable,
+        RemoveUnitDimension>(context);
 }
 
 //===----------------------------------------------------------------------===//
@@ -205,7 +350,8 @@ LogicalResult FuncOp::verify()
             if (!isa<StreamType, PointerType>(type))
                 return ::emitError(
                     getLoc(),
-                    "Now only stream or pointer type is supported as argument "
+                    "Now only stream or pointer type is supported as "
+                    "argument "
                     "type.");
     }
     return success();
@@ -218,16 +364,52 @@ LogicalResult FuncOp::verify()
 void ForOp::build(
     OpBuilder &builder,
     OperationState &result,
-    Value lb,
-    Value ub,
-    Value step)
+    int64_t lb,
+    int64_t ub,
+    int64_t step)
 {
     OpBuilder::InsertionGuard g(builder);
-    result.addOperands({lb, ub, step});
-    Type t = lb.getType();
+    result.addAttribute(
+        getLowerBoundAttrName(result.name),
+        builder.getIntegerAttr(builder.getIndexType(), lb));
+    result.addAttribute(
+        getUpperBoundAttrName(result.name),
+        builder.getIntegerAttr(builder.getIndexType(), ub));
+    result.addAttribute(
+        getStepAttrName(result.name),
+        builder.getIntegerAttr(builder.getIndexType(), step));
     Region* bodyRegion = result.addRegion();
     Block* bodyBlock = builder.createBlock(bodyRegion);
-    bodyBlock->addArgument(t, result.location);
+    bodyBlock->addArgument(builder.getIndexType(), result.location);
+}
+
+void ForOp::build(
+    OpBuilder &builder,
+    OperationState &result,
+    Attribute lb,
+    Attribute ub,
+    Attribute step)
+{
+    OpBuilder::InsertionGuard g(builder);
+    result.addAttribute(getLowerBoundAttrName(result.name), lb);
+    result.addAttribute(getUpperBoundAttrName(result.name), ub);
+    result.addAttribute(getStepAttrName(result.name), step);
+    Region* bodyRegion = result.addRegion();
+    Block* bodyBlock = builder.createBlock(bodyRegion);
+    bodyBlock->addArgument(builder.getIndexType(), result.location);
+}
+
+void ForOp::getAsmBlockArgumentNames(
+    Region &region,
+    OpAsmSetValueNameFn setNameFn)
+{
+    Operation* forOp = getOperation();
+    unsigned nestedLevel = 0;
+
+    while ((forOp = forOp->getParentOp()) && forOp)
+        if (isa<ForOp>(forOp)) ++nestedLevel;
+
+    setNameFn(region.getArgument(0), "idx" + std::to_string(nestedLevel));
 }
 
 ParseResult ForOp::parse(OpAsmParser &parser, OperationState &result)
@@ -236,22 +418,32 @@ ParseResult ForOp::parse(OpAsmParser &parser, OperationState &result)
     Type type = builder.getIndexType();
 
     OpAsmParser::Argument inductionVariable;
-    OpAsmParser::UnresolvedOperand lb, ub, step;
+    if (parser.parseOperand(inductionVariable.ssaName) || parser.parseEqual())
+        return failure();
 
-    if (parser.parseOperand(inductionVariable.ssaName) || parser.parseEqual()
-        || parser.parseOperand(lb) || parser.parseKeyword("to")
-        || parser.parseOperand(ub) || parser.parseKeyword("step")
-        || parser.parseOperand(step))
+    IntegerAttr lbAttr, ubAttr, stepAttr;
+    if (parser.parseAttribute(
+            lbAttr,
+            builder.getIndexType(),
+            getLowerBoundAttrName(result.name).data(),
+            result.attributes)
+        || parser.parseKeyword("to")
+        || parser.parseAttribute(
+            ubAttr,
+            builder.getIndexType(),
+            getUpperBoundAttrName(result.name).data(),
+            result.attributes)
+        || parser.parseKeyword("step")
+        || parser.parseAttribute(
+            stepAttr,
+            builder.getIndexType(),
+            getStepAttrName(result.name).data(),
+            result.attributes))
         return failure();
 
     SmallVector<OpAsmParser::Argument> args;
-    SmallVector<OpAsmParser::UnresolvedOperand> operands;
     args.push_back(inductionVariable);
     args.front().type = type;
-    if (parser.resolveOperand(lb, type, result.operands)
-        || parser.resolveOperand(ub, type, result.operands)
-        || parser.resolveOperand(step, type, result.operands))
-        return failure();
 
     Region* body = result.addRegion();
     if (parser.parseRegion(*body, args)) return failure();
@@ -270,8 +462,60 @@ void ForOp::print(OpAsmPrinter &p)
         getRegion(),
         /*printEntryBlockArgs=*/false,
         /*printBlockTerminators=*/false);
-    p.printOptionalAttrDict((*this)->getAttrs());
 }
+
+LogicalResult ForOp::verify()
+{
+    if (getLowerBound() == getUpperBound())
+        return ::emitError(getLoc(), "expected loop iterate at least once");
+    if (getStep() == 0) return ::emitError(getLoc(), "expected non-zero step");
+    if (getUpperBound().slt(getLowerBound() + getStep()))
+        return ::emitError(getLoc(), "unexpected index overflow");
+    if (getRegion().getOps().empty())
+        return ::emitError(getLoc(), "expected non-empty loop body");
+    return success();
+}
+
+namespace {
+struct RemoveTrivialLoop : public OpRewritePattern<ForOp> {
+    using OpRewritePattern<ForOp>::OpRewritePattern;
+
+    LogicalResult
+    matchAndRewrite(ForOp op, PatternRewriter &rewriter) const override
+    {
+        auto loc = op.getLoc();
+        rewriter.setInsertionPoint(op);
+        // If the loop has only one iteration, inline the content of this loop
+        // and remove it
+        if ((op.getLowerBound() + op.getStep()) == op.getUpperBound()) {
+            // Create a constant to replace the induction variable
+            IRMapping mapper;
+            auto constVarOp = rewriter.create<VariableOp>(
+                loc,
+                rewriter.getIndexType(),
+                op.getLowerBoundAttr(),
+                true);
+            mapper.map(op.getInductionVar(), constVarOp.getResult());
+            // Clone the contents at the current location
+            for (auto &opi : op.getRegion().getOps())
+                rewriter.clone(opi, mapper);
+            rewriter.eraseOp(op);
+        }
+        return success();
+    }
+};
+} // namespace
+
+void ForOp::getCanonicalizationPatterns(
+    RewritePatternSet &results,
+    MLIRContext* context)
+{
+    results.add<RemoveTrivialLoop>(context);
+}
+
+//===----------------------------------------------------------------------===//
+// ArithOps
+//===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
 // ArithSelectOp
@@ -304,6 +548,143 @@ void ArithSelectOp::print(OpAsmPrinter &p)
     p.printOptionalAttrDict((*this)->getAttrs());
     p << " : ";
     p << getType();
+}
+
+//===----------------------------------------------------------------------===//
+// ArrayOps
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// ArrayReadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ArrayReadOp::verify()
+{
+    if (static_cast<int64_t>(getIndices().size()) != getArrayType().getRank()) {
+        return emitOpError(
+                   "incorrect number of indices for array read, expected ")
+               << getArrayType().getRank() << " but got "
+               << getIndices().size();
+    }
+    return success();
+}
+
+namespace {
+struct AdjustArrayReadForRemovedDims final
+        : public OpRewritePattern<ArrayReadOp> {
+    using OpRewritePattern<ArrayReadOp>::OpRewritePattern;
+
+    LogicalResult
+    matchAndRewrite(ArrayReadOp op, PatternRewriter &rewriter) const override
+    {
+        // If already adjusted
+        if (op->hasAttr("adjusted")) return failure();
+
+        Value array = op.getArray();
+        auto definingOp = array.getDefiningOp();
+
+        // If the array's dimension is not removed
+        if (!definingOp || !definingOp->hasAttr("collapsed_dims"))
+            return failure();
+
+        // Get removed dimensions
+        auto collapsedDimsAttr =
+            cast<ArrayAttr>(definingOp->getAttr("collapsed_dims"));
+        SmallVector<int64_t> collapsedDims;
+        for (auto attr : collapsedDimsAttr)
+            collapsedDims.push_back(cast<IntegerAttr>(attr).getInt());
+
+        // Get new indices
+        SmallVector<Value> newIndices;
+        for (size_t i = 1; i < op.getNumOperands(); ++i) {
+            // If the index' dim is not removed, keep it
+            if (!llvm::is_contained(collapsedDims, i - 1))
+                newIndices.push_back(op.getOperand(i));
+        }
+
+        auto newRead = rewriter.create<ArrayReadOp>(
+            op.getLoc(),
+            op.getResult().getType(),
+            array,
+            newIndices);
+        newRead->setAttr("adjusted", rewriter.getUnitAttr());
+
+        rewriter.replaceOp(op, newRead.getResult());
+        return success();
+    }
+};
+} // namespace
+
+void ArrayReadOp::getCanonicalizationPatterns(
+    RewritePatternSet &results,
+    MLIRContext* context)
+{
+    results.add<AdjustArrayReadForRemovedDims>(context);
+}
+
+//===----------------------------------------------------------------------===//
+// ArrayWriteOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ArrayWriteOp::verify()
+{
+    if (getNumOperands() != 2 + getArrayType().getRank())
+        return emitOpError(
+            "array write index operand count not equal to memref rank");
+    return success();
+}
+
+namespace {
+struct AdjustArrayWriteForRemovedDims final
+        : public OpRewritePattern<ArrayWriteOp> {
+    using OpRewritePattern<ArrayWriteOp>::OpRewritePattern;
+
+    LogicalResult
+    matchAndRewrite(ArrayWriteOp op, PatternRewriter &rewriter) const override
+    {
+        // If already adjusted
+        if (op->hasAttr("adjusted")) return failure();
+
+        Value array = op.getArray();
+        auto definingOp = array.getDefiningOp();
+
+        // If the array's dimension is not removed
+        if (!definingOp || !definingOp->hasAttr("collapsed_dims"))
+            return failure();
+
+        // Get removed dimensions
+        auto collapsedDimsAttr =
+            cast<ArrayAttr>(definingOp->getAttr("collapsed_dims"));
+        SmallVector<int64_t> collapsedDims;
+        for (auto attr : collapsedDimsAttr)
+            collapsedDims.push_back(cast<IntegerAttr>(attr).getInt());
+
+        // Create new indices
+        SmallVector<Value> newIndices;
+        for (size_t i = 2; i < op.getNumOperands(); ++i) {
+            // If the index' dim is not removed, keep it
+            if (!llvm::is_contained(collapsedDims, i - 2))
+                newIndices.push_back(op.getOperand(i));
+        }
+
+        auto newWrite = rewriter.create<ArrayWriteOp>(
+            op.getLoc(),
+            op.getValue(),
+            array,
+            newIndices);
+        newWrite->setAttr("adjusted", rewriter.getUnitAttr());
+
+        rewriter.replaceOp(op, newWrite);
+        return success();
+    }
+};
+} // namespace
+
+void ArrayWriteOp::getCanonicalizationPatterns(
+    RewritePatternSet &results,
+    MLIRContext* context)
+{
+    results.add<AdjustArrayWriteForRemovedDims>(context);
 }
 
 //===----------------------------------------------------------------------===//

@@ -44,36 +44,4 @@ def Vitis_StreamWriteOp : Vitis_StreamOpBase<"write", [MemoryEffectsOpInterface]
     }];
 }
 
-def Vitis_StreamGetLastOp : Vitis_StreamOpBase<"get_last", []>
-{
-    let summary = "read last signal from data packet";
-    let arguments = (ins AnyType:$data_pkt);
-    let results = (outs I1:$last);
-    let assemblyFormat = "$data_pkt attr-dict `:` type($data_pkt) `->` type($last)";
-}
-
-def Vitis_StreamSetLastOp : Vitis_StreamOpBase<"set_last",[]>
-{
-    let summary = "set last signal to data packet";
-    let arguments = (ins I1:$last,
-                         AnyType:$data_pkt);
-    let assemblyFormat = "`(` $last `)` $data_pkt attr-dict `:` type($last) `->` type($data_pkt)";
-}
-
-def Vitis_StreamGetDataOp : Vitis_StreamOpBase<"get_data", []>
-{
-    let summary = "read data from data packet";
-    let arguments = (ins AnyType:$data_pkt);
-    let results = (outs AnyType:$data);
-    let assemblyFormat = "$data_pkt attr-dict `:` type($data_pkt) `->` type($data)";
-}
-
-def Vitis_StreamSetDataOp : Vitis_StreamOpBase<"set_data", []>
-{
-    let summary = "set data to data packet";
-    let arguments = (ins AnyType:$data,
-                         AnyType:$data_pkt);
-    let assemblyFormat = "`(` $data `)` $data_pkt attr-dict `:` type($data) `->` type($data_pkt)";
-}
-
 #endif // VITIS_STREAMOPS

@@ -14,9 +14,12 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/FormatVariadic.h"
 
+#include <llvm/ADT/APFloat.h>
+#include <llvm/ADT/APInt.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/BlockSupport.h>
+#include <mlir/IR/BuiltinTypeInterfaces.h>
 #include <mlir/IR/Location.h>
 #include <mlir/Support/LogicalResult.h>
 #include <stack>
@@ -194,6 +197,36 @@ LogicalResult VitisCppEmitter::emitAttribute(
             return success();
         }
     }
+    if (auto dense = dyn_cast<DenseIntElementsAttr>(attr)) {
+        if (auto iType = dyn_cast<IntegerType>(dense.getElementType())) {
+            os << '{';
+            if (dense.isSplat()) {
+                printInt(
+                    *dense.getValues<APInt>().begin(),
+                    iType.getSignedness() == IntegerType::Unsigned);
+            } else {
+                interleaveComma(dense, os, [&](const APInt &val) {
+                    printInt(
+                        val,
+                        iType.getSignedness() == IntegerType::Unsigned);
+                });
+            }
+            os << '}';
+            return success();
+        }
+        if (auto iType = dyn_cast<IndexType>(dense.getElementType())) {
+            os << '{';
+            if (dense.isSplat()) {
+                printInt(*dense.getValues<APInt>().begin(), false);
+            } else {
+                interleaveComma(dense, os, [&](const APInt &val) {
+                    printInt(val, false);
+                });
+            }
+            os << '}';
+            return success();
+        }
+    }
 
     // Print floating point attributes.
     if (auto fAttr = dyn_cast<FloatAttr>(attr)) {
@@ -204,6 +237,25 @@ LogicalResult VitisCppEmitter::emitAttribute(
                 "f64");
         }
         printFloat(fAttr.getValue());
+        return success();
+    }
+    if (auto dense = dyn_cast<DenseFPElementsAttr>(attr)) {
+        if (!isa<Float16Type, Float32Type, Float64Type>(
+                dense.getElementType())) {
+            return emitError(
+                loc,
+                "expected floating point attribute to be f16, f32 or "
+                "f64");
+        }
+        os << '{';
+        if (dense.isSplat()) {
+            printFloat(*dense.getValues<APFloat>().begin());
+        } else {
+            interleaveComma(dense, os, [&](const APFloat &val) {
+                printFloat(val);
+            });
+        }
+        os << '}';
         return success();
     }
 
@@ -234,7 +286,7 @@ LogicalResult VitisCppEmitter::emitVariableDeclaration(
         return failure();
     os << " " << getOrCreateName(result);
     if (auto arrayTy = dyn_cast<ArrayType>(result.getType()))
-        os << "[" << arrayTy.getSize() << "]";
+        for (auto dim : arrayTy.getShape()) os << "[" << dim << "]";
     if (trailingSemicolon) os << ";";
     return success();
 }
@@ -267,13 +319,6 @@ LogicalResult VitisCppEmitter::emitAssignPrefix(Operation &op)
 static LogicalResult printOperation(VitisCppEmitter &emitter, ModuleOp moduleOp)
 {
     VitisCppEmitter::Scope scope(emitter);
-    raw_indented_ostream &os = emitter.ostream();
-
-    // os << "#include\"ap_axi_sdata.h\"\n"
-    //    << "#include\"ap_int.h\"\n"
-    //    << "#include\"ap_fixed.h\"\n"
-    //    << "#include\"hls_stream.h\"\n"
-    //    << "#include\"hls_math.h\"\n\n";
 
     for (Operation &op : moduleOp)
         if (failed(emitter.emitOperation(op, false))) return failure();
@@ -290,6 +335,53 @@ printOperation(VitisCppEmitter &emitter, vitis::IncludeOp includeOp)
     os << "\"";
 
     return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::VariableOp variableOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (variableOp.getInit()) {
+        if (variableOp.isVariableConst()) os << "const ";
+        if (failed(emitter.emitAssignPrefix(*variableOp.getOperation())))
+            return failure();
+        if (failed(emitter.emitAttribute(
+                variableOp->getLoc(),
+                variableOp.getInitAttr(),
+                false)))
+            return failure();
+        os << ";";
+    } else {
+        if (failed(emitter.emitVariableDeclaration(
+                variableOp.getOperation()->getResult(0),
+                true)))
+            return failure();
+    }
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisCppEmitter &emitter, vitis::UpdateOp updateOp)
+{
+    raw_indented_ostream &os = emitter.ostream();
+
+    os << emitter.getOrCreateName(updateOp.getVariable()) << " = "
+       << emitter.getOrCreateName(updateOp.getNewValue()) << ";";
+    return success();
+}
+
+static bool hasInnerLoop(Operation* op)
+{
+    bool hasLoop = false;
+    op->walk([&](Operation* childOp) {
+        if (childOp != op && isa<ForOp, WhileOp>(childOp)) {
+            hasLoop = true;
+            return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+    });
+    return hasLoop;
 }
 
 static LogicalResult
@@ -354,60 +446,6 @@ printOperation(VitisCppEmitter &emitter, vitis::CallOp callOp)
 }
 
 static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::ConstantOp constantOp)
-{
-    return success();
-}
-
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::VariableOp variableOp)
-{
-    raw_indented_ostream &os = emitter.ostream();
-    bool isArray = isa<ArrayType>(variableOp.getType());
-
-    if (variableOp.getInit()) {
-        if (failed(emitter.emitAssignPrefix(*variableOp.getOperation())))
-            return failure();
-        if (isArray) os << "{";
-        if (failed(emitter.emitAttribute(
-                variableOp->getLoc(),
-                variableOp.getInit().getDefiningOp<ConstantOp>().getValue(),
-                !isArray)))
-            return failure();
-        if (isArray) os << "};";
-    } else {
-        if (failed(emitter.emitVariableDeclaration(
-                variableOp.getOperation()->getResult(0),
-                true)))
-            return failure();
-    }
-    return success();
-}
-
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::UpdateOp updateOp)
-{
-    raw_indented_ostream &os = emitter.ostream();
-
-    os << emitter.getOrCreateName(updateOp.getVariable()) << " = "
-       << emitter.getOrCreateName(updateOp.getNewValue()) << ";";
-    return success();
-}
-
-static bool hasInnerLoop(Operation* op)
-{
-    bool hasLoop = false;
-    op->walk([&](Operation* childOp) {
-        if (childOp != op && isa<ForOp, WhileOp>(childOp)) {
-            hasLoop = true;
-            return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-    });
-    return hasLoop;
-}
-
-static LogicalResult
 printOperation(VitisCppEmitter &emitter, vitis::ForOp forOp)
 {
     raw_indented_ostream &os = emitter.ostream();
@@ -421,12 +459,9 @@ printOperation(VitisCppEmitter &emitter, vitis::ForOp forOp)
 
     os << "for (";
     if (failed(emitter.emitType(loc, iVar.getType()))) return failure();
-    os << " " << emitter.getOrCreateName(iVar) << " = "
-       << emitter.getOrCreateName(lb) << ";";
-    os << " " << emitter.getOrCreateName(iVar) << " < "
-       << emitter.getOrCreateName(ub) << ";";
-    os << " " << emitter.getOrCreateName(iVar)
-       << " += " << emitter.getOrCreateName(step) << ")";
+    os << " " << emitter.getOrCreateName(iVar) << " = " << lb << ";";
+    os << " " << emitter.getOrCreateName(iVar) << " < " << ub << ";";
+    os << " " << emitter.getOrCreateName(iVar) << " += " << step << ")";
 
     os << " {\n";
     if (!hasLoopInside) os << "#pragma HLS PIPELINE style=flp\n";
@@ -486,54 +521,6 @@ printOperation(VitisCppEmitter &emitter, vitis::StreamWriteOp writeOp)
 
     os << emitter.getOrCreateName(writeOp.getStream()) << ".write("
        << emitter.getOrCreateName(writeOp.getDataPkt()) << ");";
-
-    return success();
-}
-
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::StreamGetLastOp getLastOp)
-{
-    raw_indented_ostream &os = emitter.ostream();
-
-    if (failed(emitter.emitAssignPrefix(*getLastOp.getOperation())))
-        return failure();
-
-    os << emitter.getOrCreateName(getLastOp.getDataPkt()) << ".last;";
-
-    return success();
-}
-
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::StreamSetLastOp setLastOp)
-{
-    raw_indented_ostream &os = emitter.ostream();
-
-    os << emitter.getOrCreateName(setLastOp.getDataPkt())
-       << ".last = " << emitter.getOrCreateName(setLastOp.getLast()) << ";";
-
-    return success();
-}
-
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::StreamGetDataOp getDataOp)
-{
-    raw_indented_ostream &os = emitter.ostream();
-
-    if (failed(emitter.emitAssignPrefix(*getDataOp.getOperation())))
-        return failure();
-
-    os << emitter.getOrCreateName(getDataOp.getDataPkt()) << ".data;";
-
-    return success();
-}
-
-static LogicalResult
-printOperation(VitisCppEmitter &emitter, vitis::StreamSetDataOp setDataOp)
-{
-    raw_indented_ostream &os = emitter.ostream();
-
-    os << emitter.getOrCreateName(setDataOp.getDataPkt())
-       << ".data = " << emitter.getOrCreateName(setDataOp.getData()) << ";";
 
     return success();
 }
@@ -707,8 +694,9 @@ printOperation(VitisCppEmitter &emitter, vitis::ArrayReadOp readOp)
     if (failed(emitter.emitAssignPrefix(*readOp.getOperation())))
         return failure();
 
-    os << emitter.getOrCreateName(readOp.getArray()) << "["
-       << emitter.getOrCreateName(readOp.getIndex()) << "];";
+    os << emitter.getOrCreateName(readOp.getArray());
+    for (auto idx : readOp.getIndices())
+        os << "[" << emitter.getOrCreateName(idx) << "]";
 
     return success();
 }
@@ -718,8 +706,9 @@ printOperation(VitisCppEmitter &emitter, vitis::ArrayWriteOp writeOp)
 {
     raw_indented_ostream &os = emitter.ostream();
 
-    os << emitter.getOrCreateName(writeOp.getArray()) << "["
-       << emitter.getOrCreateName(writeOp.getIndex()) << "]";
+    os << emitter.getOrCreateName(writeOp.getArray());
+    for (auto idx : writeOp.getIndices())
+        os << "[" << emitter.getOrCreateName(idx) << "]";
     os << " = " << emitter.getOrCreateName(writeOp.getValue()) << ";";
 
     return success();
@@ -795,19 +784,12 @@ VitisCppEmitter::emitOperation(Operation &op, bool trailingSemicolon)
             .Case<vitis::IncludeOp, vitis::FuncOp, vitis::CallOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
-                vitis::ConstantOp,
                 vitis::VariableOp,
                 vitis::UpdateOp,
                 vitis::ForOp,
                 vitis::WhileOp>(
                 [&](auto op) { return printOperation(*this, op); })
-            .Case<
-                vitis::StreamReadOp,
-                vitis::StreamWriteOp,
-                vitis::StreamGetLastOp,
-                vitis::StreamSetLastOp,
-                vitis::StreamGetDataOp,
-                vitis::StreamSetDataOp>(
+            .Case<vitis::StreamReadOp, vitis::StreamWriteOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
                 vitis::ArithAddOp,
@@ -863,7 +845,7 @@ LogicalResult VitisCppEmitter::emitType(Location loc, Type vitisType)
         return success();
     }
     if (auto type = dyn_cast<ArrayType>(vitisType)) {
-        if (failed(emitType(loc, type.getElemType()))) return failure();
+        if (failed(emitType(loc, type.getElementType()))) return failure();
         return success();
     }
     if (auto type = dyn_cast<APFixedType>(vitisType)) {

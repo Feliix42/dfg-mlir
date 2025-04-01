@@ -49,21 +49,20 @@ struct ConvertArithConstant : OpConversionPattern<arith::ConstantOp> {
     using OpConversionPattern<arith::ConstantOp>::OpConversionPattern;
 
     ConvertArithConstant(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<arith::ConstantOp>(typeConverter, context) {};
+            : OpConversionPattern<arith::ConstantOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         arith::ConstantOp op,
         arith::ConstantOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
-        auto loc = op.getLoc();
         auto constantAttr = op.getValue();
 
-        auto constantOp = rewriter.create<vitis::ConstantOp>(loc, constantAttr);
         auto variableOp = rewriter.replaceOpWithNewOp<vitis::VariableOp>(
             op,
             op.getType(),
-            constantOp.getResult());
+            /*init*/ constantAttr,
+            /*is_const*/ true);
         op.getResult().replaceAllUsesWith(variableOp.getResult());
 
         return success();
@@ -76,7 +75,7 @@ struct ConvertArithBinaryOp : OpConversionPattern<OpFrom> {
     using OpConversionPattern<OpFrom>::OpConversionPattern;
 
     ConvertArithBinaryOp(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<OpFrom>(typeConverter, context) {};
+            : OpConversionPattern<OpFrom>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         OpFrom op,
@@ -94,7 +93,7 @@ struct ConvertArithCastOp : OpConversionPattern<OpFrom> {
     using OpConversionPattern<OpFrom>::OpConversionPattern;
 
     ConvertArithCastOp(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<OpFrom>(typeConverter, context) {};
+            : OpConversionPattern<OpFrom>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         OpFrom op,

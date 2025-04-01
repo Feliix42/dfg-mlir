@@ -29,12 +29,36 @@ def Vitis_APFixedUType : Vitis_Type<"APFixedU", []> {
     let assemblyFormat = "`<` $datawidth `,` $int_width `>`";
 }
 
-def Vitis_ArrayType : Vitis_Type<"Array", []> {
+def Vitis_ArrayType : Vitis_Type<"Array",
+        [
+            ShapedTypeInterface
+        ]>
+{
     let mnemonic = "array";
-    let summary = "C/C++ arrays with fixed size and data type";
-    let parameters = (ins "int64_t":$size,
-                          "Type":$elem_type);
-    let assemblyFormat = "`<`$size `x` $elem_type`>`";
+    let parameters = (ins ArrayRefParameter<"int64_t">:$shape,
+                          "Type":$elementType);
+
+    let builders = [
+        TypeBuilderWithInferredContext<(ins "ArrayRef<int64_t>":$shape,
+                                            "Type":$elementType), [{
+            return $_get(elementType.getContext(), shape, elementType);
+        }]>
+    ];
+    let skipDefaultBuilders = 1;
+
+    let hasCustomAssemblyFormat = 1;
+
+    let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // ShapedTypeInterface Methods
+        //===------------------------------------------------------------------===//
+
+        // For HLS, an array should always have rank
+        bool hasRank() const { return true; }
+
+        ArrayType cloneWith(std::optional<ArrayRef<int64_t>> shape,
+                              Type elementType) const;
+    }];
 }
 
 def Vitis_PointerType : Vitis_Type<"Pointer", []> {

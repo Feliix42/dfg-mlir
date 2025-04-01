@@ -24,6 +24,8 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Process.h>
+#include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/IR/Attributes.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
@@ -47,7 +49,7 @@ struct ConvertForOp : OpConversionPattern<scf::ForOp> {
     using OpConversionPattern<scf::ForOp>::OpConversionPattern;
 
     ConvertForOp(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<scf::ForOp>(typeConverter, context) {};
+            : OpConversionPattern<scf::ForOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         scf::ForOp op,
@@ -59,12 +61,20 @@ struct ConvertForOp : OpConversionPattern<scf::ForOp> {
         auto ub = op.getUpperBound();
         auto step = op.getStep();
 
+        Attribute lbVal, ubVal, stepVal;
+        if (auto defOp = dyn_cast<vitis::VariableOp>(lb.getDefiningOp()))
+            lbVal = defOp.getInitAttr();
+        if (auto defOp = dyn_cast<vitis::VariableOp>(ub.getDefiningOp()))
+            ubVal = defOp.getInitAttr();
+        if (auto defOp = dyn_cast<vitis::VariableOp>(step.getDefiningOp()))
+            stepVal = defOp.getInitAttr();
+
         if (op.getResults().size() != 0)
             return rewriter.notifyMatchFailure(
                 loc,
                 "No support for scf.for op with results");
 
-        auto vitisFor = rewriter.create<ForOp>(loc, lb, ub, step);
+        auto vitisFor = rewriter.create<ForOp>(loc, lbVal, ubVal, stepVal);
         rewriter.setInsertionPointToEnd(&vitisFor.getBody().front());
         IRMapping mapper;
         mapper.map(op.getInductionVar(), vitisFor.getInductionVar());

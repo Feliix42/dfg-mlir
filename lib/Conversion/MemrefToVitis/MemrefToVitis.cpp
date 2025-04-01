@@ -25,6 +25,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Process.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
+#include <mlir/IR/Attributes.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
@@ -49,7 +50,7 @@ struct ConvertMemrefAlloc : OpConversionPattern<OpFrom> {
     using OpConversionPattern<OpFrom>::OpConversionPattern;
 
     ConvertMemrefAlloc(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<OpFrom>(typeConverter, context) {};
+            : OpConversionPattern<OpFrom>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         OpFrom op,
@@ -60,8 +61,7 @@ struct ConvertMemrefAlloc : OpConversionPattern<OpFrom> {
         auto memrefTy = op.getType();
         auto newVarOp = rewriter.create<VariableOp>(
             op.getLoc(),
-            converter->convertType(memrefTy),
-            Value{});
+            converter->convertType(memrefTy));
 
         for (auto user : op.getResult().getUsers()) {
             rewriter.setInsertionPoint(user);
@@ -71,7 +71,7 @@ struct ConvertMemrefAlloc : OpConversionPattern<OpFrom> {
                     loadOp.getLoc(),
                     memrefTy.getElementType(),
                     newVarOp.getResult(),
-                    loadOp.getIndices().front());
+                    loadOp.getIndices());
                 rewriter.replaceOp(user, arrayRead);
             }
             // If it's used in memref.store
@@ -80,7 +80,7 @@ struct ConvertMemrefAlloc : OpConversionPattern<OpFrom> {
                     storeOp.getLoc(),
                     storeOp.getValueToStore(),
                     newVarOp.getResult(),
-                    storeOp.getIndices().front());
+                    storeOp.getIndices());
                 rewriter.replaceOp(user, arrayWrite);
             }
             // If it's used in dfg.push
@@ -109,7 +109,7 @@ struct ConvertPullBoundMemrefLoad : OpConversionPattern<memref::LoadOp> {
     ConvertPullBoundMemrefLoad(
         TypeConverter &typeConverter,
         MLIRContext* context)
-            : OpConversionPattern<memref::LoadOp>(typeConverter, context) {};
+            : OpConversionPattern<memref::LoadOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         memref::LoadOp op,
@@ -131,7 +131,7 @@ struct ConvertPullBoundMemrefLoad : OpConversionPattern<memref::LoadOp> {
             op.getLoc(),
             memrefTy.getElementType(),
             unrealizedCastOp.getResult(0),
-            op.getIndices().front());
+            op.getIndices());
 
         rewriter.replaceOp(op, arrayRead);
         return success();
@@ -167,8 +167,7 @@ void ConvertMemrefToVitisPass::runOnOperation()
     converter.addConversion([](Type type) { return type; });
     converter.addConversion([](MemRefType memrefTy) {
         return vitis::ArrayType::get(
-            memrefTy.getContext(),
-            memrefTy.getShape().front(),
+            memrefTy.getShape(),
             memrefTy.getElementType());
     });
 

@@ -18,7 +18,11 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <cstdint>
+#include <llvm/ADT/StringRef.h>
+#include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
+#include <mlir/Support/LLVM.h>
 
 #define DEBUG_TYPE "vitis-types"
 
@@ -31,6 +35,39 @@ using namespace mlir::vitis;
 #include "dfg-mlir/Dialect/vitis/IR/Types.cpp.inc"
 
 //===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// ArrayType
+//===----------------------------------------------------------------------===//
+
+ArrayType ArrayType::cloneWith(
+    std::optional<ArrayRef<int64_t>> shape,
+    Type elementType) const
+{
+    return ArrayType::get(shape.value_or(getShape()), elementType);
+}
+
+Type ArrayType::parse(AsmParser &parser)
+{
+
+    SmallVector<int64_t> shape;
+    Type elementType;
+    if (parser.parseLess()
+        || parser.parseDimensionList(shape, /*allowDynamic=*/false)
+        || parser.parseType(elementType) || parser.parseGreater())
+        return Type();
+
+    return ArrayType::get(shape, elementType);
+}
+
+void ArrayType::print(AsmPrinter &p) const
+{
+    p << "<";
+    p.printDimensionList(getShape());
+    p << "x";
+    p << getElementType();
+    p << ">";
+}
 
 //===----------------------------------------------------------------------===//
 // StreamType

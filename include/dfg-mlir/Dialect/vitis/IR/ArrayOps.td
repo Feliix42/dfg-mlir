@@ -13,13 +13,22 @@ class Vitis_ArrayOpBase<string mnemonic, list<Trait> traits = []>
 def Vitis_ArrayReadOp : Vitis_ArrayOpBase<"read",
                         [TypesMatchWith<"result type must mathces array type",
                                         "array", "result",
-                                        "::llvm::cast<vitis::ArrayType>($_self).getElemType()">,
+                                        "::llvm::cast<vitis::ArrayType>($_self).getElementType()">,
                          MemoryEffectsOpInterface]>
 {
-    let arguments = (ins Arg<Vitis_ArrayType>:$array, Index:$index);
+    let summary = "Read a value from an array";
+
+    let arguments = (ins Arg<Vitis_ArrayType>:$array, Variadic<Index>:$indices);
     let results = (outs AnyType:$result);
-    let assemblyFormat = "$array `[` $index `]` attr-dict `:` type($array)";
+
+    let assemblyFormat = "$array `[` $indices `]` attr-dict `:` type($array) `->` type($result)";
+    let hasVerifier = 1;
+    let hasCanonicalizer = 1;
+    
     let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // MemoryEffectsOpInterface Methods
+        //===------------------------------------------------------------------===//
         void getEffects(
                 SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
                 &effects)
@@ -27,20 +36,31 @@ def Vitis_ArrayReadOp : Vitis_ArrayOpBase<"read",
             effects.emplace_back(MemoryEffects::Read::get(), &getArrayMutable(),
                                  SideEffects::DefaultResource::get());
         }
+
+        ArrayType getArrayType() { return getArray().getType(); }
     }];
 }
 
 def Vitis_ArrayWriteOp : Vitis_ArrayOpBase<"write",
                          [TypesMatchWith<"result type must mathces array type",
                                          "array", "value",
-                                         "::llvm::cast<vitis::ArrayType>($_self).getElemType()">,
+                                         "::llvm::cast<vitis::ArrayType>($_self).getElementType()">,
                          MemoryEffectsOpInterface]>
 {
+    let summary = "Write a value into an array";
+
     let arguments = (ins AnyType:$value,
                          Arg<Vitis_ArrayType>:$array,
-                         Index:$index);
-    let assemblyFormat = "$value `,` $array `[` $index `]` attr-dict `:` type($array)";
+                         Variadic<Index>:$indices);
+
+    let assemblyFormat = "$value `,` $array `[` $indices `]` attr-dict `:` type($value) `->` type($array)";
+    let hasVerifier = 1;
+    let hasCanonicalizer = 1;
+
     let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // MemoryEffectsOpInterface Methods
+        //===------------------------------------------------------------------===//
         void getEffects(
                 SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
                 &effects)
@@ -48,6 +68,8 @@ def Vitis_ArrayWriteOp : Vitis_ArrayOpBase<"write",
             effects.emplace_back(MemoryEffects::Write::get(), &getArrayMutable(),
                                  SideEffects::DefaultResource::get());
         }
+
+        ArrayType getArrayType() { return getArray().getType(); }
     }];
 }
 
@@ -57,10 +79,17 @@ def Vitis_ArrayPointerReadOp : Vitis_ArrayOpBase<"ptr_read",
                                         "::llvm::cast<vitis::PointerType>($_self).getPointerType()">,
                          MemoryEffectsOpInterface]>
 {
+    let summary = "Read a value from an array pointer";
+
     let arguments = (ins Arg<Vitis_PointerType>:$array, Index:$index);
     let results = (outs AnyType:$result);
-    let assemblyFormat = "$array `[` $index `]` attr-dict `:` type($array)";
+
+    let assemblyFormat = "$array `[` $index `]` attr-dict `:` type($array) `->` type($result)";
+
     let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // MemoryEffectsOpInterface Methods
+        //===------------------------------------------------------------------===//
         void getEffects(
                 SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
                 &effects)
@@ -77,11 +106,18 @@ def Vitis_ArrayPointerWriteOp : Vitis_ArrayOpBase<"ptr_write",
                                          "::llvm::cast<vitis::PointerType>($_self).getPointerType()">,
                          MemoryEffectsOpInterface]>
 {
+    let summary = "Write a value into an array pointer";
+
     let arguments = (ins AnyType:$value,
                          Arg<Vitis_PointerType>:$array,
                          Index:$index);
-    let assemblyFormat = "$value `,` $array `[` $index `]` attr-dict `:` type($array)";
+
+    let assemblyFormat = "$value `,` $array `[` $index `]` attr-dict `:` type($value) `->` type($array)";
+
     let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // MemoryEffectsOpInterface Methods
+        //===------------------------------------------------------------------===//
         void getEffects(
                 SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
                 &effects)
