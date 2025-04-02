@@ -105,6 +105,8 @@ void VariableOp::getAsmResultNames(
         suffix = "_index_";
     else if (isa<FloatType>(resultTy))
         suffix = "_float_";
+    else if (isa<ArrayType>(resultTy))
+        suffix = "_array_";
     else if (isa<StreamType>(resultTy))
         suffix = "_stream_";
     setNameFn(getResult(), prefix + suffix + std::to_string(count));
