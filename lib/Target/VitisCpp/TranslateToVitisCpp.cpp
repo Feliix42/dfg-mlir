@@ -697,6 +697,7 @@ printOperation(VitisCppEmitter &emitter, vitis::ArrayReadOp readOp)
     os << emitter.getOrCreateName(readOp.getArray());
     for (auto idx : readOp.getIndices())
         os << "[" << emitter.getOrCreateName(idx) << "]";
+    os << ";";
 
     return success();
 }

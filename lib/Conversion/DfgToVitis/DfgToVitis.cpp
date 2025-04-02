@@ -373,9 +373,10 @@ struct ConvertConnectToCall : OpConversionPattern<ConnectDirection> {
         auto callOp = rewriter.create<vitis::CallOp>(
             loc,
             callFunc,
-            ValueRange{
-                regionPortDefOp.getOperand(0),
-                channelPortDefOp.getOperand(0)});
+            dir ? ValueRange{regionPortDefOp.getOperand(0), channelPortDefOp.getOperand(0)}
+                : ValueRange{
+                      channelPortDefOp.getOperand(0),
+                      regionPortDefOp.getOperand(0)});
 
         rewriter.replaceOp(op, callOp);
         return success();
