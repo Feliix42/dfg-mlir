@@ -6,8 +6,7 @@
 namespace mlir {
 
 namespace vitis {
-void registerToVitisCppTranslation();
-void registerToVitisTclTranslation();
+void registerGenerateVitisProject();
 } // namespace vitis
 namespace dfg {
 void registerToVivadoTclTranslation();
@@ -16,9 +15,7 @@ void registerToVivadoTclTranslation();
 inline void registerAllDFGMLIRTranslations()
 {
     static bool initOnce = []() {
-        dfg::registerToVivadoTclTranslation();
-        vitis::registerToVitisCppTranslation();
-        vitis::registerToVitisTclTranslation();
+        vitis::registerGenerateVitisProject();
         return true;
     }();
     (void)initOnce;

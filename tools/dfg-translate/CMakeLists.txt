@@ -17,8 +17,7 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
     MLIRLspServerLib
 
-    VitisTargetCpp
-    VitisTargetTcl
+    VitisTargetProject
 
     ${dialect_libs}
     ${translation_libs}

@@ -1,6 +1,6 @@
-add_mlir_translation_library(VitisTargetTcl
+add_mlir_translation_library(VitisTargetProject
     TranslateRegistration.cpp
-    TranslateToVitisTcl.cpp
+    GenerateVitisProject.cpp
 
     LINK_LIBS PUBLIC
     DFGMLIRVitisDialect
