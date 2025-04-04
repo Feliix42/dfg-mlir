@@ -23,6 +23,7 @@
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
 
+#include <cstddef>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/StringMap.h>
@@ -180,7 +181,7 @@ struct VitisProjectEmitter {
     StringRef getTopFuncName() const { return topFuncName; }
     StringRef getProjectDir() const { return projectDir; }
     // Util functions
-    LogicalResult initializeProject(StringRef funcName);
+    LogicalResult initializeProject(StringRef funcName, size_t funcNumArgs);
     LogicalResult createScriptFiles();
     // Name manager
     bool isInScope(Value value)
@@ -220,6 +221,7 @@ private:
     // Utils
     std::string projectDir;
     std::string topFuncName;
+    size_t topFuncArgSize;
     // Helper for name generation
     llvm::DenseMap<Value, std::string> valueNames;
     NameManager nameManager;
@@ -244,7 +246,9 @@ printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
         return ::emitError(moduleOp.getLoc(), "Failed to find top function.");
 
     // Initialize the project
-    if (failed(emitter.initializeProject(lastFunc.getSymName().str())))
+    if (failed(emitter.initializeProject(
+            lastFunc.getSymName().str(),
+            lastFunc.getNumArguments())))
         return ::emitError(
             moduleOp.getLoc(),
             "Failed to initialize the project.");
@@ -951,10 +955,12 @@ LogicalResult VitisProjectEmitter::emitAssignPrefix(Operation &op)
     return success();
 }
 
-LogicalResult VitisProjectEmitter::initializeProject(StringRef name)
+LogicalResult
+VitisProjectEmitter::initializeProject(StringRef funcName, size_t funcNumArgs)
 {
     // Init
-    topFuncName = name.str();
+    topFuncName = funcName.str();
+    topFuncArgSize = funcNumArgs;
     dbgOS << "Creating project for top function: " << topFuncName << "\n";
     llvm::SmallString<128> projectPath(outputDir);
     llvm::sys::path::append(projectPath, topFuncName);
@@ -989,6 +995,199 @@ LogicalResult VitisProjectEmitter::initializeProject(StringRef name)
     return success();
 }
 
+namespace {
+std::string
+replaceAll(std::string str, const std::string &from, const std::string &to)
+{
+    size_t start_pos = 0;
+    while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
+        str.replace(start_pos, from.length(), to);
+        start_pos += to.length();
+    }
+    return str;
+}
+constexpr const char* kRunHLSTclTemplate =
+    R"(set TARGET_DEVICE "{{TARGET_DEVICE}}"
+set CLOCK_PERIOD 10
+set PROJECT_DIR "./hls_project"
+set SOURCE_FILE "main.cpp"
+if {![file exists $SOURCE_FILE]} {
+    puts "ERROR: Source file $SOURCE_FILE does not exist!"
+    exit 1
+}
+puts "INFO: Using source file: $SOURCE_FILE"
+open_project $PROJECT_DIR
+add_files $SOURCE_FILE
+puts "INFO: Creating HLS solution"
+open_solution "solution_{{TOP_FUNC_NAME}}"
+set_part $TARGET_DEVICE
+create_clock -period $CLOCK_PERIOD -name default
+set_top {{TOP_FUNC_NAME}}
+puts "INFO: Set top function to '{{TOP_FUNC_NAME}}'"
+puts "INFO: Running C synthesis..."
+if {[catch {csynth_design} result]} {
+    puts "ERROR: C synthesis failed: $result"
+    exit 1
+}
+puts "INFO: C synthesis completed successfully"
+puts "INFO: Exporting RTL design..."
+if {[catch {export_design -rtl verilog} result]} {
+    puts "ERROR: Failed to export design: $result"
+    exit 1
+}
+puts "INFO: Design exported successfully"
+close_solution
+close_project
+puts "INFO: HLS completed successfully"
+exit
+)";
+constexpr const char* kRunVivadoTclTemplate =
+    R"(set project_name "{{TOP_FUNC_NAME}}"
+set project_dir "./vivado_project/"
+set project_path "$project_dir/$project_name.xpr"
+set target_device "{{TARGET_DEVICE}}"
+set ip_repo_dir "./hls_project"
+if {[file exists $project_dir]} {
+  puts "INFO: Project directory exists."
+  exit 1
+}
+puts "INFO: Creating a new project..."
+create_project $project_name $project_dir -part $target_device
+set_property part $target_device [current_project]
+set_property default_lib xil_defaultlib [current_project]
+set_property target_language Verilog [current_project]
+if {[file exists $ip_repo_dir]} {
+  puts "INFO: Adding IP repository: $ip_repo_dir"
+  set_property ip_repo_paths $ip_repo_dir [current_project]
+} else {
+  puts "WARNING: IP repository directory $ip_repo_dir does not exist!"
+  exit 1
+}
+set bd_name "${project_name}_bd"
+puts "INFO: Creating block design: $bd_name"
+create_bd_design $bd_name
+puts "INFO: Adding Zynq MPSoC to the block design"
+set zynq_mpsoc [create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:3.5 zynq_mpsoc]
+puts "INFO: Applying board preset to Zynq MPSoC"
+apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset "1"} $zynq_mpsoc
+set_property CONFIG.PSU__FPGA_PL0_ENABLE {1} $zynq_mpsoc
+set_property CONFIG.PSU__USE__M_AXI_GP0 {1} $zynq_mpsoc
+set_property CONFIG.PSU__USE__M_AXI_GP1 {0} $zynq_mpsoc
+set_property CONFIG.PSU__USE__M_AXI_GP2 {0} $zynq_mpsoc
+set_property CONFIG.PSU__USE__S_AXI_GP0 {1} $zynq_mpsoc
+set_property CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ {100} $zynq_mpsoc
+puts "INFO: Adding HLS IP kernel to the block design"
+create_bd_cell -type ip -vlnv xilinx.com:hls:{{TOP_FUNC_NAME}}:1.0 {{TOP_FUNC_NAME}}
+apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} Master {/zynq_mpsoc/M_AXI_HPM0_FPD} Slave {/{{TOP_FUNC_NAME}}/s_axi_control} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins {{TOP_FUNC_NAME}}/s_axi_control]
+{{GMEM_AXI_CONNECTIONS}}puts "INFO: Validating block design: $bd_name"
+if {[catch {validate_bd_design} result]} {
+    puts "Block design validation failed: $result"
+    exit 1
+}
+puts "INFO: Validating succeeded"
+regenerate_bd_layout
+save_bd_design
+puts "INFO: Closing block design: $bd_name"
+make_wrapper -files [get_files "$project_dir/$project_name.srcs/sources_1/bd/$bd_name/$bd_name.bd"] -top
+set wrapper_path "$project_dir/$project_name.srcs/sources_1/bd/$bd_name/hdl/${bd_name}_wrapper.v"
+add_files $wrapper_path
+set_property top "${bd_name}_wrapper" [get_filesets sources_1]
+set max_cores [get_param general.maxThreads]
+puts "INFO: Using up to $max_cores threads for synthesis and implementation."
+puts "INFO: Running Synthesis..."
+launch_runs synth_1 -jobs $max_cores
+wait_on_run synth_1
+set synth_status [get_property STATUS [get_runs synth_1]]
+if {![string match "*Complete!*" $synth_status]} {
+    puts "ERROR: Synthesis failed with status: $synth_status"
+    exit 1
+}
+puts "INFO: Synthesis completed successfully"
+puts "INFO: Running Implementation..."
+reset_run impl_1
+launch_runs impl_1 -to_step write_bitstream -jobs $max_cores
+wait_on_run impl_1
+set impl_status [get_property STATUS [get_runs impl_1]]
+if {![string match "*Complete!*" $impl_status]} {
+    puts "ERROR: Implementation failed with status: $impl_status"
+    exit 1
+}
+puts "INFO: Implementation completed successfully"
+puts "INFO: Exporting hardware with bitstream"
+write_hw_platform -fixed -include_bit -force -file $project_dir/${project_name}_bd.xsa
+exit
+)";
+constexpr const char* kRunDesignShTemplate =
+    R"(#!/bin/bash
+if [ -z "$XILINX_PATH" ]; then
+    echo "XILINX_PATH not set"
+    exit 1
+fi
+if [ -z "$XILINX_VERSION" ]; then
+    echo "XILINX_VERSION not set"
+    exit 1
+fi
+VITIS_HLS="$XILINX_PATH/Vitis/$XILINX_VERSION/bin/vitis-run"
+VIVADO="$XILINX_PATH/Vivado/$XILINX_VERSION/bin/vivado"
+echo "Runing Vitis HLS"
+"$VITIS_HLS" --mode hls --tcl run_hls.tcl
+if [ $? -ne 0 ]; then
+    echo "ERROR: Vitis HLS execution failed"
+    exit 1
+fi
+echo "Runing Vivado"
+"$VIVADO" -mode tcl -source run_vivado.tcl
+if [ $? -ne 0 ]; then
+    echo "ERROR: Vivado execution failed"
+    exit 1
+fi
+echo "Successfully generate design"
+DESIGN_DIR=./vivado_project
+BASENAME="{{TOP_FUNC_NAME}}_bd"
+XSA_FILENAME="$BASENAME.xsa"
+XSA_FILE="$DESIGN_DIR/$XSA_FILENAME"
+if [ ! -d "$DESIGN_DIR" ]; then
+    echo "Directory $DESIGN_DIR doesn't exist"
+    exit 1
+fi
+if [ ! -f "$XSA_FILE" ]; then
+    echo "XSA File $XSA_FILE doesn't exist"
+    exit 1
+fi
+echo "Found XSA File: $XSA_FILE"
+TEMP_DIR="./xsa_temp"
+TARGET_DIR="./driver/bitfile"
+echo "Extracting "$XSA_FILE""
+unzip -q "$XSA_FILE" -d "$TEMP_DIR"
+if [ $? -ne 0 ]; then
+    echo "Failed to extract "$XSA_FILE""
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
+mkdir -p "$TARGET_DIR"
+BIT_FILE=$(find "$TEMP_DIR" -name "$BASENAME.bit" | head -n 1)
+if [ -z "$BIT_FILE" ]; then
+    echo "Failed to find "$BASENAME.bit""
+    rm -rf "$TEMP_DIR"
+    exit 1
+else
+    cp "$BIT_FILE" "$TARGET_DIR"
+    echo "Copied "$BASENAME.bit" into "$TARGET_DIR""
+fi
+HWH_FILE=$(find "$TEMP_DIR" -name "$BASENAME.hwh" | head -n 1)
+if [ -z "$HWH_FILE" ]; then
+    echo "Failed to find "$BASENAME.hwh""
+    rm -rf "$TEMP_DIR"
+    exit 1
+else
+    cp "$HWH_FILE" "$TARGET_DIR"
+    echo "Copied "$BASENAME.hwh" into "$TARGET_DIR""
+fi
+rm -rf "$TEMP_DIR"
+echo "Extract bitfile done!"
+)";
+} // namespace
+
 LogicalResult VitisProjectEmitter::createScriptFiles()
 {
     // Generate Tcl script for HLS design
@@ -1001,31 +1200,77 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
             dbgOS << "Error creating run_hls.tcl: " << ec.message() << "\n";
             return failure();
         }
+        raw_indented_ostream os(tclFile);
         // Create tcl script based on top function name and target device
         dbgOS << "Creating run_hls.tcl file\n";
-        tclFile << "set TARGET_DEVICE \"" << targetDevice << "\"\n";
-        tclFile << "set CLOCK_PERIOD 10\n";
-        tclFile << "set PROJECT_DIR \"./hls_project\"\n";
-        tclFile << "set SOURCE_FILE \"main.cpp\"\n";
-        tclFile << "puts \"INFO: Using source file: $SOURCE_FILE\"\n";
-        tclFile << "open_project $PROJECT_DIR\n";
-        tclFile << "add_files $SOURCE_FILE\n";
-        tclFile << "open_solution \"solution_" << topFuncName << "\"\n";
-        tclFile << "set_part $TARGET_DEVICE\n";
-        tclFile << "create_clock -period $CLOCK_PERIOD -name default\n";
-        tclFile << "set_top " << topFuncName << "\n";
-        tclFile << "csynth_design\n";
-        tclFile << "export_design -rtl verilog\n";
-        tclFile << "close_solution\n";
-        tclFile << "close_project\n";
-        tclFile << "exit\n";
+        // Use pre-defined template and replace the key
+        std::string content(kRunHLSTclTemplate);
+        content = replaceAll(content, "{{TARGET_DEVICE}}", targetDevice);
+        content = replaceAll(content, "{{TOP_FUNC_NAME}}", topFuncName);
+        tclFile << content;
         // Debug info
         dbgOS << "Created run_hls.tcl\n";
     }
 
     // Generate Tcl script for FPGA design
     {
-        // TODO
+        SmallString<128> tclPath(projectDir);
+        llvm::sys::path::append(tclPath, "run_vivado.tcl");
+        std::error_code ec;
+        llvm::raw_fd_ostream tclFile(tclPath, ec, llvm::sys::fs::OF_Text);
+        if (ec) {
+            dbgOS << "Error creating run_vivado.tcl: " << ec.message() << "\n";
+            return failure();
+        }
+        raw_indented_ostream os(tclFile);
+        // Create tcl script based on top function name and target device
+        dbgOS << "Creating run_vivado.tcl file\n";
+        // Use pre-defined template and replace the key
+        std::string gmemConnections;
+        // Add automation for m_axi ports
+        if (topFuncArgSize != 0) {
+            std::string configAutomation =
+                "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { ";
+            std::string configClock =
+                "Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} ";
+            std::string configMAxi =
+                "Master {/" + topFuncName + "/m_axi_gmem_arg0} ";
+            std::string configSAxi =
+                "Slave {/zynq_mpsoc/S_AXI_HPC0_FPD} ddr_seg {Auto} ";
+            std::string configConnect =
+                "intc_ip {New AXI SmartConnect} master_apm {0}} "
+                "[get_bd_intf_pins zynq_mpsoc/S_AXI_HPC0_FPD]\n";
+            gmemConnections.append(
+                configAutomation + configClock + configMAxi + configSAxi
+                + configConnect);
+            // Already created smart connect ip
+            for (size_t i = 1; i < topFuncArgSize; i++) {
+                configAutomation =
+                    "apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config "
+                    "{ ";
+                configClock =
+                    "Clk_master {Auto} Clk_slave {Auto} Clk_xbar {Auto} ";
+                configMAxi = "Master {/" + topFuncName + "/m_axi_gmem_arg"
+                             + std::to_string(i) + "} ";
+                configSAxi =
+                    "Slave {/zynq_mpsoc/S_AXI_HPC0_FPD} ddr_seg {Auto} ";
+                configConnect =
+                    "intc_ip {/axi_smc_1} master_apm {0}} [get_bd_intf_pins "
+                    + topFuncName + "/m_axi_gmem_arg" + std::to_string(i)
+                    + "]\n";
+                gmemConnections.append(
+                    configAutomation + configClock + configMAxi + configSAxi
+                    + configConnect);
+            }
+        }
+        std::string content(kRunVivadoTclTemplate);
+        content = replaceAll(content, "{{TOP_FUNC_NAME}}", topFuncName);
+        content = replaceAll(content, "{{TARGET_DEVICE}}", targetDevice);
+        content =
+            replaceAll(content, "{{GMEM_AXI_CONNECTIONS}}", gmemConnections);
+        tclFile << content;
+        // Debug info
+        dbgOS << "Created run_vivado.tcl\n";
     }
 
     // Genreate Shell script for auto control
@@ -1041,68 +1286,9 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
         raw_indented_ostream os(shFile);
         // Create shell script to automatic run Vitis HLS and Vivado
         dbgOS << "Creating run_design.sh file\n";
-        os << "#!/bin/bash\n";
-        os << "if [ -z \"$XILINX_PATH\" ]; then\n";
-        os.indent() << "echo \"XILINX_PATH not set\"\n";
-        os << "exit 1\n";
-        os.unindent() << "fi\n";
-        os << "if [ -z \"$XILINX_VERSION\" ]; then\n";
-        os.indent() << "echo \"XILINX_VERSION not set\"\n";
-        os << "exit 1\n";
-        os.unindent() << "fi\n";
-        os << "VITIS_HLS=\"$XILINX_PATH/Vitis/$XILINX_VERSION/bin/"
-              "vitis-run\"\n";
-        os << "VIVADO=\"$XILINX_PATH/Vivado/$XILINX_VERSION/bin/vivado\"\n";
-        os << "echo \"Runing Vitis HLS\"\n";
-        os << "\"$VITIS_HLS\" --mode hls --tcl run_hls.tcl\n";
-        os << "echo \"Runing Vivado\"\n";
-        os << "\"$VIVADO\" -mode tcl -source run_vivado.tcl\n";
-        os << "echo \"Successfully generate design\"\n";
-        os << "DESIGN_DIR=./vivado_project\n";
-        os << "BASENAME=\"" << topFuncName << "_bd\"\n";
-        os << "XSA_FILENAME=\"$BASENAME.xsa\"\n";
-        os << "XSA_FILE=\"$DESIGN_DIR/$XSA_FILENAME\"\n";
-        os << "if [ ! -d \"$DESIGN_DIR\" ]; then\n";
-        os.indent() << "echo \"Directory $DESIGN_DIR doesn't exist\"\n";
-        os << "exit 1\n";
-        os.unindent() << "fi\n";
-        os << "if [ ! -f \"$XSA_FILE\" ]; then\n";
-        os.indent() << "echo \"XSA File $XSA_FILE doesn't exist\"\n";
-        os << "exit 1\n";
-        os.unindent() << "fi\n";
-        os << "echo \"Found XSA File: $XSA_FILE\"\n";
-        os << "TEMP_DIR=\"./xsa_temp\"\n";
-        os << "TARGET_DIR=\"./driver/bitfile\"\n";
-        os << "echo \"Extracting \"$XSA_FILE\"\"\n";
-        os << "unzip -q \"$XSA_FILE\" -d \"$TEMP_DIR\"\n";
-        os << "if [ $? -ne 0 ]; then\n";
-        os.indent() << "echo \"Failed to extract \"$XSA_FILE\"\"\n";
-        os << "rm -rf \"$TEMP_DIR\"\n";
-        os << "exit 1\n";
-        os.unindent() << "fi\n";
-        os << "mkdir -p \"$TARGET_DIR\"\n";
-        os << "BIT_FILE=$(find \"$TEMP_DIR\" -name \"$BASENAME.bit\" | head -n "
-              "1)\n";
-        os << "if [ -z \"$BIT_FILE\" ]; then\n";
-        os.indent() << "echo \"Failed to find \"$BASENAME.bit\"\"\n";
-        os << "rm -rf \"$TEMP_DIR\"\n";
-        os << "exit 1\n";
-        os.unindent() << "else\n";
-        os.indent() << "cp \"$BIT_FILE\" \"$TARGET_DIR\"\n";
-        os << "echo \"Copied \"$BASENAME.bit\" into \"$TARGET_DIR\"\"\n";
-        os.unindent() << "fi\n";
-        os << "HWH_FILE=$(find \"$TEMP_DIR\" -name \"$BASENAME.hwh\" | head -n "
-              "1)\n";
-        os << "if [ -z \"$HWH_FILE\" ]; then\n";
-        os.indent() << "echo \"Failed to find \"$BASENAME.hwh\"\"\n";
-        os << "rm -rf \"$TEMP_DIR\"\n";
-        os << "exit 1\n";
-        os.unindent() << "else\n";
-        os.indent() << "cp \"$HWH_FILE\" \"$TARGET_DIR\"\n";
-        os << "echo \"Copied \"$BASENAME.hwh\" into \"$TARGET_DIR\"\"\n";
-        os.unindent() << "fi\n";
-        os << "rm -rf \"$TEMP_DIR\"\n";
-        os << "echo \"Extract bitfile done!\"\n";
+        std::string content(kRunDesignShTemplate);
+        content = replaceAll(content, "{{TOP_FUNC_NAME}}", topFuncName);
+        shFile << content;
         // Debug info
         dbgOS << "Created run_design.sh\n";
         // Set up permissions
