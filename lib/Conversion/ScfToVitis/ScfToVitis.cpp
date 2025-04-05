@@ -61,6 +61,15 @@ struct ConvertForOp : OpConversionPattern<scf::ForOp> {
         auto ub = op.getUpperBound();
         auto step = op.getStep();
 
+        bool hasLoopInside = false;
+        op->walk([&](Operation* childOp) {
+            if (childOp != op && isa<scf::ForOp>(childOp)) {
+                hasLoopInside = true;
+                return WalkResult::interrupt();
+            }
+            return WalkResult::advance();
+        });
+
         Attribute lbVal, ubVal, stepVal;
         if (auto defOp = dyn_cast<vitis::VariableOp>(lb.getDefiningOp()))
             lbVal = defOp.getInitAttr();
@@ -76,6 +85,8 @@ struct ConvertForOp : OpConversionPattern<scf::ForOp> {
 
         auto vitisFor = rewriter.create<ForOp>(loc, lbVal, ubVal, stepVal);
         rewriter.setInsertionPointToEnd(&vitisFor.getBody().front());
+        if (!hasLoopInside)
+            rewriter.create<PragmaPipelineOp>(vitisFor.getLoc());
         IRMapping mapper;
         mapper.map(op.getInductionVar(), vitisFor.getInductionVar());
 

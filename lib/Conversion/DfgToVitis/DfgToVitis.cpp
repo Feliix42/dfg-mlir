@@ -33,6 +33,7 @@
 #include "llvm/ADT/APInt.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringRef.h>
@@ -92,6 +93,7 @@ struct ConvertProcessToFunc : OpConversionPattern<ProcessOp> {
             funcEntryBlock->addArgument(type, funcLoc);
 
         rewriter.setInsertionPointToStart(funcEntryBlock);
+        rewriter.create<vitis::PragmaInlineOp>(loc, true);
         for (auto [arg, newArg] :
              llvm::zip(op.getBody().getArguments(), funcOp.getArguments())) {
             auto casted = converter->materializeSourceConversion(
@@ -163,6 +165,7 @@ struct ConvertPullToStreamRead : OpConversionPattern<PullOp> {
                 indices.push_back(forOp.getInductionVar());
             }
             auto curLoc = rewriter.getUnknownLoc();
+            rewriter.create<vitis::PragmaPipelineOp>(loc);
             auto streamReadOp = rewriter.create<vitis::StreamReadOp>(
                 curLoc,
                 dyn_cast<vitis::StreamType>(vitisStream.getType())
@@ -219,6 +222,7 @@ struct ConvertPushToStreamWrite : OpConversionPattern<PushOp> {
                 indices.push_back(forOp.getInductionVar());
             }
             auto curLoc = rewriter.getUnknownLoc();
+            rewriter.create<vitis::PragmaPipelineOp>(loc);
             auto arrayReadOp =
                 rewriter.create<vitis::ArrayReadOp>(curLoc, array, indices);
             rewriter.create<vitis::StreamWriteOp>(
@@ -278,6 +282,22 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
         for (auto type : args) funcEntryBlock->addArgument(type, funcLoc);
 
         rewriter.setInsertionPointToStart(funcEntryBlock);
+        // Insert interface pragmas for each argument
+        for (size_t i = 0; i < funcOp.getNumArguments(); i++) {
+            rewriter.create<vitis::PragmaInterfaceOp>(
+                funcLoc,
+                vitis::PragmaInterfaceMode::m_axi,
+                funcOp.getArgument(i),
+                "gmem_arg" + std::to_string(i),
+                vitis::PragmaInterfaceMasterAxiOffset::slave);
+            rewriter.create<vitis::PragmaInterfaceOp>(
+                funcLoc,
+                vitis::PragmaInterfaceMode::s_axilite,
+                funcOp.getArgument(i),
+                "control");
+        }
+        // Insert interface pragma to genereate the slave control port
+        rewriter.create<vitis::PragmaReturnInterfaceOp>(funcLoc);
         for (auto [arg, newArg] :
              llvm::zip(op.getBody().getArguments(), funcOp.getArguments())) {
             // Same as FunctionType, here we create unrealized cast manually
@@ -287,7 +307,14 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
                 newArg);
             mapper.map(arg, casted.getResult(0));
         }
-        for (auto &op : op.getBody().getOps()) rewriter.clone(op, mapper);
+        // Always put channel definition at top
+        for (auto &op : op.getBody().getOps())
+            if (isa<ChannelOp>(op)) rewriter.clone(op, mapper);
+        // So that a dataflow region is created after
+        rewriter.create<vitis::PragmaDataflowOp>(funcLoc, [&] {
+            for (auto &op : op.getBody().getOps())
+                if (!isa<ChannelOp>(op)) rewriter.clone(op, mapper);
+        });
 
         rewriter.replaceOp(op, funcOp);
         return success();
@@ -309,6 +336,10 @@ struct ConvertChannelToStream : OpConversionPattern<ChannelOp> {
         auto channelTy = op.getEncapsulatedType();
         if (auto shapedTy = dyn_cast<ShapedType>(channelTy))
             channelTy = shapedTy.getElementType();
+        if (!op.getBufferSize().has_value())
+            return rewriter.notifyMatchFailure(
+                loc,
+                "No support for boundless channel");
 
         auto streamVar = rewriter.create<vitis::VariableOp>(
             loc,
@@ -319,6 +350,16 @@ struct ConvertChannelToStream : OpConversionPattern<ChannelOp> {
             streamVar.getResult());
         op.getInChan().replaceAllUsesWith(cast.getResult(0));
         op.getOutChan().replaceAllUsesWith(cast.getResult(1));
+
+        rewriter.create<vitis::PragmaStreamOp>(
+            loc,
+            streamVar.getResult(),
+            op.getBufferSize().value());
+        rewriter.create<vitis::PragmaBindStorageOp>(
+            loc,
+            streamVar.getResult(),
+            vitis::PragmaStorageType::fifo,
+            vitis::PragmaStorageImpl::srl);
 
         rewriter.replaceOp(op, cast.getResults());
         return success();
@@ -367,8 +408,10 @@ struct ConvertConnectToCall : OpConversionPattern<ConnectDirection> {
                 "type.");
 
         if (!dir) {
-            auto parentFunc = op->template getParentOfType<vitis::FuncOp>();
-            rewriter.setInsertionPointToEnd(&parentFunc.getBody().front());
+            auto dataflowRegion =
+                op->template getParentOfType<vitis::PragmaDataflowOp>();
+            rewriter.setInsertionPointToEnd(
+                &dataflowRegion.getDataflowRegion().front());
         }
         auto callOp = rewriter.create<vitis::CallOp>(
             loc,
@@ -456,6 +499,7 @@ private:
         for (auto type : args) funcEntryBlock->addArgument(type, funcLoc);
 
         builder.setInsertionPointToStart(funcEntryBlock);
+        builder.create<vitis::PragmaInlineOp>(loc, true);
         if (size == 1) {
             auto idx =
                 builder.create<arith::ConstantOp>(loc, builder.getIndexAttr(0));
@@ -468,19 +512,9 @@ private:
                 read.getResult(),
                 funcOp.getArgument(1));
         } else {
-            auto lb =
-                builder.create<arith::ConstantOp>(loc, builder.getIndexAttr(0));
-            auto ub = builder.create<arith::ConstantOp>(
-                loc,
-                builder.getIndexAttr(size));
-            auto step =
-                builder.create<arith::ConstantOp>(loc, builder.getIndexAttr(1));
-            auto forOp = builder.create<scf::ForOp>(
-                loc,
-                lb.getResult(),
-                ub.getResult(),
-                step.getResult());
-            builder.setInsertionPointToStart(&forOp.getBodyRegion().front());
+            auto forOp = builder.create<vitis::ForOp>(loc, 0, size, 1);
+            builder.setInsertionPointToStart(&forOp.getBody().front());
+            builder.create<vitis::PragmaPipelineOp>(loc);
             auto read = builder.create<vitis::ArrayPointerReadOp>(
                 loc,
                 funcOp.getArgument(0),
@@ -514,6 +548,7 @@ private:
         for (auto type : args) funcEntryBlock->addArgument(type, funcLoc);
 
         builder.setInsertionPointToStart(funcEntryBlock);
+        builder.create<vitis::PragmaInlineOp>(loc, true);
         if (size == 1) {
             auto idx =
                 builder.create<arith::ConstantOp>(loc, builder.getIndexAttr(0));
@@ -527,19 +562,9 @@ private:
                 funcOp.getArgument(1),
                 idx.getResult());
         } else {
-            auto lb =
-                builder.create<arith::ConstantOp>(loc, builder.getIndexAttr(0));
-            auto ub = builder.create<arith::ConstantOp>(
-                loc,
-                builder.getIndexAttr(size));
-            auto step =
-                builder.create<arith::ConstantOp>(loc, builder.getIndexAttr(1));
-            auto forOp = builder.create<scf::ForOp>(
-                loc,
-                lb.getResult(),
-                ub.getResult(),
-                step.getResult());
-            builder.setInsertionPointToStart(&forOp.getBodyRegion().front());
+            auto forOp = builder.create<vitis::ForOp>(loc, 0, size, 1);
+            builder.setInsertionPointToStart(&forOp.getBody().front());
+            builder.create<vitis::PragmaPipelineOp>(loc);
             auto read = builder.create<vitis::StreamReadOp>(
                 loc,
                 type,

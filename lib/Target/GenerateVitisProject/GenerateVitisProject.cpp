@@ -3,6 +3,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "dfg-mlir/Dialect//vitis/IR/Ops.h"
+#include "dfg-mlir/Dialect/vitis/Enums.h"
 #include "dfg-mlir/Dialect/vitis/IR/Types.h"
 #include "dfg-mlir/Target/GenerateVitisProject/GenerateVitisProjectEmitter.h"
 #include "mlir/IR/BlockSupport.h"
@@ -681,6 +682,122 @@ printOperation(VitisProjectEmitter &emitter, vitis::MathCosOp cosOp)
 }
 
 //===----------------------------------------------------------------------===//
+// PragmaOps
+//===----------------------------------------------------------------------===//
+
+static LogicalResult printOperation(
+    VitisProjectEmitter &emitter,
+    vitis::PragmaBindStorageOp bindStorageOp)
+{
+    raw_indented_ostream &cppOS = emitter.getCppOS();
+    raw_indented_ostream &dbgOS = emitter.getDebugOS();
+
+    dbgOS << "Translating PragmaBindStorageOp at " << bindStorageOp.getLoc()
+          << "\n";
+    cppOS << "#pragma HLS BIND_STORAGE variable="
+          << emitter.getOrCreateName(bindStorageOp.getVariable());
+    cppOS << " type=" << bindStorageOp.getType() << " impl=";
+
+    auto impl = bindStorageOp.getImpl();
+    if (impl == vitis::PragmaStorageImpl::automatic)
+        cppOS << "auto";
+    else
+        cppOS << impl;
+    cppOS << "\n";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisProjectEmitter &emitter, vitis::PragmaDataflowOp dataflowOp)
+{
+    raw_indented_ostream &cppOS = emitter.getCppOS();
+    raw_indented_ostream &dbgOS = emitter.getDebugOS();
+
+    dbgOS << "Translating PragmaDataflowOp at " << dataflowOp.getLoc() << "\n";
+    cppOS << "\n#pragma HLS DATAFLOW\n";
+    for (auto &opi : dataflowOp.getDataflowRegion().getOps())
+        if (failed(emitter.emitOperation(opi))) return failure();
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisProjectEmitter &emitter, vitis::PragmaInlineOp inlineOp)
+{
+    raw_indented_ostream &cppOS = emitter.getCppOS();
+    raw_indented_ostream &dbgOS = emitter.getDebugOS();
+
+    dbgOS << "Translating PragmaInlineOp at " << inlineOp.getLoc() << "\n";
+    cppOS << "#pragma HLS INLINE ";
+    if (inlineOp.getOff()) cppOS << "off";
+    cppOS << "\n";
+
+    return success();
+}
+
+static LogicalResult printOperation(
+    VitisProjectEmitter &emitter,
+    vitis::PragmaInterfaceOp interfaceOp)
+{
+    raw_indented_ostream &cppOS = emitter.getCppOS();
+    raw_indented_ostream &dbgOS = emitter.getDebugOS();
+
+    dbgOS << "Translating PragmaInterfaceOp at " << interfaceOp.getLoc()
+          << "\n";
+    cppOS << "#pragma HLS INTERFACE";
+    cppOS << " mode=" << interfaceOp.getMode();
+    cppOS << " port=" << emitter.getOrCreateName(interfaceOp.getPort());
+    if (interfaceOp.getOffset()) cppOS << " offset=" << interfaceOp.getOffset();
+    cppOS << " bundle=" << interfaceOp.getBundle();
+    cppOS << "\n";
+
+    return success();
+}
+
+static LogicalResult printOperation(
+    VitisProjectEmitter &emitter,
+    vitis::PragmaReturnInterfaceOp interfaceOp)
+{
+    raw_indented_ostream &cppOS = emitter.getCppOS();
+    raw_indented_ostream &dbgOS = emitter.getDebugOS();
+
+    dbgOS << "Translating PragmaReturnInterfaceOp at " << interfaceOp.getLoc()
+          << "\n";
+    cppOS
+        << "#pragma HLS INTERFACE mode=s_axilite port=return bundle=control\n";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisProjectEmitter &emitter, vitis::PragmaPipelineOp pipelineOp)
+{
+    raw_indented_ostream &cppOS = emitter.getCppOS();
+    raw_indented_ostream &dbgOS = emitter.getDebugOS();
+
+    dbgOS << "Translating PragmaPipelineOp at " << pipelineOp.getLoc() << "\n";
+    cppOS << "#pragma HLS PIPELINE II=" << pipelineOp.getInterval();
+    cppOS << " style=" << pipelineOp.getStyle() << "\n";
+
+    return success();
+}
+
+static LogicalResult
+printOperation(VitisProjectEmitter &emitter, vitis::PragmaStreamOp streamOp)
+{
+    raw_indented_ostream &cppOS = emitter.getCppOS();
+    raw_indented_ostream &dbgOS = emitter.getDebugOS();
+
+    dbgOS << "Translating PragmaStreamOp at " << streamOp.getLoc() << "\n";
+    cppOS << "#pragma HLS STREAM variable="
+          << emitter.getOrCreateName(streamOp.getVariable());
+    cppOS << " depth=" << streamOp.getDepth() << "\n";
+
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
 // StreamOps
 //===----------------------------------------------------------------------===//
 
@@ -725,8 +842,6 @@ LogicalResult VitisProjectEmitter::emitOperation(Operation &op)
                 [&](auto op) { return printOperation(*this, op); })
             .Case<vitis::VariableOp, vitis::UpdateOp, vitis::ForOp>(
                 [&](auto op) { return printOperation(*this, op); })
-            .Case<vitis::StreamReadOp, vitis::StreamWriteOp>(
-                [&](auto op) { return printOperation(*this, op); })
             .Case<
                 vitis::ArithAddOp,
                 vitis::ArithSubOp,
@@ -746,6 +861,17 @@ LogicalResult VitisProjectEmitter::emitOperation(Operation &op)
                 vitis::ArrayPointerWriteOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<vitis::MathSinOp, vitis::MathCosOp>(
+                [&](auto op) { return printOperation(*this, op); })
+            .Case<vitis::StreamReadOp, vitis::StreamWriteOp>(
+                [&](auto op) { return printOperation(*this, op); })
+            .Case<
+                vitis::PragmaBindStorageOp,
+                vitis::PragmaDataflowOp,
+                vitis::PragmaInlineOp,
+                vitis::PragmaInterfaceOp,
+                vitis::PragmaReturnInterfaceOp,
+                vitis::PragmaPipelineOp,
+                vitis::PragmaStreamOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Default(
                 [](auto op) { return op->emitError("unsupported operation"); });

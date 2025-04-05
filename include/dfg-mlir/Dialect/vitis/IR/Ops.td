@@ -21,6 +21,7 @@ include "mlir/Interfaces/FunctionInterfaces.td"
 include "dfg-mlir/Dialect/vitis/IR/ArrayOps.td"
 include "dfg-mlir/Dialect/vitis/IR/ArithOps.td"
 include "dfg-mlir/Dialect/vitis/IR/MathOps.td"
+include "dfg-mlir/Dialect/vitis/IR/PragmaOps.td"
 include "dfg-mlir/Dialect/vitis/IR/StreamOps.td"
 
 def Vitis_IncludeOp : Vitis_Op<"include", []>

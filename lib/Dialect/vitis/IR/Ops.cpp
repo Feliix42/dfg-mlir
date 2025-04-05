@@ -5,6 +5,7 @@
 
 #include "dfg-mlir/Dialect/vitis/IR/Ops.h"
 
+#include "dfg-mlir/Dialect/vitis/Enums.h"
 #include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
 #include "dfg-mlir/Dialect/vitis/IR/Types.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -25,6 +26,7 @@
 #include <llvm/ADT/APInt.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/StringRef.h>
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
@@ -688,6 +690,392 @@ void ArrayWriteOp::getCanonicalizationPatterns(
 {
     results.add<AdjustArrayWriteForRemovedDims>(context);
 }
+
+//===----------------------------------------------------------------------===//
+// PragmaOps
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// PragmaBindStorageOp
+//===----------------------------------------------------------------------===//
+
+void PragmaBindStorageOp::build(
+    OpBuilder &builder,
+    OperationState &result,
+    Value variable,
+    vitis::PragmaStorageType type,
+    vitis::PragmaStorageImpl impl)
+{
+    result.addOperands(variable);
+    result.addAttribute(
+        getTypeAttrName(result.name),
+        vitis::PragmaStorageTypeAttr::get(builder.getContext(), type));
+    result.addAttribute(
+        getImplAttrName(result.name),
+        vitis::PragmaStorageImplAttr::get(builder.getContext(), impl));
+}
+
+ParseResult
+PragmaBindStorageOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand variableOperand;
+    Type variableType;
+    if (parser.parseKeyword("variable") || parser.parseEqual()
+        || parser.parseOperand(variableOperand) || parser.parseLParen()
+        || parser.parseType(variableType) || parser.parseRParen())
+        return failure();
+
+    StringRef typeStr;
+    if (parser.parseKeyword("type") || parser.parseEqual()) return failure();
+    if (parser.parseKeyword(&typeStr)) return failure();
+
+    vitis::PragmaStorageType storageType;
+    if (typeStr == "fifo")
+        storageType = vitis::PragmaStorageType::fifo;
+    else if (typeStr == "ram_1p")
+        storageType = vitis::PragmaStorageType::ram_1p;
+    else if (typeStr == "ram_1wnr")
+        storageType = vitis::PragmaStorageType::ram_1wnr;
+    else if (typeStr == "ram_2p")
+        storageType = vitis::PragmaStorageType::ram_2p;
+    else if (typeStr == "ram_s2p")
+        storageType = vitis::PragmaStorageType::ram_s2p;
+    else if (typeStr == "ram_t2p")
+        storageType = vitis::PragmaStorageType::ram_t2p;
+    else if (typeStr == "rom_1p")
+        storageType = vitis::PragmaStorageType::rom_1p;
+    else if (typeStr == "rom_2p")
+        storageType = vitis::PragmaStorageType::rom_2p;
+    else if (typeStr == "rom_np")
+        storageType = vitis::PragmaStorageType::rom_np;
+    else
+        return parser.emitError(parser.getNameLoc(), "unknown storage type: ")
+               << typeStr;
+
+    StringRef implStr;
+    if (parser.parseKeyword("impl") || parser.parseEqual()) return failure();
+    if (parser.parseKeyword(&implStr)) return failure();
+
+    vitis::PragmaStorageImpl storageImpl;
+    if (implStr == "bram")
+        storageImpl = vitis::PragmaStorageImpl::bram;
+    else if (implStr == "bram_ecc")
+        storageImpl = vitis::PragmaStorageImpl::bram_ecc;
+    else if (implStr == "lutram")
+        storageImpl = vitis::PragmaStorageImpl::lutram;
+    else if (implStr == "uram")
+        storageImpl = vitis::PragmaStorageImpl::uram;
+    else if (implStr == "uram_ecc")
+        storageImpl = vitis::PragmaStorageImpl::uram_ecc;
+    else if (implStr == "srl")
+        storageImpl = vitis::PragmaStorageImpl::srl;
+    else if (implStr == "memory")
+        storageImpl = vitis::PragmaStorageImpl::memory;
+    else if (implStr == "auto")
+        storageImpl = vitis::PragmaStorageImpl::automatic;
+    else
+        return parser.emitError(
+                   parser.getNameLoc(),
+                   "unknown storage implementation: ")
+               << implStr;
+
+    if (parser.resolveOperand(variableOperand, variableType, result.operands))
+        return failure();
+    result.addAttribute(
+        getTypeAttrName(result.name).data(),
+        vitis::PragmaStorageTypeAttr::get(parser.getContext(), storageType));
+    result.addAttribute(
+        getImplAttrName(result.name).data(),
+        vitis::PragmaStorageImplAttr::get(parser.getContext(), storageImpl));
+
+    return success();
+}
+
+void PragmaBindStorageOp::print(OpAsmPrinter &p)
+{
+    p << " variable=" << getVariable();
+    p << "(" << getVariableType() << ")";
+    p << " type=" << getType();
+    p << " impl=";
+    auto impl = getImpl();
+    if (impl == vitis::PragmaStorageImpl::automatic)
+        p << "auto";
+    else
+        p << impl;
+}
+
+//===----------------------------------------------------------------------===//
+// PragmaDataflowOp
+//===----------------------------------------------------------------------===//
+
+void PragmaDataflowOp::build(
+    OpBuilder &builder,
+    OperationState &state,
+    llvm::function_ref<void()> dataflowRegionCtor)
+{
+    OpBuilder::InsertionGuard guard(builder);
+    Region* dataflowRegion = state.addRegion();
+    if (dataflowRegionCtor) {
+        builder.createBlock(dataflowRegion);
+        dataflowRegionCtor();
+    }
+}
+
+//===----------------------------------------------------------------------===//
+// PragmaInlineOp
+//===----------------------------------------------------------------------===//
+
+void PragmaInlineOp::build(OpBuilder &builder, OperationState &result, bool off)
+{
+    if (off) result.addAttribute("off", builder.getUnitAttr());
+}
+
+ParseResult PragmaInlineOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    if (succeeded(parser.parseOptionalKeyword("off")))
+        result.addAttribute("off", parser.getBuilder().getUnitAttr());
+    return success();
+}
+
+void PragmaInlineOp::print(OpAsmPrinter &p)
+{
+    if (getOff()) p << " off";
+}
+
+namespace {
+struct HoistPragmaInlinePattern : public OpRewritePattern<PragmaInlineOp> {
+    using OpRewritePattern<PragmaInlineOp>::OpRewritePattern;
+
+    LogicalResult
+    matchAndRewrite(PragmaInlineOp op, PatternRewriter &rewriter) const override
+    {
+        Block* block = op->getBlock();
+        if (&block->front() == op.getOperation()) return failure();
+        op->moveBefore(&block->front());
+        return success();
+    }
+    // Ensure this has higher piority over constant hoist
+    PatternBenefit getBenefit() const { return 2; }
+};
+} // namespace
+void PragmaInlineOp::getCanonicalizationPatterns(
+    RewritePatternSet &patterns,
+    MLIRContext* context)
+{
+    patterns.add<HoistPragmaInlinePattern>(context, 100);
+}
+
+//===----------------------------------------------------------------------===//
+// PragmaInterfaceOp
+//===----------------------------------------------------------------------===//
+
+void PragmaInterfaceOp::build(
+    OpBuilder &builder,
+    OperationState &result,
+    PragmaInterfaceMode mode,
+    Value port,
+    StringRef bundle,
+    std::optional<PragmaInterfaceMasterAxiOffset> offset)
+{
+    result.addAttribute(
+        getModeAttrName(result.name),
+        PragmaInterfaceModeAttr::get(builder.getContext(), mode));
+    result.addOperands(port);
+    result.addAttribute(
+        getBundleAttrName(result.name),
+        StringAttr::get(builder.getContext(), bundle));
+    if (offset.has_value())
+        result.addAttribute(
+            getOffsetAttrName(result.name),
+            PragmaInterfaceMasterAxiOffsetAttr::get(
+                builder.getContext(),
+                offset.value()));
+}
+
+ParseResult
+PragmaInterfaceOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    StringRef modeStr;
+    if (parser.parseKeyword("mode") || parser.parseEqual()
+        || parser.parseKeyword(&modeStr))
+        return failure();
+
+    PragmaInterfaceMode interfaceMode;
+    if (modeStr == "m_axi")
+        interfaceMode = PragmaInterfaceMode::m_axi;
+    else if (modeStr == "s_axilite")
+        interfaceMode = PragmaInterfaceMode::s_axilite;
+    else
+        return parser.emitError(parser.getNameLoc(), "unknown interface mode: ")
+               << modeStr;
+
+    OpAsmParser::UnresolvedOperand portOperand;
+    Type portType;
+    if (parser.parseKeyword("port") || parser.parseEqual()
+        || parser.parseOperand(portOperand) || parser.parseLParen()
+        || parser.parseType(portType) || parser.parseRParen())
+        return failure();
+
+    if (succeeded(parser.parseOptionalKeyword("offset"))) {
+        if (parser.parseEqual()) return failure();
+        StringRef offsetStr;
+        if (parser.parseKeyword(&offsetStr)) return failure();
+
+        vitis::PragmaInterfaceMasterAxiOffset axiOffset;
+        if (offsetStr == "off")
+            axiOffset = vitis::PragmaInterfaceMasterAxiOffset::off;
+        else if (offsetStr == "direct")
+            axiOffset = vitis::PragmaInterfaceMasterAxiOffset::direct;
+        else if (offsetStr == "slave")
+            axiOffset = vitis::PragmaInterfaceMasterAxiOffset::slave;
+        else
+            return parser.emitError(parser.getNameLoc(), "unknown axi offset: ")
+                   << offsetStr;
+
+        result.addAttribute(
+            getOffsetAttrName(result.name).data(),
+            PragmaInterfaceMasterAxiOffsetAttr::get(
+                parser.getContext(),
+                axiOffset));
+    }
+
+    StringRef bundleStr;
+    if (parser.parseKeyword("bundle") || parser.parseEqual()
+        || parser.parseKeyword(&bundleStr))
+        return failure();
+
+    if (parser.resolveOperand(portOperand, portType, result.operands))
+        return failure();
+
+    result.addAttribute(
+        getModeAttrName(result.name).data(),
+        PragmaInterfaceModeAttr::get(parser.getContext(), interfaceMode));
+    result.addAttribute(
+        getBundleAttrName(result.name).data(),
+        StringAttr::get(parser.getContext(), bundleStr));
+
+    return success();
+}
+
+void PragmaInterfaceOp::print(OpAsmPrinter &p)
+{
+    p << " mode=" << getMode();
+    p << " port=" << getPort();
+    p << "(" << getPortType() << ")";
+    if (getOffset()) p << " offset=" << getOffset();
+    p << " bundle=" << getBundle();
+}
+
+LogicalResult PragmaInterfaceOp::verify()
+{
+    if (getOffset() && getMode() != PragmaInterfaceMode::m_axi)
+        return ::emitError(getLoc(), "expected m_axi mode for offset usage.");
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// PragmaPipelineOp
+//===----------------------------------------------------------------------===//
+
+void PragmaPipelineOp::build(
+    OpBuilder &builder,
+    OperationState &result,
+    int64_t interval,
+    vitis::PragmaPipelineStyle style)
+{
+    result.addAttribute(
+        getIntervalAttrName(result.name),
+        builder.getI64IntegerAttr(interval));
+    result.addAttribute(
+        getStyleAttrName(result.name),
+        vitis::PragmaPipelineStyleAttr::get(builder.getContext(), style));
+}
+
+ParseResult PragmaPipelineOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    int64_t interval;
+    if (parser.parseKeyword("II") || parser.parseEqual()) return failure();
+    if (parser.parseInteger(interval)) return failure();
+
+    StringRef styleStr;
+    if (parser.parseKeyword("style") || parser.parseEqual()) return failure();
+    if (parser.parseKeyword(&styleStr)) return failure();
+
+    vitis::PragmaPipelineStyle style;
+    if (styleStr == "flp")
+        style = vitis::PragmaPipelineStyle::flp;
+    else if (styleStr == "stp")
+        style = vitis::PragmaPipelineStyle::stp;
+    else if (styleStr == "frp")
+        style = vitis::PragmaPipelineStyle::frp;
+    else
+        return parser.emitError(parser.getNameLoc(), "unknown pipeline style: ")
+               << styleStr;
+
+    result.addAttribute(
+        getIntervalAttrName(result.name).data(),
+        parser.getBuilder().getI64IntegerAttr(interval));
+    result.addAttribute(
+        "style",
+        vitis::PragmaPipelineStyleAttr::get(parser.getContext(), style));
+
+    return success();
+}
+
+void PragmaPipelineOp::print(OpAsmPrinter &p)
+{
+    p << " II=" << getInterval();
+    p << " style=" << getStyle();
+}
+
+LogicalResult PragmaPipelineOp::verify() { return success(getInterval() > 0); }
+
+//===----------------------------------------------------------------------===//
+// PragmaStreamOp
+//===----------------------------------------------------------------------===//
+
+void PragmaStreamOp::build(
+    OpBuilder &builder,
+    OperationState &result,
+    Value variable,
+    int64_t depth)
+{
+    result.addOperands(variable);
+    result.addAttribute(
+        getDepthAttrName(result.name),
+        builder.getI64IntegerAttr(depth));
+}
+
+ParseResult PragmaStreamOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    OpAsmParser::UnresolvedOperand variableOperand;
+    Type variableType;
+    if (parser.parseKeyword("variable") || parser.parseEqual()
+        || parser.parseOperand(variableOperand) || parser.parseLParen()
+        || parser.parseType(variableType) || parser.parseRParen())
+        return failure();
+
+    int64_t depth;
+    if (parser.parseKeyword("depth") || parser.parseEqual()) return failure();
+    if (parser.parseInteger(depth)) return failure();
+
+    if (parser.resolveOperand(variableOperand, variableType, result.operands))
+        return failure();
+    result.addAttribute(
+        getDepthAttrName(result.name).data(),
+        parser.getBuilder().getI64IntegerAttr(depth));
+
+    return success();
+}
+
+void PragmaStreamOp::print(OpAsmPrinter &p)
+{
+    p << " variable=" << getVariable();
+    p << "(" << getVariableType() << ")";
+    p << " depth=" << getDepth();
+}
+
+LogicalResult PragmaStreamOp::verify() { return success(getDepth() > 0); }
 
 //===----------------------------------------------------------------------===//
 // VitisDialect
