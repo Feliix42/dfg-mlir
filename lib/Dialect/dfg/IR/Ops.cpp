@@ -289,7 +289,10 @@ LogicalResult RegionOp::verify()
     }
 
     thisRegion.walk([&](ChannelOp channelOp) {
-        if (channelOp.getInChan().getUses().empty()) {
+        auto inputPortUses = channelOp.getInChan().getUses();
+        auto outputPortUses = channelOp.getOutChan().getUses();
+        if ((inputPortUses.empty() && !outputPortUses.empty())
+            || (outputPortUses.empty() && !inputPortUses.empty())) {
             if (!channelOp.getOutChan().getUses().empty()) {
                 // ignore the problem if both input and output are unused
                 ::emitWarning(
