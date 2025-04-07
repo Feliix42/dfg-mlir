@@ -735,11 +735,19 @@ void ProcessOp::print(OpAsmPrinter &p)
         p << ")";
     }
 
+    SmallVector<StringRef, 3> elidedAttrs = {
+        getFunctionTypeAttrName(),
+        getSymNameAttrName()};
+    if (auto multiplicityAttr =
+            cast<DenseI64ArrayAttr>(op->getAttr("multiplicity"))) {
+        if (multiplicityAttr.empty()) elidedAttrs.push_back("multiplicity");
+    }
+
     // print any attributes in the attribute list into the dict
     if (!op->getAttrs().empty())
         p.printOptionalAttrDictWithKeyword(
             op->getAttrs(),
-            /*elidedAttrs=*/{getFunctionTypeAttrName(), getSymNameAttrName()});
+            /*elidedAttrs=*/elidedAttrs);
 
     // Print the region
     if (!isExternal) {

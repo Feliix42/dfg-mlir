@@ -4,7 +4,7 @@ In this repository there are two methods to build `dfg-mlir`, which are using `n
 
 The `dfg-mlir` project is built using **CMake** (version `3.20` or newer). Make sure to provide all dependencies required by the project, either by installing them to system-default locations, or by setting the appropriate search location hints!
 
-The same as most [MLIR](mlir.llvm.org)-based project, we recommand to use `Ninja` as the build system along with `clang` as the main compiler, as well as using `lld` to link the programs. Last but not least, `dfg-mlir` is based on llvm with this git hash `9f617161aa8db76baa4426e3c461c9ca91ea8103`.
+The same as most [MLIR](mlir.llvm.org)-based project, we recommand to use `Ninja` as the build system along with `clang` as the main compiler, as well as using `lld` to link the programs. Last but not least, `dfg-mlir` is based on llvm with this git hash `954ccee5d53032f1cdea23368e11922edc20615d`.
 
 ## dummy version for most OS
 
