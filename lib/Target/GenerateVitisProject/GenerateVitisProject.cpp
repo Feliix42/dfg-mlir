@@ -764,8 +764,8 @@ static LogicalResult printOperation(
 
     dbgOS << "Translating PragmaReturnInterfaceOp at " << interfaceOp.getLoc()
           << "\n";
-    cppOS
-        << "#pragma HLS INTERFACE mode=s_axilite port=return bundle=control\n";
+    cppOS << "#pragma HLS INTERFACE mode=s_axilite port=return "
+             "bundle=control\n\n";
 
     return success();
 }

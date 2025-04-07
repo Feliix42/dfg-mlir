@@ -30,6 +30,7 @@ dfg.region @top inputs(%arg0: i32, %arg1: i32)
                          outputs(%2#0) : (i32, i32) -> i32
 }
 ```
+¡¡¡ This program is not supported in the converson and translation example below due to the `iter_args`. !!!
 
 ## FFT2D operator with tensors
 This code snippet defines an SDF node named `fft` and instantiates it in the top region and connected with FIFO channels. Differently from the `MAC` operator above, this operator uses tensors.
@@ -60,36 +61,27 @@ dfg.region @top inputs(%arg0: tensor<1x4x8xf32>, %arg1 : tensor<1x4x8xf32>)
 ```
 
 ## Convertion and Translation for FPGA backend
-To get a working FPGA design we provide to conversion pass pipelines, which are
-1. `--convert-to-vitis`
-2. `--prepare-for-vivado`
-
-The first pipeline will lower up-to-tosa operations to scf level along with bufferizations of tensor values. Then operations in `arith`, `index`, `math`, `scf` and `dfg` except for `dfg.region` will be converted to vitis equivalent operations. The result of this pipeline will be used in translations (i.e. `--vitis-to-tcl` and `vitis-to-cpp`).
-
-The second pipeline doesn't contain any `to-vitis` passes, in which result the `dfg.region` operation will be translated later to a `tcl` script that manage the creation of FPGA design, Synthesis, Implementation and Generation of bitstreams.
+To get a working FPGA design we provide a conversion pass pipeline: `--convert-to-vitis`, which will lower up-to-tosa operations to scf level along with bufferizations of tensor values. Then operations in `arith`, `index`, `math`, `scf` and `dfg` will be converted to vitis equivalent operations. The result of this pipeline will be used in translation (i.e. `--vitis-generate-project`).
 
 Let's assume the input file is named `dfg.mlir`, to get the bitstream file one only needs to execute these commands one by one:
 
-1. Get the HLS Cpp file from current program
+1. Get the files needed for this project from current program
 ```
-dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-to-cpp -o vitis.cpp
+dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-generate-project (--output-dir=/path/you/want/ --target-device="device-name")
 ```
-2. Get the TCL script to run High-Level Synthesis
+2. Set up the environmental variables
 ```
-dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-to-tcl -o hls.tcl
+export XILINX_PATH=/path/to/xilinx/install/
+export XILINX_VERSION=version-number
 ```
-3. Run HLS
+3. Run through shell script
 ```
-/path/to/Xilinx/Vitis/2024.2/bin/vitis-run --mode hls --tcl hls.tcl
+sh /path/to/run_design.sh
 ```
-4. Get the TCL script to generate the full design in Vivado
+4. Check the outputs
 ```
-dfg-opt dfg.mlir --prepare-for-vivado | dfg-translate --dfg-to-vivado-tcl -o vivado.tcl
+ls /path/you/specified/driver/bitfile
 ```
-5. Run Vivado
-```
-/path/to/Xilinx/Vivado/2024.2/bin/vivado -mode tcl -source vivado.tcl
-```
+Later the generation of python driver for PYNQ will also be supported.
 
-In this work, [AMD Vivado Design Suite](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado.html) version 2024.2 is tested without any problems. If one need to use lower version of the tools, please modify the version of Xilinx IPs in [this](../lib/Target/VivadoTcl/TranslateToVivadoTcl.cpp) translation respectively.
-
+In this work, [AMD Vivado Design Suite](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado.html) version 2024.2 is tested without any problems. If one need to use lower version of the tools, please modify the version of Xilinx IPs in [this](../lib/Target/GenerateVitisProject/GenerateVitisProject.cpp#L1170) translation respectively.

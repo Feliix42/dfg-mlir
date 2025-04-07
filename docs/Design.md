@@ -80,11 +80,16 @@ This will generate yaml files for each `operator`, which can be utilized as inpu
 ## Targets
 Here are the translations implemented in this repository. Learn more about the usage in [Examples.td](Examples.md)
 
-### `--dfg-to-vivado-tcl`
-This translation will generate a tcl script to be used with vivado command line tool. The contents of this script are based on the connection informations in `dfg.region`.
+### `--vitis-generate-project`
+This translation will generate the files in the current folder by default that are needed to generate an FPGA design targeting Kria KV260 SOM by default with Vitis/Vivado.
+The contents within the folder are:
 
-### `--vitis-to-cpp`
-This translation will transpile an MLIR code in `vitis` dialect into a C++ file with HLS directives.
+1. `main.cpp`: A Vitis HLS compatible C++ code with pragmas
+2. `run_hls.tcl`: A Tcl script to automatically run HLS and package the IP
+3. `run_vivado.tcl`: A Tcl script to automatically create a block design with IPs and generate the hardware.
+4. `run_design.sh`: A shell script that automatically run the full process to get the `.bit` and `.hwh` files for PYNQ usage.
 
-### `--vitis-to-tcl`
-This translation will generate a tcl script to be used with vitis_run command line tool with `hls` mode. It will automatically synthesize every `vitis` functions and export IPs for later use.
+If one needs to use a custom directory to generate these files and/or uses a different FPGA target, two command line options are provided:
+
+1. `--output-dir`: defines the output directory, please use abosulte path (speicial path symbols such as `~` is not supported)
+2. `--target-device`: defines the targeted device name, such as for Kira KV260 SOM it's `xck26-sfvc784-2LV-c`.
