@@ -1,6 +1,5 @@
 add_mlir_conversion_library(MLIRDfgTransforms
     BufferizableOpInterfaceImpl.cpp
-    FlattenMemref.cpp
     InlineRegion.cpp
     LowerInsideToScf.cpp
     OperatorToProcess.cpp

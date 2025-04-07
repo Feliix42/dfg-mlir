@@ -9,13 +9,6 @@
 
 include "mlir/Pass/PassBase.td"
 
-def DfgFlattenMemref : Pass<"dfg-flatten-memref">
-{
-    let summary = "flatten the memrefs inside dfg for vitis conversion";
-
-    let constructor = "mlir::dfg::createDfgFlattenMemrefPass()";
-}
-
 def DfgInlineRegion : Pass<"dfg-inline-region">
 {
     let summary = "inline region based on inline strategy";
