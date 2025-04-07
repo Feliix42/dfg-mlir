@@ -137,7 +137,7 @@ struct ProcessLikeOpInterface
         for (const auto &it : llvm::enumerate(funcTy.getResults())) {
             Type outTy = it.value();
             Type outElemTy = cast<InputType>(outTy).getElementType();
-            size_t inIdx = it.index();
+            size_t inIdx = it.index() + funcTy.getNumInputs();
             if (isa<TensorType>(outElemTy)) {
                 SmallVector<Value> invocationStack;
                 auto memrefTy = getBufferType(
