@@ -42,29 +42,44 @@ void VitisInsertIncludesPass::runOnOperation()
     bool hasFixed = false;
     bool hasMath = false;
 
+    auto processIntegerFixedPoint = [&](Type type) {
+        if (!hasInteger && isa<IntegerType>(type))
+            hasInteger = true;
+        else if (!hasFixed && isa<APFixedType, APFixedUType>(type))
+            hasFixed = true;
+    };
+
     module.walk([&](Operation* op) {
         // If any of the operands or results of an op is integer
         if (!op->getOperands().empty()) {
-            for (auto operandTy : op->getOperandTypes())
-                if (!hasInteger && isa<IntegerType>(operandTy))
-                    hasInteger = true;
-                else if (!hasFixed && isa<APFixedType, APFixedUType>(operandTy))
-                    hasFixed = true;
+            for (auto operandTy : op->getOperandTypes()) {
+                processIntegerFixedPoint(operandTy);
+                if (!hasStream && isa<StreamType>(operandTy)) {
+                    hasStream = true;
+                    processIntegerFixedPoint(
+                        cast<StreamType>(operandTy).getStreamType());
+                }
+            }
         }
         if (!op->getResults().empty()) {
-            for (auto resultTy : op->getResultTypes())
-                if (!hasInteger && isa<IntegerType>(resultTy))
-                    hasInteger = true;
-                else if (!hasFixed && isa<APFixedType, APFixedUType>(resultTy))
-                    hasFixed = true;
+            for (auto resultTy : op->getResultTypes()) {
+                processIntegerFixedPoint(resultTy);
+                if (!hasStream && isa<StreamType>(resultTy)) {
+                    hasStream = true;
+                    processIntegerFixedPoint(
+                        cast<StreamType>(resultTy).getStreamType());
+                }
+            }
         }
         // If there is stream type in func op signature
         if (auto funcOp = dyn_cast<FuncOp>(op)) {
             auto inputs = funcOp.getFunctionType().getInputs();
             for (auto inTy : inputs) {
                 if (!hasStream) {
-                    if (auto streamTy = dyn_cast<StreamType>(inTy))
+                    if (auto streamTy = dyn_cast<StreamType>(inTy)) {
                         hasStream = true;
+                        processIntegerFixedPoint(streamTy.getStreamType());
+                    }
                 }
             }
         }
