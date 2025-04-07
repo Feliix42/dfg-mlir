@@ -52,7 +52,8 @@ cmake -B build -G Ninja \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_CXX_STANDARD=20 \
-    -DLLVM_USE_LINKER=lld
+    -DLLVM_USE_LINKER=lld \
+    -DLLVM_EXTERNAL_LIT=$LLVM_BUILD_DIR/build/bin/llvm-lit
 
 # Building dfg-mlir
 
@@ -63,4 +64,8 @@ echo ""
 cmake --build build
 
 echo "--- Done building dfg-mlir ---"
+
+cd build && ninja check-dfg-mlir
+
+echo "--- Done checking dfg-mlir ---"
 echo "--- !!!Have fun!!! ---"
