@@ -24,18 +24,24 @@
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
 
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallString.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/IR/Value.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
 #include <memory>
+#include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/Value.h>
 #include <mlir/Support/LLVM.h>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -182,8 +188,15 @@ struct VitisProjectEmitter {
     StringRef getTopFuncName() const { return topFuncName; }
     StringRef getProjectDir() const { return projectDir; }
     // Util functions
-    LogicalResult initializeProject(StringRef funcName, size_t funcNumArgs);
+    LogicalResult initializeProject(
+        StringRef funcName,
+        size_t funcNumArgs,
+        ArrayRef<int64_t> argBufferSizes,
+        ArrayRef<Type> argBufferTypes,
+        int64_t numInputs,
+        int64_t numOutputs);
     LogicalResult createScriptFiles();
+    LogicalResult createPythonDriverFiles();
     // Name manager
     bool isInScope(Value value)
     {
@@ -221,8 +234,13 @@ private:
     std::string targetDevice;
     // Utils
     std::string projectDir;
+    SmallString<128> driverDir;
     std::string topFuncName;
     size_t topFuncArgSize;
+    ArrayRef<int64_t> topFuncArgBufferSizes;
+    ArrayRef<Type> topFuncArgBufferTypes;
+    int64_t topFuncNumInputs;
+    int64_t topFuncNumOutputs;
     // Helper for name generation
     llvm::DenseMap<Value, std::string> valueNames;
     NameManager nameManager;
@@ -249,7 +267,12 @@ printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
     // Initialize the project
     if (failed(emitter.initializeProject(
             lastFunc.getSymName().str(),
-            lastFunc.getNumArguments())))
+            lastFunc.getNumArguments(),
+            cast<DenseI64ArrayAttr>(lastFunc->getAttr("argBufferSizes"))
+                .asArrayRef(),
+            lastFunc.getFuncElementTypes(),
+            cast<IntegerAttr>(lastFunc->getAttr("num_inputs")).getInt(),
+            cast<IntegerAttr>(lastFunc->getAttr("num_outputs")).getInt())))
         return ::emitError(
             moduleOp.getLoc(),
             "Failed to initialize the project.");
@@ -259,6 +282,9 @@ printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
 
     // Create scripts after succesfully generate the cpp file
     if (failed(emitter.createScriptFiles())) return failure();
+
+    // Create python driver files
+    if (failed(emitter.createPythonDriverFiles())) return failure();
 
     return success();
 }
@@ -1081,12 +1107,21 @@ LogicalResult VitisProjectEmitter::emitAssignPrefix(Operation &op)
     return success();
 }
 
-LogicalResult
-VitisProjectEmitter::initializeProject(StringRef funcName, size_t funcNumArgs)
+LogicalResult VitisProjectEmitter::initializeProject(
+    StringRef funcName,
+    size_t funcNumArgs,
+    ArrayRef<int64_t> argBufferSizes,
+    ArrayRef<Type> argBufferTypes,
+    int64_t numInputs,
+    int64_t numOutputs)
 {
     // Init
     topFuncName = funcName.str();
     topFuncArgSize = funcNumArgs;
+    topFuncArgBufferSizes = argBufferSizes;
+    topFuncArgBufferTypes = argBufferTypes;
+    topFuncNumInputs = numInputs;
+    topFuncNumOutputs = numOutputs;
     dbgOS << "Creating project for top function: " << topFuncName << "\n";
     llvm::SmallString<128> projectPath(outputDir);
     llvm::sys::path::append(projectPath, topFuncName);
@@ -1100,6 +1135,15 @@ VitisProjectEmitter::initializeProject(StringRef funcName, size_t funcNumArgs)
         return failure();
     }
     dbgOS << "Creating project directory: " << projectDir << "\n";
+    // Create driver directory inside project dir
+    driverDir = projectPath;
+    llvm::sys::path::append(driverDir, "driver/driver");
+    ec = llvm::sys::fs::create_directory(driverDir);
+    if (ec) {
+        dbgOS << "Error: Failed to create directory: " << ec.message() << "\n";
+        return failure();
+    }
+    dbgOS << "Creating driver directory: " << driverDir << "\n";
 
     // Create main.cpp
     SmallString<128> cppFilePath(projectDir);
@@ -1326,7 +1370,6 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
             dbgOS << "Error creating run_hls.tcl: " << ec.message() << "\n";
             return failure();
         }
-        raw_indented_ostream os(tclFile);
         // Create tcl script based on top function name and target device
         dbgOS << "Creating run_hls.tcl file\n";
         // Use pre-defined template and replace the key
@@ -1348,7 +1391,6 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
             dbgOS << "Error creating run_vivado.tcl: " << ec.message() << "\n";
             return failure();
         }
-        raw_indented_ostream os(tclFile);
         // Create tcl script based on top function name and target device
         dbgOS << "Creating run_vivado.tcl file\n";
         // Use pre-defined template and replace the key
@@ -1409,7 +1451,6 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
             dbgOS << "Error creating run_design.sh: " << ec.message() << "\n";
             return failure();
         }
-        raw_indented_ostream os(shFile);
         // Create shell script to automatic run Vitis HLS and Vivado
         dbgOS << "Creating run_design.sh file\n";
         std::string content(kRunDesignShTemplate);
@@ -1428,6 +1469,189 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
         }
     }
 
+    return success();
+}
+
+namespace {
+constexpr const char* kPythonDriverInit =
+    R"(from .accelerator import Accelerator
+__all__ = ['Accelerator']
+)";
+constexpr const char* kPythonDriver = R"(import numpy as np
+import time
+from pynq import PL, allocate, Overlay
+class Accelerator:
+    def __init__(self):
+        PL.reset()
+        self.ol = Overlay("bitfile/{{TOP_FUNC_NAME}}_bd.bit")
+        self.ip = self.ol.{{TOP_FUNC_NAME}}
+        self.buffer_sizes = {{TOP_FUNC_ARG_BUFFER_SIZES}}
+        self.buffer_dtypes = {{TOP_FUNC_ARG_BUFFER_TYPES}}
+        self.num_inputs = {{TOP_FUNC_NUM_INPUTS}}
+        self.num_outputs = {{TOP_FUNC_NUM_OUTPUTS}}
+        self.num_args = self.num_inputs + self.num_outputs
+        self.buffers = []
+        for i in range(self.num_args):
+            self.buffers.append(allocate(shape=(self.buffer_sizes[i],), dtype=self.buffer_dtypes[i]))
+        self._configure_addr()
+        self.exec_time = None
+        print(f"Initialize succesfully, please give {self.num_inputs} inputs with sizes {self.buffer_sizes[:self.num_inputs]} and type {self.buffer_dtypes[:self.num_inputs]}" + " or their multiple")
+    def _configure_addr(self):
+        for i in range(self.num_args):
+            addr = self.buffers[i].physical_address
+            setattr(self.ip.register_map, f"arg{i}_1", addr & 0xFFFFFFFF)
+            setattr(self.ip.register_map, f"arg{i}_2", (addr >> 32) & 0xFFFFFFFF)
+    def _run_ip(self):
+        self.ip.register_map.CTRL.AP_START = 1
+        while self.ip.register_map.CTRL.AP_DONE == 0:
+            pass
+    def compute(self, inputs):
+        if len(inputs) != self.num_inputs:
+            raise ValueError(f"Expected {self.num_inputs} inputs, got {len(inputs)}")
+        num_iters = []
+        for i, e in enumerate(inputs):
+            input_size = e.size
+            buffer_size = self.buffer_sizes[i]
+            if input_size % buffer_size != 0:
+                raise ValueError(f"Input {i} size ({input_size}) must be a multiple of {self.buffer_size}")
+            num_iters.append(input_size // buffer_size)
+        if len(set(num_iters)) > 1:
+            raise ValueError(f"All inputs must have sizes that result in the same number of iterations. Got: {num_iters}")
+        num_iter = num_iters[0]
+        print(f"The kernel will be executed {num_iter} times")
+        start_time = time.time()
+        input_blocks = []
+        for i, inp in enumerate(inputs):
+            input_blocks.append(inp.reshape(num_iter, self.buffer_sizes[i]))
+        output_blocks = []
+        for i in range(self.num_outputs):
+            idx = i + self.num_inputs
+            output_blocks.append(np.zeros((num_iter, self.buffer_sizes[idx]), dtype=self.buffer_dtypes[idx]))
+        for i in range(num_iter):
+            for j in range(self.num_inputs):
+                np.copyto(self.buffers[j], input_blocks[j][i])
+            self._run_ip()
+            for j in range(self.num_outputs):
+                idx = j + self.num_inputs
+                output_blocks[j][i, :] = self.buffers[idx]
+        self.exec_time = time.time() - start_time
+        outputs = []
+        for block in output_blocks:
+            outputs.append(block.reshape(-1))
+        return outputs
+    def get_execution_time(self):
+        if self.exec_time is None:
+            return None
+        return self.exec_time * 1e6
+)";
+} // namespace
+
+static std::string typeToNumpyTypeString(Type type)
+{
+    // Integers
+    if (auto intType = dyn_cast<IntegerType>(type)) {
+        unsigned width = intType.getWidth();
+
+        // Boolean type
+        if (width == 1) return "bool";
+
+        bool isSigned = !intType.isUnsigned();
+        // promote ap_int to nearest integer
+        unsigned standardWidth =
+            1 << static_cast<unsigned>(std::ceil(std::log2(width)));
+        if (standardWidth < 8 || standardWidth > 64) return "unknown";
+        // Fix signedness
+        std::string prefix = isSigned ? "int" : "uint";
+        return prefix + std::to_string(standardWidth);
+    }
+    // Floating point numbers
+    if (auto floatType = dyn_cast<FloatType>(type)) {
+        unsigned width = floatType.getWidth();
+        if (width == 16)
+            return "float16";
+        else if (width == 32)
+            return "float32";
+        else if (width == 64)
+            return "float64";
+        else
+            return "unknown";
+    }
+    // Default
+    return "unknown";
+}
+
+LogicalResult VitisProjectEmitter::createPythonDriverFiles()
+{
+    auto sizeArrayToString = [&](llvm::ArrayRef<int64_t> array) -> std::string {
+        std::stringstream ss;
+        ss << "[";
+        for (size_t i = 0; i < array.size(); ++i) {
+            ss << array[i];
+            if (i < array.size() - 1) ss << ", ";
+        }
+        ss << "]";
+        return ss.str();
+    };
+    auto typeArrayToString = [&](ArrayRef<Type> array) -> std::string {
+        std::stringstream ss;
+        ss << "[";
+        for (size_t i = 0; i < array.size(); ++i) {
+            ss << "np.";
+            ss << typeToNumpyTypeString(array[i]);
+            if (i < array.size() - 1) ss << ", ";
+        }
+        ss << "]";
+        return ss.str();
+    };
+    {
+        SmallString<128> initPath(driverDir);
+        llvm::sys::path::append(initPath, "__init__.py");
+        std::error_code ec;
+        llvm::raw_fd_ostream initFile(initPath, ec, llvm::sys::fs::OF_Text);
+        if (ec) {
+            dbgOS << "Error creating __init__.py: " << ec.message() << "\n";
+            return failure();
+        }
+        // Create Python driver init file
+        dbgOS << "Creating __init__.py file\n";
+        std::string content(kPythonDriverInit);
+        initFile << content;
+        // Debug info
+        dbgOS << "Created __init__.py\n";
+    }
+    {
+        SmallString<128> driverPath(driverDir);
+        llvm::sys::path::append(driverPath, "driver.py");
+        std::error_code ec;
+        llvm::raw_fd_ostream driverFile(driverPath, ec, llvm::sys::fs::OF_Text);
+        if (ec) {
+            dbgOS << "Error creating driver.py: " << ec.message() << "\n";
+            return failure();
+        }
+        // Create Python driver init file
+        dbgOS << "Creating driver.py file\n";
+        std::string content(kPythonDriver);
+        content = replaceAll(content, "{{TOP_FUNC_NAME}}", topFuncName);
+        content = replaceAll(
+            content,
+            "{{TOP_FUNC_ARG_BUFFER_SIZES}}",
+            sizeArrayToString(topFuncArgBufferSizes));
+        content = replaceAll(
+            content,
+            "{{TOP_FUNC_ARG_BUFFER_TYPES}}",
+            typeArrayToString(topFuncArgBufferTypes));
+        content = replaceAll(
+            content,
+            "{{TOP_FUNC_NUM_INPUTS}}",
+            std ::to_string(topFuncNumInputs));
+        content = replaceAll(
+            content,
+            "{{TOP_FUNC_NUM_OUTPUTS}}",
+            std ::to_string(topFuncNumOutputs));
+        driverFile << content;
+        // Debug info
+        dbgOS << "Created driver.py\n";
+    }
     return success();
 }
 

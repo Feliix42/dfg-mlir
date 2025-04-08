@@ -255,17 +255,22 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
         // The function type is different from process func, which is pointer
         // type, so here don't use type converter
         SmallVector<Type> args;
+        SmallVector<int64_t> argBufferSizes;
         for (auto inTy : funcTy.getInputs()) {
             auto elemTy = cast<OutputType>(inTy).getElementType();
-            if (auto shapedTy = dyn_cast<ShapedType>(elemTy))
+            if (auto shapedTy = dyn_cast<ShapedType>(elemTy)) {
                 elemTy = shapedTy.getElementType();
+                argBufferSizes.push_back(shapedTy.getNumElements());
+            }
             args.push_back(
                 vitis::PointerType::get(rewriter.getContext(), elemTy));
         }
         for (auto outTy : funcTy.getResults()) {
             auto elemTy = cast<InputType>(outTy).getElementType();
-            if (auto shapedTy = dyn_cast<ShapedType>(elemTy))
+            if (auto shapedTy = dyn_cast<ShapedType>(elemTy)) {
                 elemTy = shapedTy.getElementType();
+                argBufferSizes.push_back(shapedTy.getNumElements());
+            }
             args.push_back(
                 vitis::PointerType::get(rewriter.getContext(), elemTy));
         }
@@ -276,6 +281,15 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
             rewriter.getFunctionType(args, TypeRange{}),
             ArrayAttr{},
             ArrayAttr{});
+        funcOp->setAttr(
+            "argBufferSizes",
+            rewriter.getDenseI64ArrayAttr(argBufferSizes));
+        funcOp->setAttr(
+            "num_inputs",
+            rewriter.getI64IntegerAttr(funcTy.getNumInputs()));
+        funcOp->setAttr(
+            "num_outputs",
+            rewriter.getI64IntegerAttr(funcTy.getNumResults()));
         auto funcLoc = funcOp.getLoc();
         Block* funcEntryBlock = rewriter.createBlock(&funcOp.getBody());
         IRMapping mapper;

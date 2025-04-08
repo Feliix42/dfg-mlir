@@ -24,9 +24,11 @@
 #include <functional>
 #include <llvm/ADT/APFloat.h>
 #include <llvm/ADT/APInt.h>
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringRef.h>
+#include <llvm/Support/Casting.h>
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
@@ -359,6 +361,20 @@ LogicalResult FuncOp::verify()
                     "type.");
     }
     return success();
+}
+
+ArrayRef<Type> FuncOp::getFuncElementTypes()
+{
+    static SmallVector<Type> types;
+    types.clear();
+
+    for (auto type : getFunctionType().getInputs())
+        if (auto streamType = dyn_cast<StreamType>(type))
+            types.push_back(streamType.getStreamType());
+        else if (auto ptrType = dyn_cast<PointerType>(type))
+            types.push_back(ptrType.getPointerType());
+
+    return types;
 }
 
 //===----------------------------------------------------------------------===//

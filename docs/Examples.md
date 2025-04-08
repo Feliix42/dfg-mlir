@@ -80,8 +80,13 @@ sh /path/to/run_design.sh
 ```
 4. Check the outputs
 ```
-ls /path/you/specified/driver/bitfile
+tree /path/you/specified/driver
 ```
-Later the generation of python driver for PYNQ will also be supported.
+The driver for PYNQ is generated under directory `/path/you/specified/driver/driver`, which goal is to let user only take care of the input data.
+To set up on PYNQ in JupyterNotebook or Python file, please use the following class and methods defined in the driver:
+
+1. class `Accelerator`: this class' initializer accepts no arguments, one can instantiate one simply use `accl = Accelerator()`. Then there will be some important information printed out.
+2. method `compute`: this method accepts a list, within which you should set up the correct number of inputs based on your own-defined `dfg.region` in MLIR.
+3. method `get_execution_time`: this method will return a float number, which is the execution time in seconds roughly measured using `time` package.
 
 In this work, [AMD Vivado Design Suite](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado.html) version 2024.2 is tested without any problems. If one need to use lower version of the tools, please modify the version of Xilinx IPs in [this](../lib/Target/GenerateVitisProject/GenerateVitisProject.cpp#L1170) translation respectively.

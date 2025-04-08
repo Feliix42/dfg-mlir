@@ -115,6 +115,12 @@ def Vitis_FuncOp : Vitis_Op<"func",
 
         /// Returns the result types of this function.
         ArrayRef<Type> getResultTypes() { return getFunctionType().getResults(); }
+
+
+        //===------------------------------------------------------------------===//
+        // Custom Methods
+        //===------------------------------------------------------------------===//
+        ArrayRef<Type> getFuncElementTypes();
     }];
 }
 
