@@ -65,7 +65,7 @@ def Vitis_PointerType : Vitis_Type<"Pointer", []> {
     let mnemonic = "ptr";
     let summary = "type *";
     let parameters = (ins "Type":$pointer_type);
-    let assemblyFormat = "`<` $pointer_type `>`";
+    let assemblyFormat = "`<` qualified($pointer_type) `>`";
     let genVerifyDecl = 1;
 }
 
@@ -73,7 +73,7 @@ def Vitis_StreamType : Vitis_Type<"Stream", []> {
     let mnemonic = "stream";
     let summary = "hls::stream<type>";
     let parameters = (ins "Type":$stream_type);
-    let assemblyFormat = "`<` $stream_type `>`";
+    let assemblyFormat = "`<` qualified($stream_type) `>`";
     let genVerifyDecl = 1;
 }
 

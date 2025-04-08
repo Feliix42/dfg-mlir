@@ -21,7 +21,7 @@ vitis.func @loop()
     vitis.for %idx = 0 to 2 step 1 {
         // CHECK-NEXT: vitis.pragma.pipeline II=1 style=flp
         vitis.pragma.pipeline II=1 style=flp
-        // CHECK-NEXT: vitis.array.write %[[CONST0]], %[[ARRAY0]][%[[IDX0]]] : i32 -> <2xi32>
+        // CHECK-NEXT: vitis.array.write %[[CONST0]], %[[ARRAY0]][%[[IDX0]]] : i32 -> !vitis.array<2xi32>
         vitis.array.write %const0, %array0[%idx] : i32 -> !vitis.array<2xi32>
     }
 }

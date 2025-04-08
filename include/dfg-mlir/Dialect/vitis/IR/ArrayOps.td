@@ -21,7 +21,7 @@ def Vitis_ArrayReadOp : Vitis_ArrayOpBase<"read",
     let arguments = (ins Arg<Vitis_ArrayType>:$array, Variadic<Index>:$indices);
     let results = (outs AnyType:$result);
 
-    let assemblyFormat = "$array `[` $indices `]` attr-dict `:` type($array) `->` type($result)";
+    let assemblyFormat = "$array `[` $indices `]` attr-dict `:` qualified(type($array)) `->` type($result)";
     let hasVerifier = 1;
     let hasCanonicalizer = 1;
     
@@ -53,7 +53,7 @@ def Vitis_ArrayWriteOp : Vitis_ArrayOpBase<"write",
                          Arg<Vitis_ArrayType>:$array,
                          Variadic<Index>:$indices);
 
-    let assemblyFormat = "$value `,` $array `[` $indices `]` attr-dict `:` type($value) `->` type($array)";
+    let assemblyFormat = "$value `,` $array `[` $indices `]` attr-dict `:` type($value) `->` qualified(type($array))";
     let hasVerifier = 1;
     let hasCanonicalizer = 1;
 
@@ -84,7 +84,7 @@ def Vitis_ArrayPointerReadOp : Vitis_ArrayOpBase<"ptr_read",
     let arguments = (ins Arg<Vitis_PointerType>:$array, Index:$index);
     let results = (outs AnyType:$result);
 
-    let assemblyFormat = "$array `[` $index `]` attr-dict `:` type($array) `->` type($result)";
+    let assemblyFormat = "$array `[` $index `]` attr-dict `:` qualified(type($array)) `->` type($result)";
 
     let extraClassDeclaration = [{
         //===------------------------------------------------------------------===//
@@ -112,7 +112,7 @@ def Vitis_ArrayPointerWriteOp : Vitis_ArrayOpBase<"ptr_write",
                          Arg<Vitis_PointerType>:$array,
                          Index:$index);
 
-    let assemblyFormat = "$value `,` $array `[` $index `]` attr-dict `:` type($value) `->` type($array)";
+    let assemblyFormat = "$value `,` $array `[` $index `]` attr-dict `:` type($value) `->` qualified(type($array))";
 
     let extraClassDeclaration = [{
         //===------------------------------------------------------------------===//
