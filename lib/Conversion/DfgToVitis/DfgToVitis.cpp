@@ -262,6 +262,7 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
                 elemTy = shapedTy.getElementType();
                 argBufferSizes.push_back(shapedTy.getNumElements());
             }
+            argBufferSizes.push_back(1);
             args.push_back(
                 vitis::PointerType::get(rewriter.getContext(), elemTy));
         }
@@ -271,6 +272,7 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
                 elemTy = shapedTy.getElementType();
                 argBufferSizes.push_back(shapedTy.getNumElements());
             }
+            argBufferSizes.push_back(1);
             args.push_back(
                 vitis::PointerType::get(rewriter.getContext(), elemTy));
         }

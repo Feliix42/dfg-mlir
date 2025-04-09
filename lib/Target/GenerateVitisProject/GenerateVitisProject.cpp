@@ -234,7 +234,7 @@ private:
     std::string targetDevice;
     // Utils
     std::string projectDir;
-    SmallString<128> driverDir;
+    std::string driverDir;
     std::string topFuncName;
     size_t topFuncArgSize;
     ArrayRef<int64_t> topFuncArgBufferSizes;
@@ -1129,21 +1129,24 @@ LogicalResult VitisProjectEmitter::initializeProject(
     dbgOS << "Project Directory: " << projectDir << "\n";
 
     // Create project directory
-    std::error_code ec = llvm::sys::fs::create_directory(projectDir);
-    if (ec) {
-        dbgOS << "Error: Failed to create directory: " << ec.message() << "\n";
-        return failure();
-    }
     dbgOS << "Creating project directory: " << projectDir << "\n";
-    // Create driver directory inside project dir
-    driverDir = projectPath;
-    llvm::sys::path::append(driverDir, "driver/driver");
-    ec = llvm::sys::fs::create_directory(driverDir);
+    std::error_code ec = llvm::sys::fs::create_directory(projectPath);
     if (ec) {
         dbgOS << "Error: Failed to create directory: " << ec.message() << "\n";
         return failure();
     }
+    dbgOS << "Created project directory\n";
+    // Create driver directory inside project dir
+    llvm::SmallString<128> driverPath(projectDir);
+    llvm::sys::path::append(driverPath, "driver/driver");
+    driverDir = driverPath.str();
     dbgOS << "Creating driver directory: " << driverDir << "\n";
+    ec = llvm::sys::fs::create_directories(driverPath);
+    if (ec) {
+        dbgOS << "Error: Failed to create directory: " << ec.message() << "\n";
+        return failure();
+    }
+    dbgOS << "Created driver directory\n";
 
     // Create main.cpp
     SmallString<128> cppFilePath(projectDir);
