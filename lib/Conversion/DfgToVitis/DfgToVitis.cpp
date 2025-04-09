@@ -261,8 +261,8 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
             if (auto shapedTy = dyn_cast<ShapedType>(elemTy)) {
                 elemTy = shapedTy.getElementType();
                 argBufferSizes.push_back(shapedTy.getNumElements());
-            }
-            argBufferSizes.push_back(1);
+            } else
+                argBufferSizes.push_back(1);
             args.push_back(
                 vitis::PointerType::get(rewriter.getContext(), elemTy));
         }
@@ -271,8 +271,8 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
             if (auto shapedTy = dyn_cast<ShapedType>(elemTy)) {
                 elemTy = shapedTy.getElementType();
                 argBufferSizes.push_back(shapedTy.getNumElements());
-            }
-            argBufferSizes.push_back(1);
+            } else
+                argBufferSizes.push_back(1);
             args.push_back(
                 vitis::PointerType::get(rewriter.getContext(), elemTy));
         }
