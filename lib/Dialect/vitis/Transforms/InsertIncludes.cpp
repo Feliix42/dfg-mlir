@@ -12,6 +12,7 @@
 
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/BuiltinTypes.h>
 
 namespace mlir {
 namespace vitis {
@@ -37,6 +38,7 @@ void VitisInsertIncludesPass::runOnOperation()
     auto loc = module.getLoc();
     builder.setInsertionPointToStart(&module.getBodyRegion().front());
 
+    bool hasSizeT = false;
     bool hasStream = false;
     bool hasInteger = false;
     bool hasFixed = false;
@@ -47,6 +49,8 @@ void VitisInsertIncludesPass::runOnOperation()
             hasInteger = true;
         else if (!hasFixed && isa<APFixedType, APFixedUType>(type))
             hasFixed = true;
+        else if (!hasSizeT && isa<IndexType>(type))
+            hasSizeT = true;
     };
 
     module.walk([&](Operation* op) {
@@ -87,6 +91,8 @@ void VitisInsertIncludesPass::runOnOperation()
         if (isa<MathSinOp, MathCosOp>(op)) hasMath = true;
     });
 
+    if (hasSizeT)
+        builder.create<IncludeOp>(loc, builder.getStringAttr("cstddef"));
     if (hasInteger)
         builder.create<IncludeOp>(loc, builder.getStringAttr("ap_int.h"));
     if (hasFixed)
