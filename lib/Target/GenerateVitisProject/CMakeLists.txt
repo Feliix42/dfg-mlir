@@ -1,4 +1,4 @@
-add_mlir_translation_library(VitisTargetProject
+add_mlir_translation_library(DFGMLIRVitisTargetProject
     TranslateRegistration.cpp
     GenerateVitisProject.cpp
 

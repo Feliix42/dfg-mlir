@@ -1,4 +1,4 @@
-add_mlir_conversion_library(DfgToOlympus
+add_mlir_conversion_library(DFGMLIRDfgToOlympus
         DfgToOlympus.cpp
 
     DEPENDS

@@ -1,4 +1,4 @@
-add_mlir_conversion_library(DfgToFunc
+add_mlir_conversion_library(DFGMLIRDfgToFunc
         DfgToFunc.cpp
 
     DEPENDS

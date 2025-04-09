@@ -1,4 +1,4 @@
-add_mlir_conversion_library(LinalgToDfg
+add_mlir_conversion_library(DFGMLIRLinalgToDfg
 LinalgToDfg.cpp
 
     DEPENDS

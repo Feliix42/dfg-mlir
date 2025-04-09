@@ -1,4 +1,4 @@
-add_mlir_conversion_library(ScfToVitis
+add_mlir_conversion_library(DFGMLIRScfToVitis
     ScfToVitis.cpp
 
     DEPENDS

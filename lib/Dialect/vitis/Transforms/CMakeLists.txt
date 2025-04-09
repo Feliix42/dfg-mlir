@@ -1,4 +1,4 @@
-add_mlir_conversion_library(MergeCastChain
+add_mlir_conversion_library(DFGMLIRVitisTransforms
     InsertIncludes.cpp
     MergeCastChain.cpp
 

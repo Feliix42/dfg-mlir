@@ -1,4 +1,4 @@
-add_mlir_conversion_library(DfgToAsync
+add_mlir_conversion_library(DFGMLIRDfgToAsync
         DfgToAsync.cpp
 
     DEPENDS

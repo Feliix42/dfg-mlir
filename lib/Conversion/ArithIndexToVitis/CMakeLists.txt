@@ -1,4 +1,4 @@
-add_mlir_conversion_library(ArithIndexToVitis
+add_mlir_conversion_library(DFGMLIRArithIndexToVitis
 ArithIndexToVitis.cpp
 
     DEPENDS

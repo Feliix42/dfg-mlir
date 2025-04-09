@@ -1,4 +1,4 @@
-add_mlir_conversion_library(DfgToVitis
+add_mlir_conversion_library(DFGMLIRDfgToVitis
     DfgToVitis.cpp
 
     DEPENDS

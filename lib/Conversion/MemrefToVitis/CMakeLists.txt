@@ -1,4 +1,4 @@
-add_mlir_conversion_library(MemrefToVitis
+add_mlir_conversion_library(DFGMLIRMemrefToVitis
 MemrefToVitis.cpp
 
     DEPENDS

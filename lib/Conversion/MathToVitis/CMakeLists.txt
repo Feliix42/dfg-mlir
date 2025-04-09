@@ -1,4 +1,4 @@
-add_mlir_conversion_library(MathToVitis
+add_mlir_conversion_library(DFGMLIRMathToVitis
 MathToVitis.cpp
 
     DEPENDS

@@ -1,4 +1,4 @@
-add_mlir_conversion_library(DfgInsertOlympusWrapper
+add_mlir_conversion_library(DFGMLIRDfgInsertOlympusWrapper
         DfgInsertOlympusWrapper.cpp
 
     DEPENDS

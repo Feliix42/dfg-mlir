@@ -1,4 +1,4 @@
-add_mlir_conversion_library(MLIRDfgTransforms
+add_mlir_conversion_library(DFGMLIRDfgTransforms
     BufferizableOpInterfaceImpl.cpp
     InlineRegion.cpp
     LowerInsideToScf.cpp
