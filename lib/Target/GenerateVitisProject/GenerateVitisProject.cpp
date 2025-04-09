@@ -1477,7 +1477,7 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
 
 namespace {
 constexpr const char* kPythonDriverInit =
-    R"(from .accelerator import Accelerator
+    R"(from .driver import Accelerator
 __all__ = ['Accelerator']
 )";
 constexpr const char* kPythonDriver = R"(import numpy as np
@@ -1545,7 +1545,7 @@ class Accelerator:
     def get_execution_time(self):
         if self.exec_time is None:
             return None
-        return self.exec_time * 1e6
+        return self.exec_time
 )";
 } // namespace
 
