@@ -3,6 +3,7 @@ add_mlir_conversion_library(DFGMLIRDfgTransforms
     InlineRegion.cpp
     LowerInsideToScf.cpp
     OperatorToProcess.cpp
+    PrintGraph.cpp
     PrintOperatorToYaml.cpp
 
     DEPENDS
