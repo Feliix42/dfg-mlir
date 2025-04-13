@@ -1,5 +1,7 @@
 add_mlir_library(DFGMLIRDfgInterfaces
-    DataflowGraphOp.cpp
+    EdgeOp.cpp
+    GraphOp.cpp
+    NodeOp.cpp
 
     ENABLE_AGGREGATION
     DEPENDS

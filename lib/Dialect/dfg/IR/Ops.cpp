@@ -449,14 +449,6 @@ LogicalResult EmbedOp::verify()
     return success();
 }
 
-FunctionType EmbedOp::getFunctionType()
-{
-    return FunctionType::get(
-        getContext(),
-        getInputs().getTypes(),
-        getOutputs().getTypes());
-}
-
 //===----------------------------------------------------------------------===//
 // ConnectInputOp
 //===----------------------------------------------------------------------===//
@@ -1596,14 +1588,6 @@ LogicalResult InstantiateOp::verify()
             "Fcuntion type mismatches the called process or operator");
 
     return success();
-}
-
-FunctionType InstantiateOp::getFunctionType()
-{
-    return FunctionType::get(
-        getContext(),
-        getInputs().getTypes(),
-        getOutputs().getTypes());
 }
 
 //===----------------------------------------------------------------------===//

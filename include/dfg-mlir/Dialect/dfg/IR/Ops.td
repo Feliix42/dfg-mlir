@@ -22,7 +22,8 @@ include "mlir/IR/RegionKindInterface.td"
 def Dfg_RegionOp : Dfg_Op<
         "region",
         [
-            Dfg_DataflowGraphOp,
+            Dfg_NodeOpInterface,
+            Dfg_GraphOpInterface,
             IsolatedFromAbove,
             NoTerminator,
             DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>
@@ -43,17 +44,95 @@ def Dfg_RegionOp : Dfg_Op<
     let hasVerifier = 1;
 
     code extraClassDeclaration = [{
-        //===--------------------------------------------------------------===//
-        // DataflowGraphOp
-        //===--------------------------------------------------------------===//
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
 
-        void foo() { return; }
+        std::string getNodeName() { return getSymName().str(); }
+        unsigned getNumInputPorts() { return getFunctionType().getNumInputs(); }
+        Value getInputPort(unsigned index) {
+            return getBody().getArgument(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getInputs())
+                types.push_back(cast<OutputType>(type).getElementType());
+            return types;
+        }
+        SmallVector<Value> getInputPorts() {
+            SmallVector<Value> inputs;
+            for (size_t i = 0; i < getNumInputPorts(); ++i) {
+                inputs.push_back(getInputPort(i));
+            }
+            return inputs;
+        }
+        unsigned getNumOutputPorts() { return getFunctionType().getNumResults(); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getBody().getArgument(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getResults()) {
+                auto inTy = cast<InputType>(type);
+                types.push_back(inTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() {
+            SmallVector<Value> outputs;
+            for (size_t i = 0; i < getNumOutputPorts(); ++i) {
+                outputs.push_back(getOutputPort(i));
+            }
+            return outputs;
+        }
+
+        //===------------------------------------------------------------------===//
+        // DFGMLIR GraphOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getGraphName() { return getNodeName(); }
+        bool isSubGraph() {
+            bool isSub = false;
+            auto module = getOperation()->getParentOfType<ModuleOp>();
+            module.walk([&](EmbedOp embedOp) {
+                if (embedOp.getNodeName() == getGraphName()) {
+                    isSub = true;
+                    return WalkResult::interrupt();
+                }
+                return WalkResult::advance();
+            });
+            return isSub;
+        }
+        SmallVector<Operation*> getGraphNodes() {
+            SmallVector<Operation*> nodes;
+            for (auto &opi : getBody().getOps())
+                if (isa<NodeOpInterface>(opi) && !isa<GraphOpInterface>(opi))
+                    nodes.push_back(&opi);
+            return nodes;
+        }
+        SmallVector<Operation*> getGraphSubGs() {
+            SmallVector<Operation*> subgraphs;
+            for (auto &opi : getBody().getOps())
+                if (isa<NodeOpInterface>(opi) && isa<GraphOpInterface>(opi))
+                    subgraphs.push_back(&opi);
+            return subgraphs;
+        }
+        SmallVector<Operation*> getGraphEdges() {
+            SmallVector<Operation*> edges;
+            for (auto &opi : getBody().getOps())
+                if (isa<EdgeOpInterface>(opi))
+                    edges.push_back(&opi);
+            return edges;
+        }
     }];
 }
 
 def Dfg_EmbedOp : Dfg_Op<
         "embed",
         [
+            Dfg_NodeOpInterface,
+            Dfg_GraphOpInterface,
             AttrSizedOperandSegments//,
             // HasParent<"RegionOp">
         ]>
@@ -68,7 +147,57 @@ def Dfg_EmbedOp : Dfg_Op<
     let hasVerifier = 1;
 
     let extraClassDeclaration = [{
-        FunctionType getFunctionType();
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getNodeName() { return getCallee().getRootReference().str(); }
+        unsigned getNumInputPorts() { return std::ranges::size(getInputs()); }
+        Value getInputPort(unsigned index) {
+            return getOperation()->getOperand(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getInputs().getTypes()) {
+                auto outTy = cast<OutputType>(type);
+                types.push_back(outTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getInputPorts() { return getInputs(); }
+        unsigned getNumOutputPorts() { return std::ranges::size(getOutputs()); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getOperation()->getOperand(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getOutputs().getTypes()) {
+                auto inTy = cast<InputType>(type);
+                types.push_back(inTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() { return getOutputs(); }
+
+        //===------------------------------------------------------------------===//
+        // DFGMLIR GraphOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getGraphName() { return getNodeName(); }
+        bool isSubGraph() { return true; }
+
+        //===------------------------------------------------------------------===//
+        // Custom Methods
+        //===------------------------------------------------------------------===//
+
+        FunctionType getFunctionType() {
+            FunctionType::get(
+                getContext(),
+                getInputs().getTypes(),
+                getOutputs().getTypes()
+            );
+        }
     }];
 }
 
@@ -101,6 +230,7 @@ def Dfg_ConnectOutputOp : Dfg_Op<
 def Dfg_ProcessOp : Dfg_Op<
         "process",
         [
+            Dfg_NodeOpInterface,
             AffineScope,
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
@@ -149,18 +279,67 @@ def Dfg_ProcessOp : Dfg_Op<
     let hasVerifier = 1;
 
     let extraClassDeclaration = [{
-        /// Returns whether the process is externally defined
-        bool isExternal();
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getNodeName() { return getSymName().str(); }
+        unsigned getNumInputPorts() { return getFunctionType().getNumInputs(); }
+        Value getInputPort(unsigned index) {
+            return getBody().getArgument(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            // types.clear();
+            for (auto type : getFunctionType().getInputs())
+                types.push_back(cast<OutputType>(type).getElementType());
+            return types;
+        }
+        SmallVector<Value> getInputPorts() {
+            SmallVector<Value> inputs;
+            for (size_t i = 0; i < getNumInputPorts(); ++i) {
+                inputs.push_back(getInputPort(i));
+            }
+            return inputs;
+        }
+        unsigned getNumOutputPorts() { return getFunctionType().getNumResults(); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getBody().getArgument(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getResults()) {
+                auto inTy = cast<InputType>(type);
+                types.push_back(inTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() {
+            SmallVector<Value> outputs;
+            for (size_t i = 0; i < getNumOutputPorts(); ++i) {
+                outputs.push_back(getOutputPort(i));
+            }
+            return outputs;
+        }
 
         //===------------------------------------------------------------------===//
         // SymbolOpInterface Methods
         //===------------------------------------------------------------------===//
 
         bool isDeclaration() { return isExternal(); }
+
+        //===------------------------------------------------------------------===//
+        // Custom Methods
+        //===------------------------------------------------------------------===//
+
+        /// Returns whether the process is externally defined
+        bool isExternal();
     }];
 }
 
 def Dfg_OperatorOp : Dfg_Op<"operator", [
+            Dfg_NodeOpInterface,
             AffineScope,
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
@@ -189,14 +368,59 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
     ];
 
     let extraClassDeclaration = [{
-        /// Returns whether the process is externally defined
-        bool isExternal();
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getNodeName() { return getSymName().str(); }
+        unsigned getNumInputPorts() { return getFunctionType().getNumInputs(); }
+        Value getInputPort(unsigned index) {
+            return getBody().getArgument(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getInputs())
+                types.push_back(type);
+            return types;
+        }
+        SmallVector<Value> getInputPorts() {
+            SmallVector<Value> inputs;
+            for (size_t i = 0; i < getNumInputPorts(); ++i) {
+                inputs.push_back(getInputPort(i));
+            }
+            return inputs;
+        }
+        unsigned getNumOutputPorts() { return getFunctionType().getNumResults(); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getBody().getArgument(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getResults())
+                types.push_back(type);
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() {
+            SmallVector<Value> outputs;
+            for (size_t i = 0; i < getNumOutputPorts(); ++i) {
+                outputs.push_back(getOutputPort(i));
+            }
+            return outputs;
+        }
 
         //===------------------------------------------------------------------===//
         // SymbolOpInterface Methods
         //===------------------------------------------------------------------===//
 
         bool isDeclaration() { return isExternal(); }
+
+        //===------------------------------------------------------------------===//
+        // Custom Methods
+        //===------------------------------------------------------------------===//
+
+        /// Returns whether the process is externally defined
+        bool isExternal();
     }];
 
     let hasCustomAssemblyFormat = 1;
@@ -277,6 +501,7 @@ def Dfg_LoopOp : Dfg_Op<
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
         [
+            Dfg_EdgeOpInterface,
             MemoryEffectsOpInterface,
             DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
         ]> {
@@ -322,6 +547,18 @@ def Dfg_ChannelOp : Dfg_Op<
     let hasVerifier = 1;
 
     let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // DFGMLIR EdgeOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        Operation* getInputConnection() { return *getInChan().getUsers().begin(); }
+
+        Operation* getOutputConnection() { return *getOutChan().getUsers().begin(); }
+
+        //===------------------------------------------------------------------===//
+        // MemoryEffectsOpInterface Methods
+        //===------------------------------------------------------------------===//
+
         void getEffects(
                 SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
                 &effects)
@@ -337,6 +574,7 @@ def Dfg_ChannelOp : Dfg_Op<
 def Dfg_InstantiateOp : Dfg_Op<
     "instantiate",
     [
+        Dfg_NodeOpInterface,
         AttrSizedOperandSegments
     ]> {
     let summary = "Instantiates an process with the given inputs, forming (part of) a data flow graph.";
@@ -369,7 +607,51 @@ def Dfg_InstantiateOp : Dfg_Op<
     let hasVerifier = 1;
 
     let extraClassDeclaration = [{
-        FunctionType getFunctionType();
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getNodeName() { return getCallee().getRootReference().str(); }
+        unsigned getNumInputPorts() { return std::ranges::size(getInputs()); }
+        Value getInputPort(unsigned index) {
+            return getOperation()->getOperand(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            // types.clear();
+            for (auto type : getInputs().getTypes()) {
+                auto outTy = cast<OutputType>(type);
+                types.push_back(outTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getInputPorts() { return getInputs(); }
+        unsigned getNumOutputPorts() { return std::ranges::size(getOutputs()); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getOperation()->getOperand(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getOutputs().getTypes()) {
+                auto inTy = cast<InputType>(type);
+                types.push_back(inTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() { return getOutputs(); }
+
+        //===------------------------------------------------------------------===//
+        // Custom Methods
+        //===------------------------------------------------------------------===//
+
+        FunctionType getFunctionType() {
+            FunctionType::get(
+                getContext(),
+                getInputs().getTypes(),
+                getOutputs().getTypes()
+            );
+        }
     }];
 }
 

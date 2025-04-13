@@ -250,31 +250,33 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
         ConversionPatternRewriter &rewriter) const override
     {
         auto loc = op->getLoc();
-        auto funcTy = op.getFunctionType();
+
+        if (op.isSubGraph())
+            return rewriter.notifyMatchFailure(
+                loc,
+                "Requires no sub-region during this conversion");
 
         // The function type is different from process func, which is pointer
         // type, so here don't use type converter
         SmallVector<Type> args;
         SmallVector<int64_t> argBufferSizes;
-        for (auto inTy : funcTy.getInputs()) {
-            auto elemTy = cast<OutputType>(inTy).getElementType();
-            if (auto shapedTy = dyn_cast<ShapedType>(elemTy)) {
-                elemTy = shapedTy.getElementType();
+        for (auto inTy : op.getInputPortTypes()) {
+            if (auto shapedTy = dyn_cast<ShapedType>(inTy)) {
+                inTy = shapedTy.getElementType();
                 argBufferSizes.push_back(shapedTy.getNumElements());
             } else
                 argBufferSizes.push_back(1);
             args.push_back(
-                vitis::PointerType::get(rewriter.getContext(), elemTy));
+                vitis::PointerType::get(rewriter.getContext(), inTy));
         }
-        for (auto outTy : funcTy.getResults()) {
-            auto elemTy = cast<InputType>(outTy).getElementType();
-            if (auto shapedTy = dyn_cast<ShapedType>(elemTy)) {
-                elemTy = shapedTy.getElementType();
+        for (auto outTy : op.getOutputPortTypes()) {
+            if (auto shapedTy = dyn_cast<ShapedType>(outTy)) {
+                outTy = shapedTy.getElementType();
                 argBufferSizes.push_back(shapedTy.getNumElements());
             } else
                 argBufferSizes.push_back(1);
             args.push_back(
-                vitis::PointerType::get(rewriter.getContext(), elemTy));
+                vitis::PointerType::get(rewriter.getContext(), outTy));
         }
 
         auto funcOp = rewriter.create<vitis::FuncOp>(
@@ -288,10 +290,10 @@ struct ConvertRegionToFunc : OpConversionPattern<RegionOp> {
             rewriter.getDenseI64ArrayAttr(argBufferSizes));
         funcOp->setAttr(
             "num_inputs",
-            rewriter.getI64IntegerAttr(funcTy.getNumInputs()));
+            rewriter.getI64IntegerAttr(op.getNumInputPorts()));
         funcOp->setAttr(
             "num_outputs",
-            rewriter.getI64IntegerAttr(funcTy.getNumResults()));
+            rewriter.getI64IntegerAttr(op.getNumOutputPorts()));
         auto funcLoc = funcOp.getLoc();
         Block* funcEntryBlock = rewriter.createBlock(&funcOp.getBody());
         IRMapping mapper;

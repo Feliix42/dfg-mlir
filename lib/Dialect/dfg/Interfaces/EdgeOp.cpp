@@ -1,17 +1,14 @@
-/// Implements the dfg dialect DataflowGraphOp interface.
+/// Implements the Dfg dialect EdgeOp interface.
 ///
 /// @file
 /// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
-#include "dfg-mlir/Dialect/dfg/Interfaces/DataflowGraphOp.h"
+#include "dfg-mlir/Dialect/dfg/Interfaces/EdgeOp.h"
 
 #include "mlir/IR/OpImplementation.h"
 
-using namespace mlir;
-using namespace mlir::dfg;
-
 //===- Generated implementation -------------------------------------------===//
 
-#include "dfg-mlir/Dialect/dfg/Interfaces/DataflowGraphOp.cpp.inc"
+#include "dfg-mlir/Dialect/dfg/Interfaces/EdgeOp.cpp.inc"
 
 //===----------------------------------------------------------------------===//
