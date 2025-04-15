@@ -71,6 +71,9 @@ This transformation will inline the contents of some `dfg.region` into the place
 ##### `--dfg-operator-to-process`
 Before converting dfg to other dialects or translating, `operator` must be converted to the `process` with same semantics, which pulls/pushes only once and loops monitoring the input channels.
 
+##### `--dfg-print-graph`
+This pass will print to a dot file (or use the option print-to-pdf=1 to pdf file) of the graph(s) you defined using dfg dialect. For `print-to-pdf` option, make sure you installed `dot` and `inkscape`, and they're in the `PATH`.
+
 ##### `--print-operator-to-yaml`
 This will generate yaml files for each `operator`, which can be utilized as inputs to [Mocasin](https://github.com/tud-ccc/mocasin) project.
 

@@ -19,6 +19,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstddef>
+#include <cstdlib>
+#include <cstring>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
@@ -51,16 +53,6 @@ using namespace mlir;
 using namespace dfg;
 
 namespace {
-std::string
-replaceAll(std::string str, const std::string &from, const std::string &to)
-{
-    size_t start_pos = 0;
-    while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
-        str.replace(start_pos, from.length(), to);
-        start_pos += to.length();
-    }
-    return str;
-}
 constexpr const char* kDotNodeName =
     R"({{GraphName}}_{{GraphNumber}}_{{NodeName}}_{{NodeNumber}})";
 constexpr const char* kDotNode =
@@ -80,6 +72,18 @@ struct DfgPrintGraphPass
     void runOnOperation() override;
     void getGraph(ModuleOp module);
 
+    // String helpers
+    // replace all string with another
+    std::string
+    replaceAll(std::string str, const std::string &from, const std::string &to)
+    {
+        size_t start_pos = 0;
+        while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
+            str.replace(start_pos, from.length(), to);
+            start_pos += to.length();
+        }
+        return str;
+    }
     // Indentation helper
     std::string indentContent(const std::string &content)
     {
@@ -90,6 +94,25 @@ struct DfgPrintGraphPass
         while (std::getline(iss, line)) indented += "  " + line + "\n";
         return indented;
     };
+    // Remove blank lines
+    std::string removeBlankLines(const std::string &input)
+    {
+        std::stringstream ss(input);
+        std::string line;
+        std::string result;
+        while (std::getline(ss, line)) {
+            // If this line is blank or only contains spaces
+            bool isBlank = true;
+            for (char c : line) {
+                if (!std::isspace(c)) {
+                    isBlank = false;
+                    break;
+                }
+            }
+            if (!isBlank) result += line + '\n';
+        }
+        return result;
+    }
 
 private:
     std::map<std::string, std::string> dotNodeNameMap;
@@ -341,24 +364,14 @@ void DfgPrintGraphPass::getGraph(ModuleOp module)
                     std::string outputStr;
                     if (isa<GraphOpInterface>(inPortUser)) {
                         auto subGraphNameStr = dotSubgraphNameMap[inPortUser];
-                        llvm::errs() << subGraphNameStr << "\n";
                         auto subGraphOutPorts =
                             dotSubgraphOutputMap[subGraphNameStr];
-                        llvm::errs() << "Just to test if this work?\n";
-                        for (auto test : subGraphOutPorts)
-                            llvm::errs() << test << "\n";
                         auto outConnectionGraphAsNode =
                             dyn_cast<NodeOpInterface>(inPortUser);
-                        llvm::errs() << "Output connection Graph Op: "
-                                     << outConnectionGraphAsNode << "\n";
                         for (auto [outPort, outPortName] : llvm::zip(
                                  outConnectionGraphAsNode.getInputPorts(),
                                  subGraphOutPorts)) {
-                            llvm::errs() << "Output port: " << outPort << "\n";
-                            if (outPort == inPort) {
-                                llvm::errs() << "Here!\n";
-                                outputStr = outPortName;
-                            }
+                            if (outPort == inPort) outputStr = outPortName;
                         }
                     } else {
                         outputStr = dotNodeOpMap[inPortUser];
@@ -389,10 +402,7 @@ void DfgPrintGraphPass::getGraph(ModuleOp module)
                         for (auto [inPort, inPortName] : llvm::zip(
                                  inConnectionGraphAsNode.getOutputPorts(),
                                  subGraphInPorts)) {
-                            if (inPort == outPort) {
-                                llvm::errs() << "There!\n";
-                                inputStr = inPortName;
-                            }
+                            if (inPort == outPort) inputStr = inPortName;
                         }
                     } else {
                         inputStr = dotNodeOpMap[outPortUser];
@@ -433,24 +443,6 @@ void DfgPrintGraphPass::runOnOperation()
     if (!module) signalPassFailure();
     // Gets the nodes and subgraphs
     getGraph(module);
-    // Helper to remove blank lines
-    auto removeBlankLines = [&](const std::string &input) {
-        std::stringstream ss(input);
-        std::string line;
-        std::string result;
-        while (std::getline(ss, line)) {
-            // If this line is blank or only contains spaces
-            bool isBlank = true;
-            for (char c : line) {
-                if (!std::isspace(c)) {
-                    isBlank = false;
-                    break;
-                }
-            }
-            if (!isBlank) result += line + '\n';
-        }
-        return result;
-    };
     // Print the graph
     for (auto [i, graph] : llvm::enumerate(topGraphs)) {
         // Create the file
@@ -464,6 +456,24 @@ void DfgPrintGraphPass::runOnOperation()
         os.indent() << "rankdir=LR;\n";
         dotFile << removeBlankLines(graph);
         os.unindent() << "}\n";
+        dotFile.close();
+
+        if (printToPdf) {
+            std::string svgFileName = "graph_" + std::to_string(i) + ".svg";
+            std::string pdfFileName = "graph_" + std::to_string(i) + ".pdf";
+            std::string commandStr =
+                "dot -Tsvg " + dotFileName + " -o " + svgFileName;
+            commandStr += " && inkscape " + svgFileName
+                          + " --export-filename=" + pdfFileName;
+            commandStr += " && rm -f " + dotFileName + " " + svgFileName;
+            auto result = std::system(commandStr.c_str());
+            if (result != 0) {
+                llvm::errs() << "Fail to generate pdf file(s). Make sure you "
+                                "have dot and inkscape installed.\n";
+                signalPassFailure();
+            }
+        }
+
         ++i;
     }
 }

@@ -40,6 +40,11 @@ def DfgPrintGraph : Pass<"dfg-print-graph">
     let summary = "print the graph from dfg-mlir";
 
     let constructor = "mlir::dfg::createDfgPrintGraphPass()";
+
+    let options = [
+        Option<"printToPdf", "print-to-pdf", "bool", /*default=*/"0",
+               "Print the graph to pdf files instead of dot.">
+    ];
 }
 
 def DfgPrintOperatorToYaml : Pass<"print-operator-to-yaml">
