@@ -788,3 +788,17 @@ void mlir::dfg::registerConvertToVitisPipelines()
         "Convert everything to vitis dialect",
         [](OpPassManager &pm) { addConvertToVitisPasses(pm); });
 }
+void mlir::addPrepareForMdcPasses(OpPassManager &pm) {
+    pm.addPass(dfg::createDfgOperatorToProcessPass());
+    pm.addPass(dfg::createDfgInlineRegionPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(bufferization::createOneShotBufferizePass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+}
+void mlir::registerPrepareForMdcPipelines() {
+    PassPipelineRegistration<>(
+        "prepare-for-mdc",
+        "Lower DFG dialect to a form ready for MDC translation",
+        [](OpPassManager &pm) { addPrepareForMdcPasses(pm); });
+}
