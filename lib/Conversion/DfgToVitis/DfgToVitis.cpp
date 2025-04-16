@@ -393,7 +393,7 @@ struct ConvertConnectToCall : OpConversionPattern<ConnectDirection> {
 
     LogicalResult matchAndRewrite(
         ConnectDirection op,
-        ConnectDirection::Adaptor adaptor,
+        typename ConnectDirection::Adaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto loc = op.getLoc();
