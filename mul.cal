@@ -1,0 +1,11 @@
+package common;
+
+actor mul()
+  uint(size=32) a0,
+  uint(size=32) a1
+  ==>
+  uint(size=32) c0
+:
+  action a0:[x0], a1:[x1] ==> c0:[x0]
+  end
+end

@@ -10,12 +10,15 @@ void registerGenerateVitisProject();
 } // namespace vitis
 namespace dfg {
 void registerToVivadoTclTranslation();
+void registerToMDCTranslation();
 } // namespace dfg
 
 inline void registerAllDFGMLIRTranslations()
 {
     static bool initOnce = []() {
         vitis::registerGenerateVitisProject();
+        dfg::registerToMDCTranslation();
+
         return true;
     }();
     (void)initOnce;
