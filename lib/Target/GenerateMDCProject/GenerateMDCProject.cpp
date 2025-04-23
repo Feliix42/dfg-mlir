@@ -22,6 +22,7 @@
 #include <mlir/Support/LogicalResult.h>
 #include <string>
 #include "llvm/Support/FileSystem.h"
+#include <fstream>
 
 namespace mlir {
     namespace dfg {
@@ -72,20 +73,60 @@ namespace mlir {
                 }
                 os << "==> ";
                 for (unsigned i = 0; i < funcType.getNumResults(); ++i) {
-                    os << "c" << i << ":[x" << i << "]";
+                    os << "c" << i << ":[x" << i <<"*x"<< i + 1<< "]";
                     os << (i + 1 < funcType.getNumResults() ? ", " : "\n");
                                 } 
                 os << "  end\n";
                 os << "end\n";
                 llvm::errs() << "[INFO] Successfully wrote CAL file: " << filepath << "\n";
+             
                 return success();
             }
             } // namespace
 
 
 LogicalResult generateMDCProject(Operation* op, const std::string& outputDir) {
-        std::string caloutputDir = outputDir + calPackageName.str();
-        llvm::SmallString<128> xdfPath(outputDir);
+        std::string outputDirMDC = outputDir + "MDC/";
+        if (!llvm::sys::fs::exists(outputDirMDC)) {
+            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC);
+            if (ec) {
+                return op->emitError("Failed to create package directory: ")
+                       << outputDirMDC << " (" << ec.message() << ")";
+            }
+        }
+        if (!llvm::sys::fs::exists(outputDirMDC+"bin/")) {
+            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC+"bin/");
+            if (ec) {
+                return op->emitError("Failed to create package directory: ")
+                       << outputDirMDC+"bin/" << " (" << ec.message() << ")";
+            }
+        }
+        if (!llvm::sys::fs::exists(outputDirMDC+"reference/")) {
+            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC+"reference/");
+            if (ec) {
+                return op->emitError("Failed to create package directory: ")
+                       << outputDirMDC +"reference/"<< " (" << ec.message() << ")";
+            }
+        }
+        outputDirMDC = outputDirMDC + "src/";
+        if (!llvm::sys::fs::exists(outputDirMDC)) {
+            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC);
+            if (ec) {
+                return op->emitError("Failed to create package directory: ")
+                       << outputDirMDC << " (" << ec.message() << ")";
+            }
+        }
+
+        std::string caloutputDir = outputDirMDC + calPackageName.str();
+        outputDirMDC = outputDirMDC + "baseline/";
+        if (!llvm::sys::fs::exists(outputDirMDC)) {
+            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC);
+            if (ec) {
+                return op->emitError("Failed to create package directory: ")
+                       << outputDirMDC << " (" << ec.message() << ")";
+            }
+        }
+        llvm::SmallString<128> xdfPath(outputDirMDC);
         llvm::sys::path::append(xdfPath, "top.xdf");
 
         if (!llvm::sys::fs::exists(caloutputDir)) {
@@ -123,7 +164,7 @@ LogicalResult generateMDCProject(Operation* op, const std::string& outputDir) {
         if (failed(calResult)) return failure();
         
     // Start XDF document
-    os << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    os << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
     os << "<XDF name=\"top\">\n";
     // Process ModuleOp inputs/outputs
     if (auto module = dyn_cast<ModuleOp>(op)) {
@@ -159,7 +200,7 @@ LogicalResult generateMDCProject(Operation* op, const std::string& outputDir) {
             topRegion.getBody().walk([&](InstantiateOp inst) {
                 std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum++);
                 os << "  <Instance id=\"" << instName << "\">\n";
-                os << "    <Class name=\""<<calPackageName<<"." << inst.getCallee().getRootReference().str().substr(1) << "\"/>\n";
+                os << "    <Class name=\""<<calPackageName<<"." << inst.getCallee().getRootReference().str() << "\"/>\n";
                 os << "  </Instance>\n";
     
                 // Connect inputs
@@ -185,6 +226,23 @@ LogicalResult generateMDCProject(Operation* op, const std::string& outputDir) {
   
 
     os << "</XDF>\n";    
+    // Generate top.xdfdiag
+    std::string xdfDiagPath = outputDirMDC + "top.xdfdiag";
+    std::ofstream diagFile(xdfDiagPath);
+    if (!diagFile.is_open()) {
+    llvm::errs() << "Error: Could not open " << xdfDiagPath << " for writing.\n";
+    return mlir::failure();
+    }
+
+    diagFile << R"(<?xml version="1.0" encoding="ASCII"?>
+    <pi:Diagram xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:al="http://eclipse.org/graphiti/mm/algorithms" xmlns:pi="http://eclipse.org/graphiti/mm/pictograms" visible="true" gridUnit="10" diagramTypeId="xdfDiagram" name="top" snapToGrid="true" version="0.18.0">
+    <graphicsAlgorithm xsi:type="al:Rectangle" background="//@colors.1" foreground="//@colors.0" lineWidth="1" transparency="0.0" width="1000" height="1000"/>
+    <colors red="227" green="238" blue="249"/>
+    <colors red="255" green="255" blue="255"/>
+    </pi:Diagram>
+    )";
+    diagFile.close();
+    llvm::outs() << "Generated: " << xdfDiagPath << "\n";
     
     return success();
 }
