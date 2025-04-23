@@ -9,13 +9,16 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 namespace mlir {
     namespace dfg {
-
+        static llvm::cl::opt<std::string> calOutputDir(
+            "mdc-output-dir",
+            llvm::cl::desc("Directory to store CAL files"),
+            llvm::cl::init(".")); // Default: current directory
 void registerToMDCTranslation() {
     TranslateFromMLIRRegistration reg(
         "dfg-to-mdc",
         "Translate DFG to MDC format",
         [](Operation* op, raw_ostream& output) -> LogicalResult {
-            return generateMDCProject(op, output);
+            return generateMDCProject(op, calOutputDir);
         },
         [](DialectRegistry& registry) {
             registry.insert<dfg::DfgDialect>();

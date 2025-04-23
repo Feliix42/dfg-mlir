@@ -5,11 +5,13 @@
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
+#include <llvm/Support/Path.h>
+#include <filesystem>
 
 namespace mlir {
 namespace dfg {
 
-LogicalResult generateMDCProject(Operation* op, raw_ostream& os);
+LogicalResult generateMDCProject(Operation* op, const std::string& outputDir);
 
 } // namespace dfg
 } // namespace mlir
