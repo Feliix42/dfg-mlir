@@ -159,7 +159,7 @@ LogicalResult generateMDCProject(Operation* op, const std::string& outputDir) {
             topRegion.getBody().walk([&](InstantiateOp inst) {
                 std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum++);
                 os << "  <Instance id=\"" << instName << "\">\n";
-                os << "    <Class name=\"common." << inst.getCallee().getRootReference().str().substr(1) << "\"/>\n";
+                os << "    <Class name=\""<<calPackageName<<"." << inst.getCallee().getRootReference().str().substr(1) << "\"/>\n";
                 os << "  </Instance>\n";
     
                 // Connect inputs
