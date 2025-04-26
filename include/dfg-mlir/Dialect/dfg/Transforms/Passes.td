@@ -54,4 +54,16 @@ def DfgPrintOperatorToYaml : Pass<"print-operator-to-yaml">
     let constructor = "mlir::dfg::createDfgPrintOperatorToYamlPass()";
 }
 
+def DfgRetrieveGraphLayers : Pass<"retrieve-graph-layers">
+{
+    let summary = "break the main func into different layer functions";
+
+    let constructor = "mlir::dfg::createDfgRetrieveGraphLayersPass()";
+
+    let options = [
+        Option<"infoPath", "info-path", "std::string", /*default=*/"",
+            "The path to the information json file">
+    ];
+}
+
 #endif //DFG_MLIR_TRANSFORM_PASSES

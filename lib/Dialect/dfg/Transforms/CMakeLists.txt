@@ -5,6 +5,7 @@ add_mlir_conversion_library(DFGMLIRDfgTransforms
     OperatorToProcess.cpp
     PrintGraph.cpp
     PrintOperatorToYaml.cpp
+    RetrieveGraphLayers.cpp
 
     DEPENDS
         DFGMLIRDfgTransformsIncGen
