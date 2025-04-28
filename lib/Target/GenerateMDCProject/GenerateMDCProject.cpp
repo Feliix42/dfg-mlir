@@ -30,16 +30,16 @@ namespace mlir {
 
         namespace {
             static constexpr llvm::StringRef calPackageName = "custom";
-            // Helper function to get the index of an operand
-            unsigned getOperandIndex(mlir::Value operand) {
-                if (auto blockArg = llvm::dyn_cast<mlir::BlockArgument>(operand)) {
-                    return blockArg.getArgNumber();
-                } else {
-                    // If it's not a BlockArgument, it's likely a result from a previous operation
-                    // Here we assume that the operand is a result of a previous op
-                    // If needed, you can add extra checks for more complex cases
-                    return operand.getDefiningOp()->getResult(0).cast<mlir::BlockArgument>().getArgNumber();
+            static constexpr llvm::StringRef BaselineFolder = "baseline";
+            // Utility function to create a directory if it does not exist
+            static LogicalResult createDirectoryIfNeeded(StringRef path, Operation *op) {
+                if (!llvm::sys::fs::exists(path)) {
+                    std::error_code ec = llvm::sys::fs::create_directories(path);
+                    if (ec) {
+                        return op->emitError("Failed to create directory: ") << path << " (" << ec.message() << ")";
+                    }
                 }
+                return success();
             }
 
             LogicalResult generateCALFile(ProcessOp op, const std::string& outputDir) {
@@ -47,13 +47,13 @@ namespace mlir {
                 if (!actorName.empty() && actorName[0] == '@') actorName = actorName.substr(1);
                 llvm::SmallString<128> filepath(outputDir);
                 llvm::sys::path::append(filepath, actorName + ".cal");
+
                 llvm::errs() << "[INFO] Creating CAL file: " << filepath << "\n";
 
                 std::error_code ec;
                 llvm::raw_fd_ostream os(filepath, ec);
                 //llvm::errs() << "Found process: " << op.getSymName() << "\n";
                 if (ec) {
-                    llvm::errs() << "[ERROR] Failed to open file " << filepath << ": " << ec.message() << "\n";
                     return op.emitError("Failed to create CAL file: ") << ec.message();
                 }
 
@@ -76,9 +76,8 @@ namespace mlir {
                     os << (i + 1 < funcType.getNumResults() ? ",\n" : "\n");
                 }
                 
-                // Simple action
-                os << ":\n";
-                os << "  action ";
+                // Action
+                os << ":\n  action ";
                 for (unsigned i = 0; i < funcType.getNumInputs(); ++i) {
                     os << "a" << i << ":[x" << i << "]";
                     os << (i + 1 < funcType.getNumInputs() ? ", " : " ");
@@ -86,34 +85,34 @@ namespace mlir {
                 os << "==> ";
                 unsigned outputIdx = 0;
                 op.getBody().walk([&](mlir::Operation *innerOp) {
-                    auto handleOperand = [&](mlir::Value val) -> unsigned {
+                    auto handleOperand = [&](Value val) -> unsigned {
                         if (auto blockArg = val.dyn_cast<mlir::BlockArgument>()) {
                             return blockArg.getArgNumber();
-                        } else if (auto pullOp = llvm::dyn_cast<dfg::PullOp>(val.getDefiningOp())) {
-                            auto originalInput = pullOp.getOperand();
-                            if (auto origBlockArg = originalInput.dyn_cast<mlir::BlockArgument>()) {
-                                return origBlockArg.getArgNumber();
+                        }
+                        if (auto pullOp = llvm::dyn_cast<dfg::PullOp>(val.getDefiningOp())) {
+                            if (auto orig = pullOp.getOperand().dyn_cast<BlockArgument>()) {
+                                return orig.getArgNumber();
                             }
                         }
                         llvm::errs() << "[ERROR] Unexpected operand type!\n";
                         return -1; // invalid
                     };
                 
-                    if (auto addOp = llvm::dyn_cast<mlir::arith::AddIOp>(innerOp)) {
+                    if (auto addOp = dyn_cast<arith::AddIOp>(innerOp)) {
                         os << "c" << outputIdx << ":[x" 
                            << handleOperand(addOp.getLhs()) 
                            << " + x" 
                            << handleOperand(addOp.getRhs())
                            << "]";
                         outputIdx++;
-                    } else if (auto mulOp = llvm::dyn_cast<mlir::arith::MulIOp>(innerOp)) {
+                    } else if (auto mulOp = llvm::dyn_cast<arith::MulIOp>(innerOp)) {
                         os << "c" << outputIdx << ":[x" 
                            << handleOperand(mulOp.getLhs()) 
                            << " * x" 
                            << handleOperand(mulOp.getRhs())
                            << "]";
                         outputIdx++;
-                    } else if (auto subOp = llvm::dyn_cast<mlir::arith::SubIOp>(innerOp)) {
+                    } else if (auto subOp = llvm::dyn_cast<arith::SubIOp>(innerOp)) {
                         os << "c" << outputIdx << ":[x" 
                            << handleOperand(subOp.getLhs()) 
                            << " - x" 
@@ -133,169 +132,134 @@ namespace mlir {
              
                 return success();
             }
+            // Helper to generate top-level XDF
+            static LogicalResult generateTopXDF(StringRef outputDir, Operation *op) {
+                llvm::SmallString<128> xdfPath(outputDir);
+                llvm::sys::path::append(xdfPath, "top.xdf");
+
+                std::error_code ec;
+                llvm::raw_fd_ostream os(xdfPath, ec);
+                if (ec) {
+                    return op->emitError("Failed to create top.xdf file: ") << ec.message();
+                }
+
+                os << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+                os << "<XDF name=\"top\">\n";
+                // Process ModuleOp inputs/outputs
+                if (auto module = dyn_cast<ModuleOp>(op)) {
+                    auto topRegion = module.lookupSymbol<RegionOp>("top");
+                    if (topRegion) {
+                        llvm::errs() << "[INFO] Found dfg.region 'top' with inputs/outputs\n";            
+                        auto inputTypes = topRegion.getFunctionType().getInputs();
+                        auto outputTypes = topRegion.getFunctionType().getResults();
+                    
+                        // Input ports
+                        for (unsigned i = 0; i < inputTypes.size(); ++i) {
+                            os << "  <Port kind=\"Input\" name=\"arg" << i << "\">\n";
+                            os << "    <Type name=\"int\">\n";
+                            os << "      <Entry kind=\"Expr\" name=\"size\">\n";
+                            os << "        <Expr kind=\"Literal\" literal-kind=\"Integer\" value=\"32\"/>\n";
+                            os << "      </Entry>\n";
+                            os << "    </Type>\n";
+                            os << "  </Port>\n";
+                        }
+                    
+                        // Output ports
+                        for (unsigned i = 0; i < outputTypes.size(); ++i) {
+                            os << "  <Port kind=\"Output\" name=\"arg" << (inputTypes.size() + i) << "\">\n";
+                            os << "    <Type name=\"int\">\n";
+                            os << "      <Entry kind=\"Expr\" name=\"size\">\n";
+                            os << "        <Expr kind=\"Literal\" literal-kind=\"Integer\" value=\"32\"/>\n";
+                            os << "      </Entry>\n";
+                            os << "    </Type>\n";
+                            os << "  </Port>\n";
+                        }
+                        // Create a single instance (assuming one process for now)
+                        unsigned instNum = 0;
+                        unsigned inputArgIndex = 0;
+                        unsigned outputArgIndex = inputTypes.size(); // Outputs start after all inputs
+                        topRegion.getBody().walk([&](InstantiateOp inst) {
+                            std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum++);
+                            os << "  <Instance id=\"" << instName << "\">\n";
+                            os << "    <Class name=\""<<calPackageName<<"." << inst.getCallee().getRootReference().str() << "\"/>\n";
+                            os << "  </Instance>\n";
+
+                            // Connect inputs
+                            for (unsigned i = 0; i < inst.getInputs().size(); ++i) {
+                                os << "  <Connection dst=\"" << instName << "\" dst-port=\"a" << i
+                                << "\" src=\"\" src-port=\"arg" << inputArgIndex++ << "\"/>\n";
+                            }
+
+                            // Connect outputs
+                            for (unsigned i = 0; i < inst.getOutputs().size(); ++i) {
+                                os << "  <Connection dst=\"\" dst-port=\"arg" << outputArgIndex++
+                                << "\" src=\"" << instName << "\" src-port=\"c" << i << "\"/>\n";
+                            }
+                        });            
+                    }
+                    
+                    else {
+                        llvm::errs() << "[ERROR] No dfg.region @top found.\n";
+                    }      
+                }else {
+                    llvm::errs() << "[ERROR] Top-level op is not a ModuleOp.\n";
+                }
+                os << "</XDF>\n";  
+
+                llvm::errs() << "[INFO] Successfully wrote top-level XDF.\n";
+                return success();
+            }
+            // Helper to generate top-level XDF
+            static LogicalResult generateTopXDFdiag(StringRef outputDir, Operation *op) {
+                llvm::SmallString<128> xdfDiagPath(outputDir);
+                llvm::sys::path::append(xdfDiagPath, "top.xdfdiag");
+                std::error_code ec;
+                llvm::raw_fd_ostream os(xdfDiagPath, ec);
+                if (ec) {
+                    return op->emitError("Failed to create top.xdfdiag file: ") << ec.message();
+                }
+                os<< R"(<?xml version="1.0" encoding="ASCII"?>
+                <pi:Diagram xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:al="http://eclipse.org/graphiti/mm/algorithms" xmlns:pi="http://eclipse.org/graphiti/mm/pictograms" visible="true" gridUnit="10" diagramTypeId="xdfDiagram" name="top" snapToGrid="true" version="0.18.0">
+                <graphicsAlgorithm xsi:type="al:Rectangle" background="//@colors.1" foreground="//@colors.0" lineWidth="1" transparency="0.0" width="1000" height="1000"/>
+                <colors red="227" green="238" blue="249"/>
+                <colors red="255" green="255" blue="255"/>
+                </pi:Diagram>
+                )";
+                os.close();
+                llvm::errs() << "[INFO] Successfully wrote top-level XDFDIAG.\n";
+                return success();
+            }
+        
             } // namespace
 
-LogicalResult generateMDCProject(Operation* op, const std::string& outputDir) {
-        std::string outputDirMDC = outputDir + "MDC/";
-        
-        if (!llvm::sys::fs::exists(outputDirMDC)) {
-            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC);
-            if (ec) {
-                return op->emitError("Failed to create package directory: ")
-                       << outputDirMDC << " (" << ec.message() << ")";
-            }
-        }
-        if (!llvm::sys::fs::exists(outputDirMDC+"bin/")) {
-            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC+"bin/");
-            if (ec) {
-                return op->emitError("Failed to create package directory: ")
-                       << outputDirMDC+"bin/" << " (" << ec.message() << ")";
-            }
-        }
-        if (!llvm::sys::fs::exists(outputDirMDC+"reference/")) {
-            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC+"reference/");
-            if (ec) {
-                return op->emitError("Failed to create package directory: ")
-                       << outputDirMDC +"reference/"<< " (" << ec.message() << ")";
-            }
-        }
-        outputDirMDC = outputDirMDC + "src/";
-        if (!llvm::sys::fs::exists(outputDirMDC)) {
-            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC);
-            if (ec) {
-                return op->emitError("Failed to create package directory: ")
-                       << outputDirMDC << " (" << ec.message() << ")";
-            }
-        }
+LogicalResult generateMDCProject(Operation* moduleOp, const std::string& baseOutputDir) {
+        llvm::errs() << "[INFO] Generating MDC project...\n";
+        std::string outputRoot = baseOutputDir + "MDC/";
+        if (failed(createDirectoryIfNeeded(outputRoot, moduleOp))) return failure();
+        // Create subdirectories
+        if (failed(createDirectoryIfNeeded(outputRoot + "bin/", moduleOp))) return failure();
+        if (failed(createDirectoryIfNeeded(outputRoot + "reference/", moduleOp))) return failure();
 
-        std::string caloutputDir = outputDirMDC + calPackageName.str();
-        outputDirMDC = outputDirMDC + "baseline/";
-        if (!llvm::sys::fs::exists(outputDirMDC)) {
-            std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC);
-            if (ec) {
-                return op->emitError("Failed to create package directory: ")
-                       << outputDirMDC << " (" << ec.message() << ")";
-            }
-        }
-        llvm::SmallString<128> xdfPath(outputDirMDC);
-        llvm::sys::path::append(xdfPath, "top.xdf");
+        std::string srcDir = outputRoot + "src/";
+        if (failed(createDirectoryIfNeeded(srcDir, moduleOp))) return failure();
+        if (failed(createDirectoryIfNeeded(srcDir + BaselineFolder.str(), moduleOp))) return failure();
 
-        if (!llvm::sys::fs::exists(caloutputDir)) {
-            std::error_code ec = llvm::sys::fs::create_directory(caloutputDir);
-            if (ec) {
-                return op->emitError("Failed to create CAL package directory: ")
-                       << caloutputDir << " (" << ec.message() << ")";
-            }
-        }
+        std::string calDir = srcDir + calPackageName.str();
+        if (failed(createDirectoryIfNeeded(calDir, moduleOp))) return failure();
 
-        std::error_code ec;
-        llvm::raw_fd_ostream os(xdfPath, ec);
-        if (ec) {
-            llvm::errs() << "[ERROR] Failed to open file " << xdfPath << ": " << ec.message() << "\n";
-            return op->emitError("Failed to open XDF output file: ")
-            << ec.message();
-        }
-        llvm::errs() << "=== Starting MDC Project Generation ===\n";
-        LogicalResult calResult = success();
-        unsigned procCount = 0;
-        llvm::errs() << "[INFO] Scanning for ProcessOps...\n";
-        op->walk([&](ProcessOp proc) {
-            llvm::errs() << "[INFO] Found ProcessOp: " << proc.getSymName() << "\n";
-            ++procCount;
-            if (failed(generateCALFile(proc, caloutputDir))) {
-                llvm::errs() << "[ERROR] Failed to generate CAL file for: " << proc.getSymName() << "\n";
-                calResult = failure();
+        // Generate CAL files for each process
+        moduleOp->walk([&](ProcessOp processOp) {
+            if (failed(generateCALFile(processOp, calDir))) {
+                moduleOp->emitError("Failed to generate CAL file for process: ") << processOp.getSymName();
                 return WalkResult::interrupt();
             }
             return WalkResult::advance();
         });
-        if (procCount == 0) {
-            llvm::errs() << "[WARN] No ProcessOps found in the IR.\n";
-        }
-        if (failed(calResult)) return failure();
-        
-    // Start XDF document
-    os << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
-    os << "<XDF name=\"top\">\n";
-    // Process ModuleOp inputs/outputs
-    if (auto module = dyn_cast<ModuleOp>(op)) {
-        auto topRegion = module.lookupSymbol<RegionOp>("top");
-        if (topRegion) {
-            llvm::errs() << "[INFO] Found dfg.region 'top' with inputs/outputs\n";            
-            auto inputTypes = topRegion.getFunctionType().getInputs();
-            auto outputTypes = topRegion.getFunctionType().getResults();
-        
-            // Input ports
-            for (unsigned i = 0; i < inputTypes.size(); ++i) {
-                os << "  <Port kind=\"Input\" name=\"arg" << i << "\">\n";
-                os << "    <Type name=\"int\">\n";
-                os << "      <Entry kind=\"Expr\" name=\"size\">\n";
-                os << "        <Expr kind=\"Literal\" literal-kind=\"Integer\" value=\"32\"/>\n";
-                os << "      </Entry>\n";
-                os << "    </Type>\n";
-                os << "  </Port>\n";
-            }
-        
-            // Output ports
-            for (unsigned i = 0; i < outputTypes.size(); ++i) {
-                os << "  <Port kind=\"Output\" name=\"arg" << (inputTypes.size() + i) << "\">\n";
-                os << "    <Type name=\"int\">\n";
-                os << "      <Entry kind=\"Expr\" name=\"size\">\n";
-                os << "        <Expr kind=\"Literal\" literal-kind=\"Integer\" value=\"32\"/>\n";
-                os << "      </Entry>\n";
-                os << "    </Type>\n";
-                os << "  </Port>\n";
-            }
-            // Create a single instance (assuming one process for now)
-            unsigned instNum = 0;
-            unsigned inputArgIndex = 0;
-            unsigned outputArgIndex = inputTypes.size(); // Outputs start after all inputs
-            topRegion.getBody().walk([&](InstantiateOp inst) {
-                std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum++);
-                os << "  <Instance id=\"" << instName << "\">\n";
-                os << "    <Class name=\""<<calPackageName<<"." << inst.getCallee().getRootReference().str() << "\"/>\n";
-                os << "  </Instance>\n";
-    
-                // Connect inputs
-                for (unsigned i = 0; i < inst.getInputs().size(); ++i) {
-                    os << "  <Connection dst=\"" << instName << "\" dst-port=\"a" << i
-                       << "\" src=\"\" src-port=\"arg" << inputArgIndex++ << "\"/>\n";
-                }
-    
-                // Connect outputs
-                for (unsigned i = 0; i < inst.getOutputs().size(); ++i) {
-                    os << "  <Connection dst=\"\" dst-port=\"arg" << outputArgIndex++
-                       << "\" src=\"" << instName << "\" src-port=\"c" << i << "\"/>\n";
-                }
-            });            
-        }
-        
-        else {
-            llvm::errs() << "[ERROR] No dfg.region @top found.\n";
-        }      
-    }else {
-        llvm::errs() << "[ERROR] Top-level op is not a ModuleOp.\n";
-    }
-  
 
-    os << "</XDF>\n";    
-    // Generate top.xdfdiag
-    std::string xdfDiagPath = outputDirMDC + "top.xdfdiag";
-    std::ofstream diagFile(xdfDiagPath);
-    if (!diagFile.is_open()) {
-    llvm::errs() << "Error: Could not open " << xdfDiagPath << " for writing.\n";
-    return mlir::failure();
-    }
-
-    diagFile << R"(<?xml version="1.0" encoding="ASCII"?>
-    <pi:Diagram xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:al="http://eclipse.org/graphiti/mm/algorithms" xmlns:pi="http://eclipse.org/graphiti/mm/pictograms" visible="true" gridUnit="10" diagramTypeId="xdfDiagram" name="top" snapToGrid="true" version="0.18.0">
-    <graphicsAlgorithm xsi:type="al:Rectangle" background="//@colors.1" foreground="//@colors.0" lineWidth="1" transparency="0.0" width="1000" height="1000"/>
-    <colors red="227" green="238" blue="249"/>
-    <colors red="255" green="255" blue="255"/>
-    </pi:Diagram>
-    )";
-    diagFile.close();
-    llvm::outs() << "Generated: " << xdfDiagPath << "\n";
+        // Generate top.xdf
+        if (failed(generateTopXDF(srcDir + BaselineFolder.str(), moduleOp))) return failure();
+        // Generate top.xdfdiag
+        if (failed(generateTopXDFdiag(srcDir + BaselineFolder.str(), moduleOp))) return failure();
     
     return success();
 }
