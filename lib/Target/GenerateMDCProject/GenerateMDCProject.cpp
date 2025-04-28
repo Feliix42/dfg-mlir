@@ -8,6 +8,7 @@
 #include "mlir/IR/BuiltinOps.h"          
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/Dialect/Arith/IR/Arith.h" // Include the header for AddIOp
 #include "mlir/IR/Value.h"
 #include "mlir/Support/IndentedOstream.h"
 #include "llvm/ADT/DenseMap.h"
@@ -29,7 +30,18 @@ namespace mlir {
 
         namespace {
             static constexpr llvm::StringRef calPackageName = "custom";
-            
+            // Helper function to get the index of an operand
+            unsigned getOperandIndex(mlir::Value operand) {
+                if (auto blockArg = llvm::dyn_cast<mlir::BlockArgument>(operand)) {
+                    return blockArg.getArgNumber();
+                } else {
+                    // If it's not a BlockArgument, it's likely a result from a previous operation
+                    // Here we assume that the operand is a result of a previous op
+                    // If needed, you can add extra checks for more complex cases
+                    return operand.getDefiningOp()->getResult(0).cast<mlir::BlockArgument>().getArgNumber();
+                }
+            }
+
             LogicalResult generateCALFile(ProcessOp op, const std::string& outputDir) {
                 std::string actorName = op.getSymName().str();
                 if (!actorName.empty() && actorName[0] == '@') actorName = actorName.substr(1);
@@ -72,11 +84,50 @@ namespace mlir {
                     os << (i + 1 < funcType.getNumInputs() ? ", " : " ");
                 }
                 os << "==> ";
-                for (unsigned i = 0; i < funcType.getNumResults(); ++i) {
-                    os << "c" << i << ":[x" << i <<"*x"<< i + 1<< "]";
-                    os << (i + 1 < funcType.getNumResults() ? ", " : "\n");
-                                } 
-                os << "  end\n";
+                unsigned outputIdx = 0;
+                op.getBody().walk([&](mlir::Operation *innerOp) {
+                    auto handleOperand = [&](mlir::Value val) -> unsigned {
+                        if (auto blockArg = val.dyn_cast<mlir::BlockArgument>()) {
+                            return blockArg.getArgNumber();
+                        } else if (auto pullOp = llvm::dyn_cast<dfg::PullOp>(val.getDefiningOp())) {
+                            auto originalInput = pullOp.getOperand();
+                            if (auto origBlockArg = originalInput.dyn_cast<mlir::BlockArgument>()) {
+                                return origBlockArg.getArgNumber();
+                            }
+                        }
+                        llvm::errs() << "[ERROR] Unexpected operand type!\n";
+                        return -1; // invalid
+                    };
+                
+                    if (auto addOp = llvm::dyn_cast<mlir::arith::AddIOp>(innerOp)) {
+                        os << "c" << outputIdx << ":[x" 
+                           << handleOperand(addOp.getLhs()) 
+                           << " + x" 
+                           << handleOperand(addOp.getRhs())
+                           << "]";
+                        outputIdx++;
+                    } else if (auto mulOp = llvm::dyn_cast<mlir::arith::MulIOp>(innerOp)) {
+                        os << "c" << outputIdx << ":[x" 
+                           << handleOperand(mulOp.getLhs()) 
+                           << " * x" 
+                           << handleOperand(mulOp.getRhs())
+                           << "]";
+                        outputIdx++;
+                    } else if (auto subOp = llvm::dyn_cast<mlir::arith::SubIOp>(innerOp)) {
+                        os << "c" << outputIdx << ":[x" 
+                           << handleOperand(subOp.getLhs()) 
+                           << " - x" 
+                           << handleOperand(subOp.getRhs())
+                           << "]";
+                        outputIdx++;
+                    }
+                
+                    if (outputIdx + 1 < funcType.getNumResults()) {
+                        os << ", ";
+                    }
+                });
+                
+                os << "\n  end\n";
                 os << "end\n";
                 llvm::errs() << "[INFO] Successfully wrote CAL file: " << filepath << "\n";
              
@@ -84,9 +135,9 @@ namespace mlir {
             }
             } // namespace
 
-
 LogicalResult generateMDCProject(Operation* op, const std::string& outputDir) {
         std::string outputDirMDC = outputDir + "MDC/";
+        
         if (!llvm::sys::fs::exists(outputDirMDC)) {
             std::error_code ec = llvm::sys::fs::create_directory(outputDirMDC);
             if (ec) {
@@ -197,6 +248,8 @@ LogicalResult generateMDCProject(Operation* op, const std::string& outputDir) {
             }
             // Create a single instance (assuming one process for now)
             unsigned instNum = 0;
+            unsigned inputArgIndex = 0;
+            unsigned outputArgIndex = inputTypes.size(); // Outputs start after all inputs
             topRegion.getBody().walk([&](InstantiateOp inst) {
                 std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum++);
                 os << "  <Instance id=\"" << instName << "\">\n";
@@ -206,12 +259,12 @@ LogicalResult generateMDCProject(Operation* op, const std::string& outputDir) {
                 // Connect inputs
                 for (unsigned i = 0; i < inst.getInputs().size(); ++i) {
                     os << "  <Connection dst=\"" << instName << "\" dst-port=\"a" << i
-                       << "\" src=\"\" src-port=\"arg" << i << "\"/>\n";
+                       << "\" src=\"\" src-port=\"arg" << inputArgIndex++ << "\"/>\n";
                 }
     
                 // Connect outputs
                 for (unsigned i = 0; i < inst.getOutputs().size(); ++i) {
-                    os << "  <Connection dst=\"\" dst-port=\"arg" << (inputTypes.size() + i)
+                    os << "  <Connection dst=\"\" dst-port=\"arg" << outputArgIndex++
                        << "\" src=\"" << instName << "\" src-port=\"c" << i << "\"/>\n";
                 }
             });            
