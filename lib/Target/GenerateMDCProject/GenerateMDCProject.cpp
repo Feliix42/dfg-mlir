@@ -24,13 +24,158 @@
 #include <string>
 #include "llvm/Support/FileSystem.h"
 #include <fstream>
-
+#include <memory>
 namespace mlir {
     namespace dfg {
 
         namespace {
+            // Operation Handler Base Class
+            class OperationHandler {
+                public:
+                    virtual ~OperationHandler() = default;
+                    virtual LogicalResult handle(Operation* op, raw_ostream& os) = 0;
+                };  
+            // ProcessOp Handler for CAL generation
+            class ProcessOpHandler : public OperationHandler {
+                llvm::StringMap<int>& instanceNums;
+                
+            public:
+                ProcessOpHandler(llvm::StringMap<int>& nums) 
+                    : instanceNums(nums) {}
+                    
+                LogicalResult handle(Operation* op, raw_ostream& os) override {
+                    auto processOp = cast<ProcessOp>(op);
+                    std::string actorName = processOp.getSymName().str();
+                    if (!actorName.empty() && actorName[0] == '@') {
+                        actorName = actorName.substr(1);
+                    }
+                    
+                    // Generate CAL actor declaration
+                    os << "actor " << actorName << "()\n";
+                    
+                    // Handle inputs
+                    auto funcType = processOp.getFunctionType();
+                    for (unsigned i = 0; i < funcType.getNumInputs(); ++i) {
+                        os << "  uint(size=32) a" << i;
+                        os << (i + 1 < funcType.getNumInputs() ? ",\n" : "\n");
+                    }
+                    
+                    // Handle outputs
+                    os << "  ==>\n";
+                    for (unsigned i = 0; i < funcType.getNumResults(); ++i) {
+                        os << "  uint(size=32) c" << i;
+                        os << (i + 1 < funcType.getNumResults() ? ",\n" : "\n");
+                    }
+                    
+                    // Handle actions
+                    os << ":\n  action ";
+                    handleActions(processOp, os, funcType);
+                    
+                    os << "\n  end\n";
+                    os << "end\n";
+                    
+                    return success();
+                }
+                
+            private:
+                void handleActions(ProcessOp op, raw_ostream& os, FunctionType funcType) {
+                    // First generate input patterns
+                    for (unsigned i = 0; i < funcType.getNumInputs(); ++i) {
+                        os << "a" << i << ":[x" << i << "]";
+                        if (i + 1 < funcType.getNumInputs()) {
+                            os << ", ";
+                        }
+                    }
+                    
+                    os << " ==> ";
+                    
+                    // Then generate output expressions
+                    unsigned outputIdx = 0;
+                    op.getBody().walk([&](mlir::Operation *innerOp) {
+                        auto handleOperand = [](Value val) -> unsigned {
+                            if (auto blockArg = val.dyn_cast<mlir::BlockArgument>()) {
+                                return blockArg.getArgNumber();
+                            }
+                            if (auto pullOp = llvm::dyn_cast<dfg::PullOp>(val.getDefiningOp())) {
+                                if (auto orig = pullOp.getOperand().dyn_cast<BlockArgument>()) {
+                                    return orig.getArgNumber();
+                                }
+                            }
+                            return -1; // invalid
+                        };
+                        
+                        if (auto addOp = dyn_cast<arith::AddIOp>(innerOp)) {
+                            os << "c" << outputIdx << ":[x" 
+                            << handleOperand(addOp.getLhs()) 
+                            << " + x" 
+                            << handleOperand(addOp.getRhs())
+                            << "]";
+                            outputIdx++;
+                            if (outputIdx < funcType.getNumResults()) os << ", ";
+                        } else if (auto mulOp = dyn_cast<arith::MulIOp>(innerOp)) {
+                            os << "c" << outputIdx << ":[x" 
+                               << handleOperand(mulOp.getLhs()) 
+                               << " * x" 
+                               << handleOperand(mulOp.getRhs())
+                               << "]";
+                            outputIdx++;
+                            if (outputIdx < funcType.getNumResults()) os << ", ";
+                        } else if (auto subOp = dyn_cast<arith::SubIOp>(innerOp)) {
+                            os << "c" << outputIdx << ":[x" 
+                               << handleOperand(subOp.getLhs()) 
+                               << " - x" 
+                               << handleOperand(subOp.getRhs())
+                               << "]";
+                            outputIdx++;
+                            if (outputIdx < funcType.getNumResults()) os << ", ";
+                        }
+                        // Handle other operation types similarly...
+                        
+                        
+                    });
+                }
+            };
+            // Operation Handler Registry (CAL-specific)
+            class OperationHandlerRegistry {
+                llvm::DenseMap<TypeID, std::unique_ptr<OperationHandler>> handlers;
+                
+            public:
+                template <typename OpType, typename HandlerType, typename... Args>
+                void registerHandler(Args&&... args) {
+                    handlers[TypeID::get<OpType>()] = 
+                        std::make_unique<HandlerType>(std::forward<Args>(args)...);
+                }
+                
+                LogicalResult handle(Operation* op, raw_ostream& os) {
+                    auto it = handlers.find(op->getRegisteredInfo()->getTypeID());
+                    if (it == handlers.end()) {
+                        return op->emitError("unsupported operation for CAL generation");
+                    }
+                    return it->second->handle(op, os);
+                }
+            };
+            // Create CAL-specific handler registry
+            OperationHandlerRegistry createCALHandlerRegistry() {
+                OperationHandlerRegistry registry;
+                llvm::StringMap<int> instanceNums; // Only needed if you track instances
+                
+                registry.registerHandler<ProcessOp, ProcessOpHandler>(instanceNums);
+                // Register other CAL-relevant operation handlers here
+                
+                return registry;
+            }
             static constexpr llvm::StringRef calPackageName = "custom";
             static constexpr llvm::StringRef BaselineFolder = "baseline";
+
+            // CAL-specific emitOperation
+            LogicalResult emitCALOperation(ProcessOp op, raw_ostream &os,
+                                        OperationHandlerRegistry& registry) {
+                os << "package " << calPackageName << ";\n\n";
+
+                return registry.handle(op.getOperation(), os);
+            }
+
+
             // Utility function to create a directory if it does not exist
             static LogicalResult createDirectoryIfNeeded(StringRef path, Operation *op) {
                 if (!llvm::sys::fs::exists(path)) {
@@ -41,7 +186,7 @@ namespace mlir {
                 }
                 return success();
             }
-
+            /*
             LogicalResult generateCALFile(ProcessOp op, const std::string& outputDir) {
                 std::string actorName = op.getSymName().str();
                 if (!actorName.empty() && actorName[0] == '@') actorName = actorName.substr(1);
@@ -131,7 +276,7 @@ namespace mlir {
                 llvm::errs() << "[INFO] Successfully wrote CAL file: " << filepath << "\n";
              
                 return success();
-            }
+            }*/
             // Helper to generate top-level XDF
             static LogicalResult generateTopXDF(StringRef outputDir, Operation *op) {
                 llvm::SmallString<128> xdfPath(outputDir);
@@ -236,6 +381,7 @@ LogicalResult generateMDCProject(Operation* moduleOp, const std::string& baseOut
         llvm::errs() << "[INFO] Generating MDC project...\n";
         std::string outputRoot = baseOutputDir + "MDC/";
         if (failed(createDirectoryIfNeeded(outputRoot, moduleOp))) return failure();
+
         // Create subdirectories
         if (failed(createDirectoryIfNeeded(outputRoot + "bin/", moduleOp))) return failure();
         if (failed(createDirectoryIfNeeded(outputRoot + "reference/", moduleOp))) return failure();
@@ -247,12 +393,30 @@ LogicalResult generateMDCProject(Operation* moduleOp, const std::string& baseOut
         std::string calDir = srcDir + calPackageName.str();
         if (failed(createDirectoryIfNeeded(calDir, moduleOp))) return failure();
 
+        // Create handler registry once
+        auto registry = createCALHandlerRegistry();
+
         // Generate CAL files for each process
         moduleOp->walk([&](ProcessOp processOp) {
-            if (failed(generateCALFile(processOp, calDir))) {
-                moduleOp->emitError("Failed to generate CAL file for process: ") << processOp.getSymName();
+            // Create file for this process
+            std::string actorName = processOp.getSymName().str();
+            if (!actorName.empty() && actorName[0] == '@') {
+                actorName = actorName.substr(1);
+            }
+            llvm::SmallString<128> filepath(calDir);
+            llvm::sys::path::append(filepath, actorName + ".cal");
+            std::error_code ec;
+            llvm::raw_fd_ostream os(filepath, ec);
+            if (ec) {
+                processOp.emitError("Failed to create CAL file: ") << ec.message();
                 return WalkResult::interrupt();
             }
+
+            if (failed(emitCALOperation(processOp, os, registry))) {
+                processOp.emitError("Failed to generate CAL content");
+                return WalkResult::interrupt();
+            }
+            llvm::errs() << "[INFO] Successfully wrote CAL file: " << filepath << "\n";
             return WalkResult::advance();
         });
 
