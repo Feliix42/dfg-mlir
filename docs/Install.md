@@ -43,3 +43,6 @@ The following CMake variables must be configured:
 | ---------:  | :------- | --- |
 | `LLVM_DIR`  | `STRING` | *`/your/path/to/llvm/lib/cmake/llvm`* |
 | `MLIR_DIR`  | `STRING` | *`/your/path/to/llvm/lib/cmake/mlir`* |
+
+## Python Package
+For integrating with Neural Networks, for instance tflite model, go to folder python and install the library, further information please refer to [this](../python-lib/README.md).
