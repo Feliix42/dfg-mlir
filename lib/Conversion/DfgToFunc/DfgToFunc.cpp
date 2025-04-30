@@ -274,7 +274,7 @@ void ConvertDfgToFuncPass::runOnOperation()
             ValueRange(),
             ArrayAttr{},
             omp::ClauseProcBindKindAttr{},
-            omp::ReductionModifierAttr{},
+            // omp::ReductionModifierAttr{},
             ValueRange(),
             DenseBoolArrayAttr{},
             nullptr);
@@ -291,10 +291,10 @@ void ConvertDfgToFuncPass::runOnOperation()
         for (auto op : group) {
             localRewriter.create<InstantiateOp>(
                 op->getLoc(),
-                op.getCallee(),
+                op.getNodeName(),
                 op.getInputs(),
                 op.getOutputs(),
-                op.getOffloadedAttr());
+                op.getOffloadedAttr().getValue());
             // localRewriter.eraseOp(op);
             op->erase();
         }

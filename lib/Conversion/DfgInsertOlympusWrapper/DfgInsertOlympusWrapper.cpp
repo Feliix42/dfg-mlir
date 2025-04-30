@@ -84,7 +84,7 @@ struct OlympusPushNLowering : public OpConversionPattern<PushNOp> {
     using OpConversionPattern<PushNOp>::OpConversionPattern;
 
     OlympusPushNLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<PushNOp>(typeConverter, context) {};
+            : OpConversionPattern<PushNOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         PushNOp op,
@@ -103,7 +103,7 @@ struct OlympusPullNLowering : public OpConversionPattern<PullNOp> {
     using OpConversionPattern<PullNOp>::OpConversionPattern;
 
     OlympusPullNLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<PullNOp>(typeConverter, context) {};
+            : OpConversionPattern<PullNOp>(typeConverter, context){};
 
     LogicalResult matchAndRewrite(
         PullNOp op,
@@ -489,13 +489,11 @@ LogicalResult replaceInstantiations(
             "is an internal error.");
         return failure();
     }
-    SymbolRefAttr alveoHostOpRef =
-        SymbolRefAttr::get(moduleCtx, alveoHostWrapperName);
 
     rewriter.setInsertionPoint(instantiations[0]);
     rewriter.create<InstantiateOp>(
         instantiations[0].getLoc(),
-        alveoHostOpRef,
+        alveoHostWrapperName,
         ValueRange(),
         alveoInputs);
 
@@ -505,12 +503,10 @@ LogicalResult replaceInstantiations(
         SmallVector<Value> ins = instantiations[i].getInputs();
         ins.push_back(alveoOutputs[i]);
 
-        SymbolRefAttr instantiateName =
-            SymbolRefAttr::get(newOps[i].getContext(), newOps[i].getSymName());
         rewriter.setInsertionPoint(instantiations[i]);
         rewriter.create<InstantiateOp>(
             instantiations[i].getLoc(),
-            instantiateName,
+            newOps[i].getSymName().str(),
             ins,
             instantiations[i].getOutputs());
 
