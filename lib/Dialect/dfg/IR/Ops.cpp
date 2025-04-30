@@ -1447,6 +1447,11 @@ void InstantiateOp::build(
     result.addAttribute(
         getOffloadedAttrName(result.name),
         builder.getBoolAttr(offloaded));
+    result.addAttribute(
+        kOperandSegmentSizesAttr,
+        builder.getDenseI32ArrayAttr(
+            {static_cast<int32_t>(inputs.size()),
+             static_cast<int32_t>(outputs.size())}));
 }
 
 ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
