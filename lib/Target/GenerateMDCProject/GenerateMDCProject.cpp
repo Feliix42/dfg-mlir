@@ -49,21 +49,49 @@ namespace mlir {
                     if (!actorName.empty() && actorName[0] == '@') {
                         actorName = actorName.substr(1);
                     }
-                    
+                    // Helper lambda to convert MLIR types to CAL types
+                    auto getCALType = [](Type type) -> std::string {
+                        if (auto outputType = type.dyn_cast<dfg::OutputType>()) {
+                            type = outputType.getElementType();
+                        }
+                        else if (auto inputType = type.dyn_cast<dfg::InputType>()) {
+                            type = inputType.getElementType();
+                        }
+                        // Handle standard types
+                        if (auto intType = type.dyn_cast<IntegerType>()) {
+                            return "int(size=" + std::to_string(intType.getWidth()) + ")";
+                        }
+                        if (auto floatType = type.dyn_cast<FloatType>()) {
+                            return "float(size=" + std::to_string(floatType.getWidth()) + ")";
+                        }
+
+                        return ""; // Unsupported type
+                    };                    
                     // Generate CAL actor declaration
                     os << "actor " << actorName << "()\n";
                     
                     // Handle inputs
                     auto funcType = processOp.getFunctionType();
                     for (unsigned i = 0; i < funcType.getNumInputs(); ++i) {
-                        os << "  uint(size=32) a" << i;
+                        Type type = funcType.getInput(i);
+                        std::string calType = getCALType(type);
+                        if (calType.empty()) {
+                            return processOp.emitError("Unsupported input type for CAL generation: ") << type;
+                        }
+
+                        os << "  " << calType << " a" << i;
                         os << (i + 1 < funcType.getNumInputs() ? ",\n" : "\n");
                     }
                     
                     // Handle outputs
                     os << "  ==>\n";
                     for (unsigned i = 0; i < funcType.getNumResults(); ++i) {
-                        os << "  uint(size=32) c" << i;
+                        Type type = funcType.getResult(i);
+                        std::string calType = getCALType(type);
+                        if (calType.empty()) {
+                            return processOp.emitError("Unsupported input type for CAL generation: ") << type;
+                        }
+                        os <<"  " << calType << " c" << i;
                         os << (i + 1 < funcType.getNumResults() ? ",\n" : "\n");
                     }
                     
@@ -92,46 +120,90 @@ namespace mlir {
                     // Then generate output expressions
                     unsigned outputIdx = 0;
                     op.getBody().walk([&](mlir::Operation *innerOp) {
+                      
                         auto handleOperand = [](Value val) -> unsigned {
-                            if (auto blockArg = val.dyn_cast<mlir::BlockArgument>()) {
+                            if (auto blockArg = dyn_cast<BlockArgument>(val)) {
                                 return blockArg.getArgNumber();
                             }
-                            if (auto pullOp = llvm::dyn_cast<dfg::PullOp>(val.getDefiningOp())) {
-                                if (auto orig = pullOp.getOperand().dyn_cast<BlockArgument>()) {
+                            if (auto pullOp = dyn_cast<dfg::PullOp>(val.getDefiningOp())) {
+                                if (auto orig = dyn_cast<BlockArgument>(pullOp.getOperand())) {
                                     return orig.getArgNumber();
                                 }
                             }
                             return -1; // invalid
                         };
-                        
-                        if (auto addOp = dyn_cast<arith::AddIOp>(innerOp)) {
+                        // Helper lambda for consistent output generation
+                        auto emitOperation = [&](const char* opSymbol, Value lhs, Value rhs) {
+                            if (outputIdx > 0) os << ", ";  // Only add comma before subsequent outputs
                             os << "c" << outputIdx << ":[x" 
-                            << handleOperand(addOp.getLhs()) 
-                            << " + x" 
-                            << handleOperand(addOp.getRhs())
+                            << handleOperand(lhs) 
+                            << " " << opSymbol << " x" 
+                            << handleOperand(rhs)
                             << "]";
                             outputIdx++;
-                            if (outputIdx < funcType.getNumResults()) os << ", ";
-                        } else if (auto mulOp = dyn_cast<arith::MulIOp>(innerOp)) {
-                            os << "c" << outputIdx << ":[x" 
-                               << handleOperand(mulOp.getLhs()) 
-                               << " * x" 
-                               << handleOperand(mulOp.getRhs())
-                               << "]";
-                            outputIdx++;
-                            if (outputIdx < funcType.getNumResults()) os << ", ";
-                        } else if (auto subOp = dyn_cast<arith::SubIOp>(innerOp)) {
-                            os << "c" << outputIdx << ":[x" 
-                               << handleOperand(subOp.getLhs()) 
-                               << " - x" 
-                               << handleOperand(subOp.getRhs())
-                               << "]";
-                            outputIdx++;
-                            if (outputIdx < funcType.getNumResults()) os << ", ";
-                        }
-                        // Handle other operation types similarly...
-                        
-                        
+                            //if (outputIdx < funcType.getNumResults()) os << ", ";
+                        };
+                        TypeSwitch<Operation*>(innerOp)
+                        // Floating-point arithmetic
+                        .Case<arith::AddFOp>([&](auto op) { emitOperation("+", op.getLhs(), op.getRhs()); })
+                        .Case<arith::SubFOp>([&](auto op) { emitOperation("-", op.getLhs(), op.getRhs()); })
+                        .Case<arith::MulFOp>([&](auto op) { emitOperation("*", op.getLhs(), op.getRhs()); })
+                        .Case<arith::DivFOp>([&](auto op) { emitOperation("/", op.getLhs(), op.getRhs()); })
+                        .Case<arith::RemFOp>([&](auto op) { emitOperation("mod", op.getLhs(), op.getRhs()); })
+
+                        // Integer arithmetic
+                        .Case<arith::AddIOp>([&](auto op) { emitOperation("+", op.getLhs(), op.getRhs()); })
+                        .Case<arith::SubIOp>([&](auto op) { emitOperation("-", op.getLhs(), op.getRhs()); })
+                        .Case<arith::MulIOp>([&](auto op) { emitOperation("*", op.getLhs(), op.getRhs()); })
+                        .Case<arith::DivSIOp>([&](auto op) { emitOperation("/", op.getLhs(), op.getRhs()); })
+                        .Case<arith::DivUIOp>([&](auto op) { emitOperation("/", op.getLhs(), op.getRhs()); })
+                        .Case<arith::RemSIOp>([&](auto op) { emitOperation("mod", op.getLhs(), op.getRhs()); })
+                        .Case<arith::RemUIOp>([&](auto op) { emitOperation("mod", op.getLhs(), op.getRhs()); })
+
+                        // Bitwise operations
+                        .Case<arith::AndIOp>([&](auto op) { emitOperation("&", op.getLhs(), op.getRhs()); })
+                        .Case<arith::OrIOp>([&](auto op) { emitOperation("|", op.getLhs(), op.getRhs()); })
+                        .Case<arith::XOrIOp>([&](auto op) { emitOperation("^", op.getLhs(), op.getRhs()); })
+
+                        // Shifts need special symbols
+                        .Case<arith::ShLIOp>([&](auto op) { emitOperation("<<", op.getLhs(), op.getRhs()); })
+                        .Case<arith::ShRSIOp>([&](auto op) { emitOperation(">>", op.getLhs(), op.getRhs()); })
+                        .Case<arith::CmpIOp>([&](auto op) {
+                            const char* cmpOp = "";
+                            switch(op.getPredicate()) {
+                                case arith::CmpIPredicate::eq:  cmpOp = "=="; break;
+                                case arith::CmpIPredicate::ne:  cmpOp = "!="; break;
+                                case arith::CmpIPredicate::slt:
+                                case arith::CmpIPredicate::ult: cmpOp = "<"; break;
+                                case arith::CmpIPredicate::ule:
+                                case arith::CmpIPredicate::sle: cmpOp = "<="; break;
+                                case arith::CmpIPredicate::ugt:
+                                case arith::CmpIPredicate::sgt: cmpOp = ">"; break;
+                                case arith::CmpIPredicate::uge:
+                                case arith::CmpIPredicate::sge: cmpOp = ">="; break;
+                                default: cmpOp = "<=>"; // fallback
+                            }
+                            emitOperation(cmpOp, op.getLhs(), op.getRhs()); } ) 
+                        .Case<arith::CmpFOp>([&](auto op) {
+                            const char* cmpOp = "";
+                            switch(op.getPredicate()) {
+                                case arith::CmpFPredicate::OEQ:
+                                case arith::CmpFPredicate::UEQ: cmpOp = "=="; break;
+                                case arith::CmpFPredicate::ONE:
+                                case arith::CmpFPredicate::UNE: cmpOp = "!="; break;
+                                case arith::CmpFPredicate::OGT:
+                                case arith::CmpFPredicate::UGT: cmpOp = ">"; break;
+                                case arith::CmpFPredicate::OGE:
+                                case arith::CmpFPredicate::UGE: cmpOp = ">="; break;
+                                case arith::CmpFPredicate::OLT:
+                                case arith::CmpFPredicate::ULT: cmpOp = "<"; break;
+                                case arith::CmpFPredicate::OLE:
+                                case arith::CmpFPredicate::ULE: cmpOp = "<="; break;
+                                default: cmpOp = "<=>"; // fallback
+                            }
+                            emitOperation(cmpOp, op.getLhs(), op.getRhs()); } )                                             
+                        // ... other cases ...
+                        .Default([&](Operation*) {});                        
                     });
                 }
             };
@@ -297,13 +369,30 @@ namespace mlir {
                         llvm::errs() << "[INFO] Found dfg.region 'top' with inputs/outputs\n";            
                         auto inputTypes = topRegion.getFunctionType().getInputs();
                         auto outputTypes = topRegion.getFunctionType().getResults();
-                    
+                        // Helper function to get type size
+                        auto getTypeSize = [](Type type) -> unsigned {
+                            if (auto outputType = type.dyn_cast<dfg::OutputType>()) {
+                                type = outputType.getElementType();
+                            }
+                            else if (auto inputType = type.dyn_cast<dfg::InputType>()) {
+                                type = inputType.getElementType();
+                            }
+                            
+                            if (auto intType = type.dyn_cast<IntegerType>()) {
+                                return intType.getWidth();
+                            }
+                            if (auto floatType = type.dyn_cast<FloatType>()) {
+                                return floatType.getWidth();
+                            }
+                            return 32; // default size
+                        };                    
                         // Input ports
                         for (unsigned i = 0; i < inputTypes.size(); ++i) {
+                            unsigned size = getTypeSize(inputTypes[i]);
                             os << "  <Port kind=\"Input\" name=\"arg" << i << "\">\n";
-                            os << "    <Type name=\"int\">\n";
+                            os << "    <Type name=\"" << (inputTypes[i].isa<FloatType>() ? "float" : "int") << "\">\n";
                             os << "      <Entry kind=\"Expr\" name=\"size\">\n";
-                            os << "        <Expr kind=\"Literal\" literal-kind=\"Integer\" value=\"32\"/>\n";
+                            os << "        <Expr kind=\"Literal\" literal-kind=\"Integer\" value=\"" << size << "\"/>\n";
                             os << "      </Entry>\n";
                             os << "    </Type>\n";
                             os << "  </Port>\n";
@@ -311,10 +400,11 @@ namespace mlir {
                     
                         // Output ports
                         for (unsigned i = 0; i < outputTypes.size(); ++i) {
+                            unsigned size = getTypeSize(outputTypes[i]);
                             os << "  <Port kind=\"Output\" name=\"arg" << (inputTypes.size() + i) << "\">\n";
-                            os << "    <Type name=\"int\">\n";
+                            os << "    <Type name=\"" << (outputTypes[i].isa<FloatType>() ? "float" : "int") << "\">\n";
                             os << "      <Entry kind=\"Expr\" name=\"size\">\n";
-                            os << "        <Expr kind=\"Literal\" literal-kind=\"Integer\" value=\"32\"/>\n";
+                            os << "        <Expr kind=\"Literal\" literal-kind=\"Integer\" value=\"" << size << "\"/>\n";
                             os << "      </Entry>\n";
                             os << "    </Type>\n";
                             os << "  </Port>\n";
@@ -345,9 +435,11 @@ namespace mlir {
                     
                     else {
                         llvm::errs() << "[ERROR] No dfg.region @top found.\n";
+                        return failure();
                     }      
                 }else {
                     llvm::errs() << "[ERROR] Top-level op is not a ModuleOp.\n";
+                    return failure();
                 }
                 os << "</XDF>\n";  
 
