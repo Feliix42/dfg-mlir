@@ -97,6 +97,17 @@ def ConvertDfgToVitis : Pass<"convert-dfg-to-vitis"> {
     ];
 }
 
+def ConvertFuncToDfg : Pass<"convert-func-to-dfg"> {
+    let summary = "Convert functions to dfg representations.";
+
+    let constructor = "mlir::createConvertFuncToDfgPass()";
+
+    let dependentDialects = [
+        "dfg::DfgDialect",
+        "func::FuncDialect"
+    ];
+}
+
 def ConvertLinalgToDfg : Pass<"convert-linalg-to-dfg"> {
     let summary = "Convert linalg programs to dfg representation.";
 

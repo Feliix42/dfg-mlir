@@ -13,6 +13,7 @@
 #include "dfg-mlir/Conversion/DfgToLLVM/DfgToLLVM.h"
 #include "dfg-mlir/Conversion/DfgToOlympus/DfgToOlympus.h"
 #include "dfg-mlir/Conversion/DfgToVitis/DfgToVitis.h"
+#include "dfg-mlir/Conversion/FuncToDfg/FuncToDfg.h"
 #include "dfg-mlir/Conversion/LinalgToDfg/LinalgToDfg.h"
 #include "dfg-mlir/Conversion/MathToVitis/MathToVitis.h"
 #include "dfg-mlir/Conversion/MemrefToVitis/MemrefToVitis.h"
