@@ -8,6 +8,8 @@
 #include "mlir/IR/BuiltinOps.h"          
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/Dialect/Index/IR/IndexDialect.h"
+#include "mlir/Dialect/Index/IR/IndexOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h" // Include the header for AddIOp
 #include "mlir/IR/Value.h"
 #include "mlir/Support/IndentedOstream.h"
@@ -38,19 +40,9 @@ namespace mlir {
             // ProcessOp Handler for CAL generation
             class ProcessOpHandler : public OperationHandler {
                 llvm::StringMap<int>& instanceNums;
-                
-            public:
-                ProcessOpHandler(llvm::StringMap<int>& nums) 
-                    : instanceNums(nums) {}
-                    
-                LogicalResult handle(Operation* op, raw_ostream& os) override {
-                    auto processOp = cast<ProcessOp>(op);
-                    std::string actorName = processOp.getSymName().str();
-                    if (!actorName.empty() && actorName[0] == '@') {
-                        actorName = actorName.substr(1);
-                    }
+                unsigned intermediateVarCount = 0;
                     // Helper lambda to convert MLIR types to CAL types
-                    auto getCALType = [](Type type) -> std::string {
+                std::string getCALType(Type type) {
                         if (auto outputType = type.dyn_cast<dfg::OutputType>()) {
                             type = outputType.getElementType();
                         }
@@ -66,7 +58,18 @@ namespace mlir {
                         }
 
                         return ""; // Unsupported type
-                    };                    
+                    };                
+            public:
+                ProcessOpHandler(llvm::StringMap<int>& nums) 
+                    : instanceNums(nums) {}
+                    
+                LogicalResult handle(Operation* op, raw_ostream& os) override {
+                    auto processOp = cast<ProcessOp>(op);
+                    std::string actorName = processOp.getSymName().str();
+                    if (!actorName.empty() && actorName[0] == '@') {
+                        actorName = actorName.substr(1);
+                    }
+                    
                     // Generate CAL actor declaration
                     os << "actor " << actorName << "()\n";
                     
@@ -96,19 +99,27 @@ namespace mlir {
                     }
                     
                     // Handle actions
-                    os << ":\n  action ";
+                    os << ":\n";
                     handleActions(processOp, os, funcType);
                     
-                    os << "\n  end\n";
                     os << "end\n";
                     
                     return success();
                 }
                 
             private:
+                struct IntermediateVar {
+                    std::string name;
+                    std::string type;
+                    Value definingValue;
+                };
                 void handleActions(ProcessOp op, raw_ostream& os, FunctionType funcType) {
+                    llvm::DenseMap<Value, std::string> valueToVarName;
+                    llvm::SmallVector<IntermediateVar> intermediateVars;
+                    // Forward declare the function object
+                    std::function<std::string(Value)> getValueExpr;
                     // First generate input patterns
-                    for (unsigned i = 0; i < funcType.getNumInputs(); ++i) {
+                    /*for (unsigned i = 0; i < funcType.getNumInputs(); ++i) {
                         os << "a" << i << ":[x" << i << "]";
                         if (i + 1 < funcType.getNumInputs()) {
                             os << ", ";
@@ -118,94 +129,223 @@ namespace mlir {
                     os << " ==> ";
                     
                     // Then generate output expressions
-                    unsigned outputIdx = 0;
+                    unsigned outputIdx = 0;*/
                     op.getBody().walk([&](mlir::Operation *innerOp) {
-                      
-                        auto handleOperand = [](Value val) -> unsigned {
-                            if (auto blockArg = dyn_cast<BlockArgument>(val)) {
-                                return blockArg.getArgNumber();
-                            }
-                            if (auto pullOp = dyn_cast<dfg::PullOp>(val.getDefiningOp())) {
-                                if (auto orig = dyn_cast<BlockArgument>(pullOp.getOperand())) {
-                                    return orig.getArgNumber();
+                                if (isa<arith::AddIOp, arith::SubIOp, arith::MulIOp, arith::DivSIOp, 
+                                    arith::DivUIOp, arith::RemSIOp, arith::RemUIOp, arith::AddFOp,
+                                    arith::SubFOp, arith::MulFOp, arith::DivFOp, arith::RemFOp,
+                                    index::AddOp, index::SubOp, index::MulOp, index::RemSOp,
+                                    index::RemUOp, arith::AndIOp, arith::OrIOp, arith::XOrIOp,
+                                    arith::ShLIOp, arith::ShRSIOp, arith::CmpIOp, arith::CmpFOp>(innerOp)) {
+                                // Only consider operations that produce results
+                                if (innerOp->getNumResults() > 0) {
+                                    Value result = innerOp->getResult(0);
+                                    // Skip if this is directly pushed to an output
+                                    bool isOutput = false;
+                                    for (auto &use : result.getUses()) {
+                                        if (isa<dfg::PushOp>(use.getOwner())) {
+                                            isOutput = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!isOutput) {
+                                        std::string varName = "z" + std::to_string(intermediateVars.size());
+                                        valueToVarName[result] = varName;
+                                        intermediateVars.push_back({
+                                            varName,
+                                            getCALType(result.getType()),
+                                            result
+                                        });
+                                    }
                                 }
                             }
-                            return -1; // invalid
-                        };
-                        // Helper lambda for consistent output generation
-                        auto emitOperation = [&](const char* opSymbol, Value lhs, Value rhs) {
-                            if (outputIdx > 0) os << ", ";  // Only add comma before subsequent outputs
-                            os << "c" << outputIdx << ":[x" 
-                            << handleOperand(lhs) 
-                            << " " << opSymbol << " x" 
-                            << handleOperand(rhs)
-                            << "]";
-                            outputIdx++;
-                            //if (outputIdx < funcType.getNumResults()) os << ", ";
-                        };
-                        TypeSwitch<Operation*>(innerOp)
-                        // Floating-point arithmetic
-                        .Case<arith::AddFOp>([&](auto op) { emitOperation("+", op.getLhs(), op.getRhs()); })
-                        .Case<arith::SubFOp>([&](auto op) { emitOperation("-", op.getLhs(), op.getRhs()); })
-                        .Case<arith::MulFOp>([&](auto op) { emitOperation("*", op.getLhs(), op.getRhs()); })
-                        .Case<arith::DivFOp>([&](auto op) { emitOperation("/", op.getLhs(), op.getRhs()); })
-                        .Case<arith::RemFOp>([&](auto op) { emitOperation("mod", op.getLhs(), op.getRhs()); })
-
-                        // Integer arithmetic
-                        .Case<arith::AddIOp>([&](auto op) { emitOperation("+", op.getLhs(), op.getRhs()); })
-                        .Case<arith::SubIOp>([&](auto op) { emitOperation("-", op.getLhs(), op.getRhs()); })
-                        .Case<arith::MulIOp>([&](auto op) { emitOperation("*", op.getLhs(), op.getRhs()); })
-                        .Case<arith::DivSIOp>([&](auto op) { emitOperation("/", op.getLhs(), op.getRhs()); })
-                        .Case<arith::DivUIOp>([&](auto op) { emitOperation("/", op.getLhs(), op.getRhs()); })
-                        .Case<arith::RemSIOp>([&](auto op) { emitOperation("mod", op.getLhs(), op.getRhs()); })
-                        .Case<arith::RemUIOp>([&](auto op) { emitOperation("mod", op.getLhs(), op.getRhs()); })
-
-                        // Bitwise operations
-                        .Case<arith::AndIOp>([&](auto op) { emitOperation("&", op.getLhs(), op.getRhs()); })
-                        .Case<arith::OrIOp>([&](auto op) { emitOperation("|", op.getLhs(), op.getRhs()); })
-                        .Case<arith::XOrIOp>([&](auto op) { emitOperation("^", op.getLhs(), op.getRhs()); })
-
-                        // Shifts need special symbols
-                        .Case<arith::ShLIOp>([&](auto op) { emitOperation("<<", op.getLhs(), op.getRhs()); })
-                        .Case<arith::ShRSIOp>([&](auto op) { emitOperation(">>", op.getLhs(), op.getRhs()); })
-                        .Case<arith::CmpIOp>([&](auto op) {
-                            const char* cmpOp = "";
-                            switch(op.getPredicate()) {
-                                case arith::CmpIPredicate::eq:  cmpOp = "=="; break;
-                                case arith::CmpIPredicate::ne:  cmpOp = "!="; break;
-                                case arith::CmpIPredicate::slt:
-                                case arith::CmpIPredicate::ult: cmpOp = "<"; break;
-                                case arith::CmpIPredicate::ule:
-                                case arith::CmpIPredicate::sle: cmpOp = "<="; break;
-                                case arith::CmpIPredicate::ugt:
-                                case arith::CmpIPredicate::sgt: cmpOp = ">"; break;
-                                case arith::CmpIPredicate::uge:
-                                case arith::CmpIPredicate::sge: cmpOp = ">="; break;
-                                default: cmpOp = "<=>"; // fallback
+                        });
+                        // Declare intermediate variables
+                        for (const auto &var : intermediateVars) {
+                            os << "  " << var.type << " " << var.name << ";\n";
+                        }
+                        // Generate action
+                        os << "  action ";
+                        // Input patterns
+                        for (unsigned i = 0; i < funcType.getNumInputs(); ++i) {
+                            os << "a" << i << ":[x" << i << "]";
+                            if (i + 1 < funcType.getNumInputs()) {
+                                os << ", ";
                             }
-                            emitOperation(cmpOp, op.getLhs(), op.getRhs()); } ) 
-                        .Case<arith::CmpFOp>([&](auto op) {
-                            const char* cmpOp = "";
-                            switch(op.getPredicate()) {
-                                case arith::CmpFPredicate::OEQ:
-                                case arith::CmpFPredicate::UEQ: cmpOp = "=="; break;
-                                case arith::CmpFPredicate::ONE:
-                                case arith::CmpFPredicate::UNE: cmpOp = "!="; break;
-                                case arith::CmpFPredicate::OGT:
-                                case arith::CmpFPredicate::UGT: cmpOp = ">"; break;
-                                case arith::CmpFPredicate::OGE:
-                                case arith::CmpFPredicate::UGE: cmpOp = ">="; break;
-                                case arith::CmpFPredicate::OLT:
-                                case arith::CmpFPredicate::ULT: cmpOp = "<"; break;
-                                case arith::CmpFPredicate::OLE:
-                                case arith::CmpFPredicate::ULE: cmpOp = "<="; break;
-                                default: cmpOp = "<=>"; // fallback
+                        }
+                        os << " ==> ";
+                        //unsigned outputIdx = 0;
+                        llvm::DenseMap<Value, unsigned> outputMap; // Maps output block args to indices
+                        for (auto arg : op.getBody().getArguments()) {
+                            if (arg.getType().isa<dfg::OutputType>()) {
+                                outputMap[arg] = outputMap.size();
                             }
-                            emitOperation(cmpOp, op.getLhs(), op.getRhs()); } )                                             
-                        // ... other cases ...
-                        .Default([&](Operation*) {});                        
-                    });
-                }
+                        }
+                        llvm::errs() << "[DEBUG] Starting output expression generation\n";
+                        llvm::SmallVector<bool> outputsProcessed(funcType.getNumResults(), false);
+                        bool firstOutput = true;
+
+                        op.getBody().walk([&](mlir::Operation *innerOp) {
+                            if (auto pushOp = dyn_cast<dfg::PushOp>(innerOp)) {
+                                llvm::errs() << "[DEBUG] Found PushOp: " << *pushOp << "\n";
+                                // operand(0) is the value being pushed
+                                Value pushedValue = pushOp->getOperand(0);
+                                // operand(1) is the output port
+                                Value outputArg = pushOp->getOperand(1);
+
+                                unsigned outputIdx = outputArg.cast<BlockArgument>().getArgNumber() - funcType.getNumInputs();
+                                if (!firstOutput) os << ", ";
+                                firstOutput = false;
+
+                                llvm::errs() << "[DEBUG] Output index: " << outputIdx << ", Pushed value: " << pushedValue << "\n";
+                                if (outputIdx >= funcType.getNumResults()) {
+                                    llvm::errs() << "[ERROR] Invalid output index: " << outputIdx << "\n";
+                                    return;
+                                }
+                                if (outputsProcessed[outputIdx]) {
+                                    llvm::errs() << "[WARNING] Output index already processed: " << outputIdx << "\n";
+                                    return;
+                                }
+
+
+                                //if (valueToVarName.count(pushedValue)) {
+                                    //llvm::errs() << "[DEBUG] Using intermediate var: " << valueToVarName[pushedValue] << "\n";
+                                    //os << "c" << outputIdx << ":[" << valueToVarName[pushedValue] << "]";
+                                //} else {
+                                    // Handle direct input to output case
+                                    //llvm::errs() << "[DEBUG] Generating direct expression\n";
+                                    getValueExpr = [&](Value val) -> std::string {
+                                        if (auto blockArg = val.dyn_cast<BlockArgument>()) {
+                                            return "x" + std::to_string(blockArg.getArgNumber());
+                                        }
+                                        if (auto pullOp = dyn_cast<dfg::PullOp>(val.getDefiningOp())) {
+                                            Value pullOperand = pullOp.getOperand();
+                                            if (auto orig = pullOperand.dyn_cast<BlockArgument>()) {
+                                                return "x" + std::to_string(orig.getArgNumber());
+                                            }
+                                        }
+                                        if (valueToVarName.count(val)) {
+                                            return valueToVarName[val];
+                                        }
+                                        if (auto addOp = dyn_cast<arith::AddIOp>(val.getDefiningOp())) {
+                                            std::string lhs = getValueExpr(addOp.getLhs());
+                                            std::string rhs = getValueExpr(addOp.getRhs());
+                                            if (!lhs.empty() && !rhs.empty()) {
+                                                return lhs + " + " + rhs;
+                                            }
+                                        }
+                                        return ""; // invalid
+                                    };
+                                    
+                                    std::string expr = getValueExpr(pushedValue);
+                                    if (!expr.empty()) {
+                                        os << "c" << outputIdx << ":[" << expr << "]";
+                                    }
+                                }
+                                //outputsProcessed[outputIdx] = true;
+                                //outputIdx++;
+                            
+                        });
+                        // Generate do block if we have intermediate variables
+                        if (!intermediateVars.empty()) {
+                            os << "\n  do\n";
+                            llvm::errs() << "[DEBUG] Generating do-block with " << intermediateVars.size() << " vars\n";
+                            for (const auto &var : intermediateVars) {
+                                Operation *defOp = var.definingValue.getDefiningOp();
+                                auto emitAssignment = [&](const char* opSymbol, Value lhs, Value rhs) {
+                                    auto handleOperand = [&](Value val) -> std::string {
+                                    if (auto blockArg = dyn_cast<BlockArgument>(val)) {
+                                        return "x" + std::to_string(blockArg.getArgNumber());
+                                    }
+                                    if (auto pullOp = dyn_cast<dfg::PullOp>(val.getDefiningOp())) {
+                                        if (auto orig = dyn_cast<BlockArgument>(pullOp.getOperand())) {
+                                            return "x" + std::to_string(orig.getArgNumber());
+                                        }
+                                    }
+                                    if (valueToVarName.count(val)) {
+                                        return valueToVarName[val];
+                                    }
+                                    return ""; // invalid
+                                };
+                                std::string lhsStr = handleOperand(lhs);
+                                std::string rhsStr = handleOperand(rhs);
+                                if (!lhsStr.empty() && !rhsStr.empty()) {
+                                    os << "    " << var.name << " := " << lhsStr << " " << opSymbol << " " << rhsStr << ";\n";
+                                    }
+                                };
+                                TypeSwitch<Operation*>(defOp)
+                                    // Floating-point arithmetic
+                                    .Case<arith::AddFOp>([&](auto op) { emitAssignment("+", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::SubFOp>([&](auto op) { emitAssignment("-", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::MulFOp>([&](auto op) { emitAssignment("*", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::DivFOp>([&](auto op) { emitAssignment("/", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::RemFOp>([&](auto op) { emitAssignment("mod", op.getLhs(), op.getRhs()); })
+
+                                    // Integer arithmetic
+                                    .Case<arith::AddIOp>([&](auto op) { emitAssignment("+", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::SubIOp>([&](auto op) { emitAssignment("-", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::MulIOp>([&](auto op) { emitAssignment("*", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::DivSIOp>([&](auto op) { emitAssignment("/", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::DivUIOp>([&](auto op) { emitAssignment("/", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::RemSIOp>([&](auto op) { emitAssignment("mod", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::RemUIOp>([&](auto op) { emitAssignment("mod", op.getLhs(), op.getRhs()); })
+                                    .Case<index::AddOp>([&](auto op) { emitAssignment("+", op.getLhs(), op.getRhs()); })
+                                    .Case<index::SubOp>([&](auto op) { emitAssignment("-", op.getLhs(), op.getRhs()); })
+                                    .Case<index::MulOp>([&](auto op) { emitAssignment("*", op.getLhs(), op.getRhs()); })
+                                    .Case<index::RemUOp>([&](auto op) { emitAssignment("mod", op.getLhs(), op.getRhs()); })
+                                    .Case<index::RemSOp>([&](auto op) { emitAssignment("mod", op.getLhs(), op.getRhs()); })
+
+                                    // Bitwise operations
+                                    .Case<arith::AndIOp>([&](auto op) { emitAssignment("&", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::OrIOp>([&](auto op) { emitAssignment("|", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::XOrIOp>([&](auto op) { emitAssignment("^", op.getLhs(), op.getRhs()); })
+
+                                    // Shifts need special symbols
+                                    .Case<arith::ShLIOp>([&](auto op) { emitAssignment("<<", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::ShRSIOp>([&](auto op) { emitAssignment(">>", op.getLhs(), op.getRhs()); })
+                                    .Case<arith::CmpIOp>([&](auto op) {
+                                        const char* cmpOp = "";
+                                        switch(op.getPredicate()) {
+                                            case arith::CmpIPredicate::eq:  cmpOp = "=="; break;
+                                            case arith::CmpIPredicate::ne:  cmpOp = "!="; break;
+                                            case arith::CmpIPredicate::slt:
+                                            case arith::CmpIPredicate::ult: cmpOp = "<"; break;
+                                            case arith::CmpIPredicate::ule:
+                                            case arith::CmpIPredicate::sle: cmpOp = "<="; break;
+                                            case arith::CmpIPredicate::ugt:
+                                            case arith::CmpIPredicate::sgt: cmpOp = ">"; break;
+                                            case arith::CmpIPredicate::uge:
+                                            case arith::CmpIPredicate::sge: cmpOp = ">="; break;
+                                            default: cmpOp = "<=>"; // fallback
+                                        }
+                                        emitAssignment(cmpOp, op.getLhs(), op.getRhs()); } ) 
+                                    .Case<arith::CmpFOp>([&](auto op) {
+                                        const char* cmpOp = "";
+                                        switch(op.getPredicate()) {
+                                            case arith::CmpFPredicate::OEQ:
+                                            case arith::CmpFPredicate::UEQ: cmpOp = "=="; break;
+                                            case arith::CmpFPredicate::ONE:
+                                            case arith::CmpFPredicate::UNE: cmpOp = "!="; break;
+                                            case arith::CmpFPredicate::OGT:
+                                            case arith::CmpFPredicate::UGT: cmpOp = ">"; break;
+                                            case arith::CmpFPredicate::OGE:
+                                            case arith::CmpFPredicate::UGE: cmpOp = ">="; break;
+                                            case arith::CmpFPredicate::OLT:
+                                            case arith::CmpFPredicate::ULT: cmpOp = "<"; break;
+                                            case arith::CmpFPredicate::OLE:
+                                            case arith::CmpFPredicate::ULE: cmpOp = "<="; break;
+                                            default: cmpOp = "<=>"; // fallback
+                                        }
+                                        emitAssignment(cmpOp, op.getLhs(), op.getRhs()); } )                                             
+                                    // ... other cases ...
+                                    .Default([&](Operation*) {});   
+                                    llvm::errs() << "[DEBUG] Generating assignment for " << var.name << "\n";                     
+                                }
+                                os << "  end\n";
+                            }
+                            //os << "  end\n";
+                            llvm::errs() << "[DEBUG] Finished action generation\n";
+                } // end of handleActions
             };
             // Operation Handler Registry (CAL-specific)
             class OperationHandlerRegistry {
@@ -239,7 +379,6 @@ namespace mlir {
             static constexpr llvm::StringRef calPackageName = "custom";
             static constexpr llvm::StringRef BaselineFolder = "baseline";
 
-            // CAL-specific emitOperation
             LogicalResult emitCALOperation(ProcessOp op, raw_ostream &os,
                                         OperationHandlerRegistry& registry) {
                 os << "package " << calPackageName << ";\n\n";
