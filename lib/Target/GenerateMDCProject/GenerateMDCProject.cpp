@@ -32,6 +32,7 @@ namespace mlir {
 
         namespace {
             // Operation Handler Base Class
+            bool handelActive = false; // just making input and outputs frame
             class OperationHandler {
                 public:
                     virtual ~OperationHandler() = default;
@@ -40,6 +41,7 @@ namespace mlir {
             // ProcessOp Handler for CAL generation
             class ProcessOpHandler : public OperationHandler {
                 llvm::StringMap<int>& instanceNums;
+                
                 unsigned intermediateVarCount = 0;
                     // Helper lambda to convert MLIR types to CAL types
                 std::string getCALType(Type type) {
@@ -100,7 +102,7 @@ namespace mlir {
                     
                     // Handle actions
                     os << ":\n";
-                    handleActions(processOp, os, funcType);
+                    if (handelActive)  handleActions(processOp, os, funcType);
                     
                     os << "end\n";
                     
