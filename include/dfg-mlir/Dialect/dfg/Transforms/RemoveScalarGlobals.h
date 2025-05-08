@@ -9,18 +9,18 @@
 #include "mlir/Transforms/DialectConversion.h"
 
 namespace mlir {
-namespace dfg {
+namespace memref {
 
 //===- Generated includes -------------------------------------------------===//
 
-#define GEN_PASS_DECL_DFGREMOVESCALARGLOBALS
+#define GEN_PASS_DECL_MEMREFREMOVESCALARGLOBALS
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h.inc"
 
 //===----------------------------------------------------------------------===//
 
 void populateRemoveScalarGlobalsConversionPatterns(RewritePatternSet &patterns);
 
-std::unique_ptr<Pass> createDfgRemoveScalarGlobalsPass();
+std::unique_ptr<Pass> createMemrefRemoveScalarGlobalsPass();
 
-} // namespace dfg
+} // namespace memref
 } // namespace mlir

@@ -61,11 +61,11 @@ def DfgPrintOperatorToYaml : Pass<"print-operator-to-yaml">
     let constructor = "mlir::dfg::createDfgPrintOperatorToYamlPass()";
 }
 
-def DfgRemoveScalarGlobals : Pass<"dfg-remove-scalar-globals">
+def MemrefRemoveScalarGlobals : Pass<"memref-remove-scalar-globals">
 {
     let summary = "remove the scalar memref globals from the graph";
 
-    let constructor = "mlir::dfg::createDfgRemoveScalarGlobalsPass()";
+    let constructor = "mlir::memref::createMemrefRemoveScalarGlobalsPass()";
 }
 
 def DfgRetrieveGraphLayers : Pass<"retrieve-graph-layers">

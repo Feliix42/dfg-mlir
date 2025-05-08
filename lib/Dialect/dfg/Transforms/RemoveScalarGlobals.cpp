@@ -5,10 +5,6 @@
 
 #include "dfg-mlir/Dialect/dfg/Transforms/RemoveScalarGlobals.h"
 
-#include "dfg-mlir/Conversion/Utils.h"
-#include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
-#include "dfg-mlir/Dialect/dfg/IR/Ops.h"
-#include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -17,7 +13,6 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Transforms/DialectConversion.h"
 
-#include <cstdint>
 #include <llvm/ADT/APFloat.h>
 #include <llvm/ADT/APInt.h>
 #include <llvm/ADT/STLExtras.h>
@@ -33,24 +28,23 @@
 #include <mlir/Support/LLVM.h>
 
 namespace mlir {
-namespace dfg {
-#define GEN_PASS_DEF_DFGREMOVESCALARGLOBALS
+namespace memref {
+#define GEN_PASS_DEF_MEMREFREMOVESCALARGLOBALS
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h.inc"
-} // namespace dfg
+} // namespace memref
 } // namespace mlir
 
 using namespace mlir;
-using namespace dfg;
+using namespace memref;
 
 namespace {
 std::map<std::string, TypedAttr> scalarMemrefMap;
-struct EraseScalarMemrefGlobal : public OpRewritePattern<memref::GlobalOp> {
+struct EraseScalarMemrefGlobal : public OpRewritePattern<GlobalOp> {
     EraseScalarMemrefGlobal(MLIRContext* context)
-            : OpRewritePattern<memref::GlobalOp>(context){};
+            : OpRewritePattern<GlobalOp>(context){};
 
-    LogicalResult matchAndRewrite(
-        memref::GlobalOp op,
-        PatternRewriter &rewriter) const override
+    LogicalResult
+    matchAndRewrite(GlobalOp op, PatternRewriter &rewriter) const override
     {
         auto loc = op.getLoc();
         auto name = op.getName().str();
@@ -81,13 +75,12 @@ struct EraseScalarMemrefGlobal : public OpRewritePattern<memref::GlobalOp> {
         return success();
     }
 };
-struct MakeGetGlobalConstant : public OpRewritePattern<memref::GetGlobalOp> {
+struct MakeGetGlobalConstant : public OpRewritePattern<GetGlobalOp> {
     MakeGetGlobalConstant(MLIRContext* context)
-            : OpRewritePattern<memref::GetGlobalOp>(context){};
+            : OpRewritePattern<GetGlobalOp>(context){};
 
-    LogicalResult matchAndRewrite(
-        memref::GetGlobalOp op,
-        PatternRewriter &rewriter) const override
+    LogicalResult
+    matchAndRewrite(GetGlobalOp op, PatternRewriter &rewriter) const override
     {
         auto loc = op.getLoc();
         auto name = op.getName().str();
@@ -150,7 +143,7 @@ struct MakeGetGlobalConstant : public OpRewritePattern<memref::GetGlobalOp> {
 };
 } // namespace
 
-void mlir::dfg::populateRemoveScalarGlobalsConversionPatterns(
+void mlir::memref::populateRemoveScalarGlobalsConversionPatterns(
     RewritePatternSet &patterns)
 {
     patterns.add<EraseScalarMemrefGlobal>(patterns.getContext());
@@ -158,14 +151,14 @@ void mlir::dfg::populateRemoveScalarGlobalsConversionPatterns(
 }
 
 namespace {
-struct DfgRemoveScalarGlobalsPass
-        : public dfg::impl::DfgRemoveScalarGlobalsBase<
-              DfgRemoveScalarGlobalsPass> {
+struct MemrefRemoveScalarGlobalsPass
+        : public memref::impl::MemrefRemoveScalarGlobalsBase<
+              MemrefRemoveScalarGlobalsPass> {
     void runOnOperation() override;
 };
 } // namespace
 
-void DfgRemoveScalarGlobalsPass::runOnOperation()
+void MemrefRemoveScalarGlobalsPass::runOnOperation()
 {
     ConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
@@ -173,23 +166,22 @@ void DfgRemoveScalarGlobalsPass::runOnOperation()
     populateRemoveScalarGlobalsConversionPatterns(patterns);
 
     target.markUnknownOpDynamicallyLegal([](Operation* op) { return true; });
-    target.addDynamicallyLegalOp<memref::GlobalOp>([](memref::GlobalOp op) {
+    target.addDynamicallyLegalOp<GlobalOp>([](GlobalOp op) {
         if (auto initValue = op.getInitialValue(); initValue) {
             auto values = dyn_cast<DenseElementsAttr>(initValue.value());
             return !values.isSplat();
         }
         return true;
     });
-    target.addDynamicallyLegalOp<memref::GetGlobalOp>(
-        [&](memref::GetGlobalOp op) {
-            auto globalName = op.getName();
-            Operation* symbolOp = SymbolTable::lookupSymbolIn(
-                op->getParentOfType<ModuleOp>(),
-                globalName);
-            if (auto globalOp = dyn_cast<memref::GlobalOp>(symbolOp); globalOp)
-                return !target.isIllegal(globalOp);
-            return true;
-        });
+    target.addDynamicallyLegalOp<GetGlobalOp>([&](GetGlobalOp op) {
+        auto globalName = op.getName();
+        Operation* symbolOp = SymbolTable::lookupSymbolIn(
+            op->getParentOfType<ModuleOp>(),
+            globalName);
+        if (auto globalOp = dyn_cast<GlobalOp>(symbolOp); globalOp)
+            return !target.isIllegal(globalOp);
+        return true;
+    });
 
     if (failed(applyPartialConversion(
             getOperation(),
@@ -199,7 +191,7 @@ void DfgRemoveScalarGlobalsPass::runOnOperation()
     }
 }
 
-std::unique_ptr<Pass> mlir::dfg::createDfgRemoveScalarGlobalsPass()
+std::unique_ptr<Pass> mlir::memref::createMemrefRemoveScalarGlobalsPass()
 {
-    return std::make_unique<DfgRemoveScalarGlobalsPass>();
+    return std::make_unique<MemrefRemoveScalarGlobalsPass>();
 }
