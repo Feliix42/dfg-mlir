@@ -54,6 +54,13 @@ def DfgPrintOperatorToYaml : Pass<"print-operator-to-yaml">
     let constructor = "mlir::dfg::createDfgPrintOperatorToYamlPass()";
 }
 
+def DfgRemoveScalarGlobals : Pass<"dfg-remove-scalar-globals">
+{
+    let summary = "remove the scalar memref globals from the graph";
+
+    let constructor = "mlir::dfg::createDfgRemoveScalarGlobalsPass()";
+}
+
 def DfgRetrieveGraphLayers : Pass<"retrieve-graph-layers">
 {
     let summary = "break the main func into different layer functions";
