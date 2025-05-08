@@ -90,3 +90,73 @@ To set up on PYNQ in JupyterNotebook or Python file, please use the following cl
 3. method `get_execution_time`: this method will return a float number, which is the execution time in seconds roughly measured using `time` package.
 
 In this work, [AMD Vivado Design Suite](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado.html) version 2024.2 is tested without any problems. If one need to use lower version of the tools, please modify the version of Xilinx IPs in [this](../lib/Target/GenerateVitisProject/GenerateVitisProject.cpp#L1170) translation respectively.
+
+
+## **Conversion and Translation for the MDC Backend**
+
+To generate a valid MDC project from MLIR, we provide a conversion pass pipeline: `--convert-to-mdc`. This pipeline transforms the input MLIR code into a set of files and directories compatible with the **Orcc Environment**. All generated files are organized within an `MDC/` directory, which includes the subdirectories `bin/`, `references/`, and `src/`.
+
+For each MLIR file, the pipeline produces:
+
+* **An XDF network** representing the dataflow graph.
+* **Multiple CAL actor files**, each corresponding to a function or subroutine in the MLIR.
+* **Two subdirectories under `src/`**:
+
+  * `baseline/`: contains the `.xdf` file (network definition) and `.xdfdiag` (graphical metadata).
+  * `custom/`: contains the generated CAL actor files for each function/operator.
+
+The MLIR dialects supported by this pipeline include `arith`, `index`, `math`, `scf`, and `dfg`. Their operations are translated into equivalent CAL actors.
+
+---
+
+### **Usage Instructions**
+
+Assuming your MLIR input file is named `dfg.mlir`, follow the steps below to generate and inspect the MDC project:
+
+1. **Generate MDC files**
+
+   ```bash
+   dfg-opt dfg.mlir --prepare-for-mdc | dfg-translate --dfg-to-mdc --output-dir=/path/to/output
+   ```
+
+2. **Inspect the generated files**
+   Navigate to the output directory:
+
+   ```bash
+   cd /path/to/output/MDC/
+   ```
+
+3. **Open the project in Orcc**
+   Copy the entire `MDC/` folder into an Orcc project directory. You can then use the Orcc IDE to:
+
+   * Visualize the graphical network (via `.xdf` and `.xdfdiag` files).
+   * Inspect and simulate the generated CAL actors.
+
+---
+
+### **Example: Typical Multiply-and-Accumulate (MAC) Operator**
+
+The following code snippet defines two simple SDF operators, `@mul` and `@opr`, each of which performs basic arithmetic operations and emits two outputs. They are instantiated and interconnected in the top-level region.
+
+```mlir
+dfg.operator @mul inputs(%a: i64, %b: i64, %c: i64) outputs(%d: i64, %e: i64) {
+    %0 = arith.muli %a, %b : i64
+    %1 = arith.addi %0, %c : i64
+    dfg.output %0, %1 : i64, i64
+}
+
+dfg.operator @opr inputs(%a: i32, %b: i32, %c: i32) outputs(%d: i32, %e: i32) {
+    %0 = arith.addi %a, %b : i32
+    %1 = arith.muli %0, %c : i32
+    dfg.output %0, %1 : i32, i32
+}
+
+dfg.region @top inputs(%arg0: i64, %arg1: i64, %arg2: i64, %arg7: i32, %arg8: i32, %arg9: i32) 
+             outputs(%arg3: i64, %arg4: i64, %arg5: i32, %arg6: i32) {
+    dfg.instantiate @mul inputs(%arg0, %arg1, %arg2) outputs(%arg3, %arg4) : (i64, i64, i64) -> (i64, i64)
+    dfg.instantiate @opr inputs(%arg7, %arg8, %arg9) outputs(%arg5, %arg6) : (i32, i32, i32) -> (i32, i32)
+}
+```
+This structure enables a modular design and can be automatically translated into XDF networks and CAL actors for deployment in the Orcc toolchain. The generated files include `top.xdf` and `top.xdfdiag` in the `baseline/` directory (these file names are always the same), and `mul.cal` and `opr.cal` in the `custom/` directory (the file names correspond to the operator names defined in the MLIR).
+
+
