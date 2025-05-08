@@ -1,6 +1,7 @@
 add_mlir_conversion_library(DFGMLIRDfgTransforms
     BufferizableOpInterfaceImpl.cpp
     InlineRegion.cpp
+    InlineScalarArgument.cpp
     LowerInsideToScf.cpp
     OperatorToProcess.cpp
     PrintGraph.cpp

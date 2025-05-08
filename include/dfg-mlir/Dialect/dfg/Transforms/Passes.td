@@ -21,6 +21,13 @@ def DfgInlineRegion : Pass<"dfg-inline-region">
     ];
 }
 
+def LinalgInlineScalarArgument : Pass<"linalg-inline-scalar-argument">
+{
+    let summary = "inline scalar arguments in generic inputs";
+
+    let constructor = "mlir::linalg::createLinalgInlineScalarArgumentPass()";
+}
+
 def DfgLowerInsideToLinalg : Pass<"dfg-lower-inside-to-linalg">
 {
     let summary = "lower the contents of operator/process to linalg level";
