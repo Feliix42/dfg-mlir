@@ -5,6 +5,7 @@
 
 #include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tosa/IR/TosaOps.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -14,6 +15,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <functional>
+#include <iterator>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
@@ -36,14 +38,13 @@
 #define DEBUG_TYPE "retrieve-layers"
 
 namespace mlir {
-namespace dfg {
-#define GEN_PASS_DEF_DFGRETRIEVEGRAPHLAYERS
+namespace func {
+#define GEN_PASS_DEF_FUNCRETRIEVEGRAPHLAYERS
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h.inc"
-} // namespace dfg
+} // namespace func
 } // namespace mlir
 
 using namespace mlir;
-using namespace dfg;
 
 struct TensorInfo {
     std::vector<int64_t> shape;
@@ -208,9 +209,9 @@ SmallVector<LayerInfo> parseModelStructure(StringRef filePath)
 } // namespace
 
 namespace {
-struct DfgRetrieveGraphLayersPass
-        : public dfg::impl::DfgRetrieveGraphLayersBase<
-              DfgRetrieveGraphLayersPass> {
+struct FuncRetrieveGraphLayersPass
+        : public func::impl::FuncRetrieveGraphLayersBase<
+              FuncRetrieveGraphLayersPass> {
 public:
     void runOnOperation() override;
 
@@ -228,7 +229,7 @@ private:
 };
 } // namespace
 
-Type DfgRetrieveGraphLayersPass::getTypeFromStr(
+Type FuncRetrieveGraphLayersPass::getTypeFromStr(
     std::string typeStr,
     OpBuilder &builder)
 {
@@ -258,7 +259,7 @@ Type DfgRetrieveGraphLayersPass::getTypeFromStr(
     return Type();
 }
 
-SmallVector<Operation*> DfgRetrieveGraphLayersPass::getLayerOps(
+SmallVector<Operation*> FuncRetrieveGraphLayersPass::getLayerOps(
     Operation* start,
     SmallVector<Type> argTypes,
     Type resultType)
@@ -332,7 +333,20 @@ SmallVector<Operation*> DfgRetrieveGraphLayersPass::getLayerOps(
                     }
                     layerOps.push_back(user);
                     processedOps.push_back(user);
-                    if (user->getResult(0).getType() == resultType) return;
+                    if (user->getNumResults() == 1
+                        && user->getResult(0).getType() == resultType) {
+                        // If already get to the result type but still have a
+                        // user clamp
+                        // TODO: this only supports clamp after you get result
+                        // type value
+                        auto userUsers = user->getResult(0).getUsers();
+                        for (auto userUser : userUsers)
+                            if (isa<tosa::ClampOp>(userUser)) {
+                                layerOps.push_back(userUser);
+                                processedOps.push_back(userUser);
+                            }
+                        return;
+                    }
                     getOpsUntilNext(user);
                 }
             }
@@ -343,7 +357,7 @@ SmallVector<Operation*> DfgRetrieveGraphLayersPass::getLayerOps(
     return layerOps;
 }
 
-LogicalResult DfgRetrieveGraphLayersPass::getStartOps(func::FuncOp op)
+LogicalResult FuncRetrieveGraphLayersPass::getStartOps(func::FuncOp op)
 {
     SmallVector<Operation*> allOps;
     for (Operation &opi : op.getBody().front()) allOps.push_back(&opi);
@@ -381,8 +395,9 @@ LogicalResult DfgRetrieveGraphLayersPass::getStartOps(func::FuncOp op)
     return success();
 }
 
-LogicalResult
-DfgRetrieveGraphLayersPass::createLayerFunc(func::FuncOp op, OpBuilder &builder)
+LogicalResult FuncRetrieveGraphLayersPass::createLayerFunc(
+    func::FuncOp op,
+    OpBuilder &builder)
 {
     auto loc = op.getLoc();
     auto topNameAttr = op.getSymNameAttr();
@@ -454,6 +469,7 @@ DfgRetrieveGraphLayersPass::createLayerFunc(func::FuncOp op, OpBuilder &builder)
                         mapper.map(value, argsVec[i++]);
                         mappers[idx] = mapper;
                     } else {
+                        i = mappers[idx].getValueMap().size();
                         mappers[idx].map(value, argsVec[i++]);
                     }
                     // Store the indices
@@ -547,7 +563,7 @@ DfgRetrieveGraphLayersPass::createLayerFunc(func::FuncOp op, OpBuilder &builder)
     return success();
 }
 
-void DfgRetrieveGraphLayersPass::runOnOperation()
+void FuncRetrieveGraphLayersPass::runOnOperation()
 {
     auto &context = getContext();
     auto builder = OpBuilder(&context);
@@ -587,7 +603,7 @@ void DfgRetrieveGraphLayersPass::runOnOperation()
     graphFunc->erase();
 }
 
-std::unique_ptr<Pass> mlir::dfg::createDfgRetrieveGraphLayersPass()
+std::unique_ptr<Pass> mlir::func::createFuncRetrieveGraphLayersPass()
 {
-    return std::make_unique<DfgRetrieveGraphLayersPass>();
+    return std::make_unique<FuncRetrieveGraphLayersPass>();
 }

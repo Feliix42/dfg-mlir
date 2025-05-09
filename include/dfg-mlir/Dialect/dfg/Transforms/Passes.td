@@ -68,11 +68,11 @@ def MemrefRemoveScalarGlobals : Pass<"memref-remove-scalar-globals">
     let constructor = "mlir::memref::createMemrefRemoveScalarGlobalsPass()";
 }
 
-def DfgRetrieveGraphLayers : Pass<"retrieve-graph-layers">
+def FuncRetrieveGraphLayers : Pass<"func-retrieve-graph-layers">
 {
     let summary = "break the main func into different layer functions";
 
-    let constructor = "mlir::dfg::createDfgRetrieveGraphLayersPass()";
+    let constructor = "mlir::func::createFuncRetrieveGraphLayersPass()";
 
     let options = [
         Option<"infoPath", "info-path", "std::string", /*default=*/"",

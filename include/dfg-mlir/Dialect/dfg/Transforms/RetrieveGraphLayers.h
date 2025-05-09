@@ -9,18 +9,18 @@
 #include "mlir/Transforms/DialectConversion.h"
 
 namespace mlir {
-namespace dfg {
+namespace func {
 
 //===- Generated includes -------------------------------------------------===//
 
-#define GEN_PASS_DECL_DFGRETRIEVEGRAPHLAYERS
+#define GEN_PASS_DECL_FUNCRETRIEVEGRAPHLAYERS
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h.inc"
 
 //===----------------------------------------------------------------------===//
 
 void populateRetrieveGraphLayersConversionPatterns(RewritePatternSet &patterns);
 
-std::unique_ptr<Pass> createDfgRetrieveGraphLayersPass();
+std::unique_ptr<Pass> createFuncRetrieveGraphLayersPass();
 
-} // namespace dfg
+} // namespace func
 } // namespace mlir
