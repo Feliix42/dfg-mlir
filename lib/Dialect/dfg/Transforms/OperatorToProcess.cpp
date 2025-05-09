@@ -86,7 +86,7 @@ struct ConvertAnyOperatorToEquivalentProcess
         auto loopOp = rewriter.create<LoopOp>(
             loc,
             processOp.getBody().getArguments().take_front(numInputs),
-            ValueRange{},
+            processOp.getBody().getArguments().take_back(numOutputs),
             iterArgs);
         Block* loopBlock = &loopOp.getBody().front();
         rewriter.setInsertionPointToEnd(loopBlock);

@@ -80,4 +80,11 @@ def FuncRetrieveGraphLayers : Pass<"func-retrieve-graph-layers">
     ];
 }
 
+def LinalgSoftTranspose : Pass<"linalg-soft-transpose">
+{
+    let summary = "transpose the tensors in the pass";
+
+    let constructor = "mlir::linalg::createLinalgSoftTransposePass()";
+}
+
 #endif //DFG_MLIR_TRANSFORM_PASSES

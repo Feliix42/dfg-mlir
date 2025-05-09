@@ -13,6 +13,7 @@
 #include "dfg-mlir/Dialect/dfg/Transforms/PrintOperatorToYaml.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/RemoveScalarGlobals.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/RetrieveGraphLayers.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/SoftTranspose.h"
 
 namespace mlir::dfg {
 

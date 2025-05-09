@@ -8,9 +8,10 @@ add_mlir_conversion_library(DFGMLIRDfgTransforms
     PrintOperatorToYaml.cpp
     RemoveScalarGlobals.cpp
     RetrieveGraphLayers.cpp
+    SoftTranspose.cpp
 
     DEPENDS
-        DFGMLIRDfgTransformsIncGen
+    DFGMLIRDfgTransformsIncGen
 
     LINK_COMPONENTS
     Core
