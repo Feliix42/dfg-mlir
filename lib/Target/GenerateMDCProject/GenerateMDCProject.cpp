@@ -152,11 +152,7 @@ namespace mlir {
             }
 
             // Extract the name from an MLIR block argument or operation result
-            static std::string getValueName(Value val, const std::string& defaultPrefix = "arg") {
-                // MLIR doesn't store names directly on BlockArgument, so we need to
-                // look at the IR representation or use debug information
-                
-                // For this implementation, we'll extract from the IR printing
+            static std::string getValueName(Value val, const std::string& defaultPrefix = "arg",int inputsize=0) {
                 std::string str;
                 llvm::raw_string_ostream sstream(str);
                 val.print(sstream);
@@ -182,11 +178,14 @@ namespace mlir {
                 
                 // If unable to extract name, use default naming scheme
                 if (auto blockArg = mlir::dyn_cast<BlockArgument>(val)) {
+                    if(defaultPrefix=="out") return defaultPrefix + std::to_string(blockArg.getArgNumber()-inputsize);
                     return defaultPrefix + std::to_string(blockArg.getArgNumber());
                 }
                 
                 // For operation results, try to get a meaningful name
                 if (auto definingOp = val.getDefiningOp()) {
+                    llvm::errs() << "[INFO]  definingOp:"<< definingOp->getName() << "\n";
+                    llvm::errs() << "[INFO]  definingOp name:"<<std::to_string(mlir::cast<OpResult>(val).getResultNumber()) << "\n";
                     return defaultPrefix + std::to_string(mlir::cast<OpResult>(val).getResultNumber());
                 }
                 
@@ -196,8 +195,7 @@ namespace mlir {
             // Helper to generate top-level XDF
             static LogicalResult generateTopXDF(StringRef outputDir, Operation *op) {
                 llvm::SmallString<128> xdfPath(outputDir);
-                //llvm::sys::path::append(xdfPath, "top.xdf");
-                                    while (true) {
+                while (true) {
                         xdfPath.clear();
                         xdfPath.append(outputDir);
                         if (counter == 0) {
@@ -221,55 +219,39 @@ namespace mlir {
                 }
 
                 os << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-                os << "<XDF name=\"top\">\n";
+                os << "<XDF name=\"top"<<std::to_string(counter)<<"\">\n";
                 // Process ModuleOp inputs/outputs
                 if (auto module = dyn_cast<ModuleOp>(op)) {
                     auto topRegion = module.lookupSymbol<RegionOp>("top");
                     if (topRegion) {
-                        llvm::errs() << "[INFO] Found dfg.region 'top' with inputs/outputs\n";            
+                        //llvm::errs() << "[INFO] Found dfg.region 'top' with inputs/outputs\n";            
                         auto inputTypes = topRegion.getFunctionType().getInputs();
                         auto outputTypes = topRegion.getFunctionType().getResults();
-                        
+                        int isz = inputTypes.size();
                         // Get the actual input/output names from the region operation
                         std::vector<std::string> inputNames;
                         std::vector<std::string> outputNames;
-                        
+                        outputNames.clear(); 
                         // Extract input argument names
                         for (auto &arg : topRegion.getBody().getArguments()) {
-                            // Extract the name using our helper function
-                            std::string argName = getValueName(arg, "in");
-                            inputNames.push_back(argName);
-                        }
-                        
-                        // Extract output names by walking through the instantiations
-                        // and collecting the output names referenced in the region
-                        outputNames.clear(); // Make sure we start with an empty list
-                        
-                        // First, identify the expected output names from the region's signature
-                        // This ensures we preserve the original names from the MLIR definition
-                        for (unsigned i = 0; i < outputTypes.size(); ++i) {
-                            // We use the same approach as for inputs, looking at how they're defined in the region
-                            std::string outName = "out" + std::to_string(i); // Default name
-                            
-                            // Try to find the actual name used in instantiations
-                            bool found = false;
-                            topRegion.getBody().walk([&](InstantiateOp inst) {
-                                if (found) return WalkResult::advance();
-                                
-                                // Only consider if this instantiation has at least i outputs
-                                if (i < inst.getOutputs().size()) {
-                                    auto output = inst.getOutputs()[i];
-                                    if (auto blockArg = mlir::dyn_cast<BlockArgument>(output)) {
-                                        outName = getValueName(blockArg, outName);
-                                        found = true;
-                                        return WalkResult::interrupt();
-                                    }
+                            std::string typeStr;
+                            llvm::raw_string_ostream rso(typeStr);
+                            arg.getType().print(rso);
+                            rso.flush();
+                            std::string direction = "in";
+                            if (typeStr.find("dfg.input") != std::string::npos) {
+                                direction = "out";
+                            }
+                            std::string argName = getValueName(arg, direction,isz);
+                            //llvm::errs() << "[INFO] argument name:" << argName << " (" << direction << ")\n";
+
+                                if (direction == "in") {
+                                    inputNames.push_back(argName);
+                                } else {
+                                    outputNames.push_back(argName);
                                 }
-                                return WalkResult::advance();
-                            });
-                            
-                            outputNames.push_back(outName);
                         }
+
                         
                         // Helper function to get type size
                         auto getTypeSize = [](Type type) -> unsigned {
@@ -290,6 +272,7 @@ namespace mlir {
                         };                    
                         
                         // Input ports with actual names
+                        
                         for (unsigned i = 0; i < inputTypes.size(); ++i) {
                             std::string portName = (i < inputNames.size()) ? inputNames[i] : "in" + std::to_string(i);
                             
@@ -306,9 +289,8 @@ namespace mlir {
                         // Output ports with actual names
                         for (unsigned i = 0; i < outputTypes.size(); ++i) {
                             std::string portName = (i < outputNames.size()) ? outputNames[i] : "out" + std::to_string(i);
-                            //llvm::errs() << "[info] portname:"<<portName.substr(0,portName.length()-1)<<","<<outputNames[i]<<","<<i<<".\n";
                             unsigned size = getTypeSize(outputTypes[i]);
-                            os << "  <Port kind=\"Output\" name=\"" << portName.substr(0,portName.length()-1) << "\">\n";
+                            os << "  <Port kind=\"Output\" name=\"" << portName << "\">\n";
                             os << "    <Type name=\"" << (mlir::isa<FloatType>(outputTypes[i]) ? "int" : "int") << "\">\n"; //cal just support int
                             os << "      <Entry kind=\"Expr\" name=\"size\">\n";
                             os << "        <Expr kind=\"Literal\" literal-kind=\"Integer\" value=\"" << size << "\"/>\n";
@@ -319,41 +301,73 @@ namespace mlir {
                         
                         // Create instances with connections using actual names
                         unsigned instNum = 0;
+                        // Create a map from values to their source instances
+                        DenseMap<Value, std::pair<std::string, unsigned>> valueToSource;
                         topRegion.getBody().walk([&](InstantiateOp inst) {
-                            std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum++);
+                            std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum);
+                            //std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum++);
                             os << "  <Instance id=\"" << instName << "\">\n";
                             os << "    <Class name=\""<<calPackageName<<"." << inst.getCallee().getRootReference().str() << "\"/>\n";
                             os << "  </Instance>\n";
-
-                            // Connect inputs using the actual input names
-                            for (unsigned i = 0; i < inst.getInputs().size(); ++i) {
-                                Value input = inst.getInputs()[i];
-                                std::string srcPortName;
-                                
-                                if (auto blockArg = mlir::dyn_cast<BlockArgument>(input)) {
-                                    srcPortName = getValueName(blockArg, "in");
-                                    
-                                    os << "  <Connection dst=\"" << instName << "\" dst-port=\"a" << i
-                                       << "\" src=\"\" src-port=\"" << srcPortName << "\"/>\n";
-                                }
-                            }
-
-                            // Connect outputs using the actual output names
+                            // Record the outputs of this instance
                             for (unsigned i = 0; i < inst.getOutputs().size(); ++i) {
                                 Value output = inst.getOutputs()[i];
-                                std::string dstPortName;
+                                // Handle both the output value and its channel counterpart
+                                if (auto channelOp = output.getDefiningOp<ChannelOp>()) {
+                                    // For channel operations, record both ends
+                                    valueToSource[channelOp.getInChan()] = {instName, i};
+                                    valueToSource[channelOp.getOutChan()] = {instName, i};
+                                } else {
+                                    valueToSource[output] = {instName, i};
+        }            
+                            }
+                            
+                            instNum++;
+                        });
+                        // Second pass: create connections
+                        instNum = 0;
+                        topRegion.getBody().walk([&](InstantiateOp inst) {
+                            std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum);
+                            
+                            // Connect inputs
+                            for (unsigned i = 0; i < inst.getInputs().size(); ++i) {
+                                Value input = inst.getInputs()[i];
                                 
-                                if (auto blockArg = mlir::dyn_cast<BlockArgument>(output)) {
-                                    dstPortName = getValueName(blockArg, "out");
+                                if (auto blockArg = mlir::dyn_cast<BlockArgument>(input)) {
+                                    // Connection from top-level input
+                                    std::string srcPortName = getValueName(blockArg, "in");
+                                    os << "  <Connection dst=\"" << instName << "\" dst-port=\"a" << i
+                                    << "\" src=\"\" src-port=\"" << srcPortName << "\"/>\n";
+                                } else  {
+                                    // Try to find the source by walking through defining ops
+                                    Value sourceValue = input;
+                                    if (auto channelOp = input.getDefiningOp<ChannelOp>()) {
+                                        sourceValue = channelOp.getOutChan(); // Use the output side of channel
+                                    }
                                     
-                                    os << "  <Connection dst=\"\" dst-port=\"" << dstPortName
-                                       << "\" src=\"" << instName << "\" src-port=\"c" << i << "\"/>\n";
+                                    if (valueToSource.count(sourceValue)) {
+                                        auto source = valueToSource[sourceValue];
+                                        os << "  <Connection dst=\"" << instName << "\" dst-port=\"a" << i
+                                        << "\" src=\"" << source.first << "\" src-port=\"c" << source.second << "\"/>\n";
+                                    }
                                 }
                             }
+
+                            // Connect outputs to top-level ports
+                            for (unsigned i = 0; i < inst.getOutputs().size(); ++i) {
+                                Value output = inst.getOutputs()[i];
+                                
+                                if (auto blockArg = mlir::dyn_cast<BlockArgument>(output)) {
+                                    std::string dstPortName = getValueName(blockArg, "out",isz);
+                                    os << "  <Connection dst=\"\" dst-port=\"" << dstPortName
+                                    << "\" src=\"" << instName << "\" src-port=\"c" << i << "\"/>\n";
+                                }
+
+                            }
+                            
+                            instNum++;
                         });            
-                    }
-                    
-                    else {
+                    } else {
                         llvm::errs() << "[ERROR] No dfg.region @top found.\n";
                         return failure();
                     }      
@@ -381,8 +395,10 @@ namespace mlir {
                 if (ec) {
                     return op->emitError("Failed to create top.xdfdiag file: ") << ec.message();
                 }
-                os<< R"(<?xml version="1.0" encoding="ASCII"?>
-                <pi:Diagram xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:al="http://eclipse.org/graphiti/mm/algorithms" xmlns:pi="http://eclipse.org/graphiti/mm/pictograms" visible="true" gridUnit="10" diagramTypeId="xdfDiagram" name="top" snapToGrid="true" version="0.18.0">
+                os << R"(<?xml version="1.0" encoding="ASCII"?>
+                <pi:Diagram xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:al="http://eclipse.org/graphiti/mm/algorithms" xmlns:pi="http://eclipse.org/graphiti/mm/pictograms" visible="true" gridUnit="10" diagramTypeId="xdfDiagram" name="top)";
+                os << std::to_string(counter);
+                os << R"(" snapToGrid="true" version="0.18.0">
                 <graphicsAlgorithm xsi:type="al:Rectangle" background="//@colors.1" foreground="//@colors.0" lineWidth="1" transparency="0.0" width="1000" height="1000"/>
                 <colors red="227" green="238" blue="249"/>
                 <colors red="255" green="255" blue="255"/>

@@ -793,7 +793,7 @@ void mlir::addPrepareForMdcPasses(OpPassManager &pm) {
     pm.addPass(dfg::createDfgInlineRegionPass());
     pm.addPass(createCanonicalizerPass());
 
-    //pm.addPass(bufferization::createOneShotBufferizePass());
+    pm.addPass(bufferization::createOneShotBufferizePass());
     pm.addPass(createCanonicalizerPass());
     pm.addPass(createSymbolDCEPass());
     pm.addPass(createCSEPass());
