@@ -254,7 +254,8 @@ private:
 //===----------------------------------------------------------------------===//
 // StandardOps
 //===----------------------------------------------------------------------===//
-
+bool reduceOneIteration = true;
+std::vector<std::string> funcNames;
 static LogicalResult
 printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
 {
@@ -276,10 +277,29 @@ printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
         return ::emitError(
             moduleOp.getLoc(),
             "Failed to initialize the project.");
+    
 
-    for (Operation &op : moduleOp)
+    auto &ops = moduleOp.getBody()->getOperations();        
+    auto begin = ops.begin();
+    auto end = ops.end();
+    if (reduceOneIteration && ops.size() > 0) {
+     funcNames.clear();   
+        --end;
+
+    }
+    for (auto it = begin; it != end; ++it){
+        Operation &op = *it;
+        //
         if (failed(emitter.emitOperation(op))) return failure();
-
+        else if (auto symbolOp = dyn_cast<mlir::SymbolOpInterface>(&op)) {
+            auto funcName = symbolOp.getName().str();
+            funcNames.push_back(funcName);
+        }
+    }
+    
+    for (int i = 0; i < funcNames.size(); i++) {
+        llvm::errs() << "[INFO] funcName: " << funcNames[i] << "\n";
+    }
     // Create scripts after succesfully generate the cpp file
     if (failed(emitter.createScriptFiles())) return failure();
 
@@ -348,7 +368,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::FuncOp funcOp)
     VitisProjectEmitter::BlockScope scope(emitter, &funcOp.getBody().front());
 
     auto funcName = funcOp.getSymName().str();
-
+    //llvm::errs() << "[INFO] funcName: " << funcName << "\n";
     dbgOS << "Translating FuncOp at " << funcOp.getLoc() << "\n";
     cppOS << "void " << funcName << "(";
     if (failed(interleaveCommaWithError(
@@ -1290,6 +1310,7 @@ puts "INFO: Exporting hardware with bitstream"
 write_hw_platform -fixed -include_bit -force -file $project_dir/${project_name}_bd.xsa
 exit
 )";
+
 constexpr const char* kRunDesignShTemplate =
     R"(#!/bin/bash
 if [ -z "$XILINX_PATH" ]; then
@@ -1373,18 +1394,48 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
             dbgOS << "Error creating run_hls.tcl: " << ec.message() << "\n";
             return failure();
         }
+        
         // Create tcl script based on top function name and target device
         dbgOS << "Creating run_hls.tcl file\n";
         // Use pre-defined template and replace the key
-        std::string content(kRunHLSTclTemplate);
-        content = replaceAll(content, "{{TARGET_DEVICE}}", targetDevice);
-        content = replaceAll(content, "{{TOP_FUNC_NAME}}", topFuncName);
+        std::string content;
+                if (!reduceOneIteration) {
+            // Normal case: single top function
+            std::string tempcontent(kRunHLSTclTemplate);
+            tempcontent = replaceAll(tempcontent, "{{TARGET_DEVICE}}", targetDevice);
+            tempcontent = replaceAll(tempcontent, "{{TOP_FUNC_NAME}}", topFuncName);
+            content = tempcontent;
+        } else {
+            std::string templateStr(kRunHLSTclTemplate);
+            const std::string loopStart = "open_solution \"solution_{{TOP_FUNC_NAME}}\"";
+            const std::string loopEnd = "close_solution";
+            size_t startPos = templateStr.find(loopStart);
+            size_t endPos = templateStr.find(loopEnd, startPos);
+            if (startPos == std::string::npos || endPos == std::string::npos) {
+                dbgOS << "Error: Template does not contain expected block\n";
+                return failure();
+            }
+            endPos += std::string("close_solution").length();
+            std::string prefix = templateStr.substr(0, startPos);
+            std::string loopBlock = templateStr.substr(startPos, endPos - startPos);
+            std::string suffix = templateStr.substr(endPos);
+            prefix = replaceAll(prefix, "{{TARGET_DEVICE}}", targetDevice);
+            content += prefix;
+            for (const auto &funcName : funcNames) {
+                std::string block = loopBlock;
+                block = replaceAll(block, "{{TOP_FUNC_NAME}}", funcName);
+                content += block + "\n";
+            }
+            content += suffix;
+        }
+        
         tclFile << content;
         // Debug info
         dbgOS << "Created run_hls.tcl\n";
     }
-
+     
     // Generate Tcl script for FPGA design
+    if(!reduceOneIteration)
     {
         SmallString<128> tclPath(projectDir);
         llvm::sys::path::append(tclPath, "run_vivado.tcl");
@@ -1457,6 +1508,14 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
         // Create shell script to automatic run Vitis HLS and Vivado
         dbgOS << "Creating run_design.sh file\n";
         std::string content(kRunDesignShTemplate);
+        if (reduceOneIteration) {
+            std::string vivadoStart = R"(echo "Runing Vivado")";
+            size_t pos = content.find(vivadoStart);
+            if (pos != std::string::npos) {
+                content = content.substr(0, pos); // Truncate everything from Vivado onwards
+            }
+        }
+       
         content = replaceAll(content, "{{TOP_FUNC_NAME}}", topFuncName);
         shFile << content;
         // Debug info
