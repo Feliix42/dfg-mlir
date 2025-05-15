@@ -99,13 +99,16 @@ struct VitisProjectEmitter {
     explicit VitisProjectEmitter(
         raw_ostream &os,
         std::string outputDir,
+        std::string formdc,
         std::string targetDevice)
             : dbgOS(os),
               outputDir(outputDir),
+              formdc(formdc),
               targetDevice(targetDevice)
     {}
 
     // Class to manage argument and variable names
+    bool getFormdc() const { return formdc == "true"; }
     struct NameManager {
         NameManager() = default;
         std::string getPrefix(Operation* op)
@@ -231,6 +234,7 @@ private:
     std::unique_ptr<raw_indented_ostream> cppIndentedOS;
     // Command line options
     std::string outputDir;
+    std::string formdc;
     std::string targetDevice;
     // Utils
     std::string projectDir;
@@ -254,7 +258,7 @@ private:
 //===----------------------------------------------------------------------===//
 // StandardOps
 //===----------------------------------------------------------------------===//
-bool reduceOneIteration = true;
+bool reduceOneIteration = false;
 std::vector<std::string> funcNames;
 static LogicalResult
 printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
@@ -278,7 +282,7 @@ printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
             moduleOp.getLoc(),
             "Failed to initialize the project.");
     
-
+    reduceOneIteration = emitter.getFormdc();       
     auto &ops = moduleOp.getBody()->getOperations();        
     auto begin = ops.begin();
     auto end = ops.end();
@@ -297,9 +301,7 @@ printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
         }
     }
     
-    for (int i = 0; i < funcNames.size(); i++) {
-        llvm::errs() << "[INFO] funcName: " << funcNames[i] << "\n";
-    }
+
     // Create scripts after succesfully generate the cpp file
     if (failed(emitter.createScriptFiles())) return failure();
 
@@ -1798,8 +1800,9 @@ LogicalResult vitis::generateVitisProject(
     Operation* op,
     raw_ostream &os,
     StringRef outputDir,
+    StringRef formdc,
     StringRef targetDevice)
 {
-    VitisProjectEmitter emitter(os, outputDir.str(), targetDevice.str());
+    VitisProjectEmitter emitter(os, outputDir.str(), formdc.str(), targetDevice.str());
     return emitter.emitOperation(*op);
 }

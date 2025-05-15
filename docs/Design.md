@@ -96,3 +96,4 @@ If one needs to use a custom directory to generate these files and/or uses a dif
 
 1. `--output-dir`: defines the output directory, please use abosulte path (speicial path symbols such as `~` is not supported)
 2. `--target-device`: defines the targeted device name, such as for Kira KV260 SOM it's `xck26-sfvc784-2LV-c`.
+3. `--for-MDC`: makes just neccessary files for MDC merging, defualt is `false`.

@@ -22,6 +22,7 @@ LogicalResult generateVitisProject(
     Operation* op,
     raw_ostream &os,
     StringRef outputDirOpt,
+    StringRef formdc,
     StringRef targetDevice);
 
 } // namespace vitis
