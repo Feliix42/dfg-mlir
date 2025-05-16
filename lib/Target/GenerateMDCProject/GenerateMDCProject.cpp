@@ -348,7 +348,7 @@ namespace mlir {
                                     if (valueToSource.count(sourceValue)) {
                                         auto source = valueToSource[sourceValue];
                                         os << "  <Connection dst=\"" << instName << "\" dst-port=\"arg" << i
-                                        << "\" src=\"" << source.first << "\" src-port=\arg" << source.second +inst.getInputs().size()<< "\"/>\n";
+                                        << "\" src=\"" << source.first << "\" src-port=\"arg" << source.second +inst.getInputs().size()<< "\"/>\n";
                                     }
                                 }
                             }
