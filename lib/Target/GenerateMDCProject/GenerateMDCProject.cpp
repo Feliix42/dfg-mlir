@@ -76,7 +76,7 @@ namespace mlir {
                             return processOp.emitError("Unsupported input type for CAL generation: ") << type;
                         }
 
-                        os << "  " << calType << " a" << i;
+                        os << "  " << calType << " arg" << i;
                         os << (i + 1 < funcType.getNumInputs() ? ",\n" : "\n");
                     }
                     
@@ -88,7 +88,7 @@ namespace mlir {
                         if (calType.empty()) {
                             return processOp.emitError("Unsupported input type for CAL generation: ") << type;
                         }
-                        os <<"  " << calType << " c" << i;
+                        os <<"  " << calType << " arg" << i+funcType.getNumInputs();
                         os << (i + 1 < funcType.getNumResults() ? ",\n" : "\n");
                     }
                     
@@ -336,7 +336,7 @@ namespace mlir {
                                 if (auto blockArg = mlir::dyn_cast<BlockArgument>(input)) {
                                     // Connection from top-level input
                                     std::string srcPortName = getValueName(blockArg, "in");
-                                    os << "  <Connection dst=\"" << instName << "\" dst-port=\"a" << i
+                                    os << "  <Connection dst=\"" << instName << "\" dst-port=\"arg" << i
                                     << "\" src=\"\" src-port=\"" << srcPortName << "\"/>\n";
                                 } else  {
                                     // Try to find the source by walking through defining ops
@@ -347,8 +347,8 @@ namespace mlir {
                                     
                                     if (valueToSource.count(sourceValue)) {
                                         auto source = valueToSource[sourceValue];
-                                        os << "  <Connection dst=\"" << instName << "\" dst-port=\"a" << i
-                                        << "\" src=\"" << source.first << "\" src-port=\"c" << source.second << "\"/>\n";
+                                        os << "  <Connection dst=\"" << instName << "\" dst-port=\"arg" << i
+                                        << "\" src=\"" << source.first << "\" src-port=\arg" << source.second +inst.getInputs().size()<< "\"/>\n";
                                     }
                                 }
                             }
@@ -360,7 +360,7 @@ namespace mlir {
                                 if (auto blockArg = mlir::dyn_cast<BlockArgument>(output)) {
                                     std::string dstPortName = getValueName(blockArg, "out",isz);
                                     os << "  <Connection dst=\"\" dst-port=\"" << dstPortName
-                                    << "\" src=\"" << instName << "\" src-port=\"c" << i << "\"/>\n";
+                                    << "\" src=\"" << instName << "\" src-port=\"arg" << i+inst.getInputs().size() << "\"/>\n";
                                 }
 
                             }
