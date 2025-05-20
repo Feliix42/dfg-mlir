@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<XDF name="top0">
+  <Port kind="Input" name="in0">
+    <Type name="int">
+      <Entry kind="Expr" name="size">
+        <Expr kind="Literal" literal-kind="Integer" value="32"/>
+      </Entry>
+    </Type>
+  </Port>
+  <Port kind="Input" name="in1">
+    <Type name="int">
+      <Entry kind="Expr" name="size">
+        <Expr kind="Literal" literal-kind="Integer" value="32"/>
+      </Entry>
+    </Type>
+  </Port>
+  <Port kind="Output" name="out0">
+    <Type name="int">
+      <Entry kind="Expr" name="size">
+        <Expr kind="Literal" literal-kind="Integer" value="32"/>
+      </Entry>
+    </Type>
+  </Port>
+  <Port kind="Output" name="out1">
+    <Type name="int">
+      <Entry kind="Expr" name="size">
+        <Expr kind="Literal" literal-kind="Integer" value="32"/>
+      </Entry>
+    </Type>
+  </Port>
+  <Instance id="accumulator0">
+    <Class name="custom.accumulator"/>
+  </Instance>
+  <Instance id="accumulator1">
+    <Class name="custom.accumulator"/>
+  </Instance>
+  <Connection dst="accumulator0" dst-port="arg0" src="" src-port="in0"/>
+  <Connection dst="" dst-port="out0" src="accumulator0" src-port="arg1"/>
+  <Connection dst="accumulator1" dst-port="arg0" src="" src-port="in1"/>
+  <Connection dst="" dst-port="out1" src="accumulator1" src-port="arg1"/>
+</XDF>

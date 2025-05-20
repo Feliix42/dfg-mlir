@@ -134,29 +134,63 @@ Assuming your MLIR input file is named `dfg.mlir`, follow the steps below to gen
 
 ---
 
-### **Example: Typical Multiply-and-Accumulate (MAC) Operator**
+### **Example: Accumulate-and-Shifter Operator**
 
-The following code snippet defines two simple SDF operators, `@mul` and `@opr`, each of which performs basic arithmetic operations and emits two outputs. They are instantiated and interconnected in the top-level region.
+The following code snippet defines two simple SDF operators, `@accumulator` and `@lshifter`, each of which performs basic arithmetic operations and emits an output. They are instantiated and interconnected in the top-level region.
 
 ```mlir
-dfg.operator @mul inputs(%a: i64, %b: i64, %c: i64) outputs(%d: i64, %e: i64) {
-    %0 = arith.muli %a, %b : i64
-    %1 = arith.addi %0, %c : i64
-    dfg.output %0, %1 : i64, i64
+dfg.operator @accumulator inputs(%in: i32) outputs(%out: i32) {
+    %0 = arith.constant 1 : i32
+    %1 = arith.addi %in, %0 : i32      
+    dfg.output %1: i32 
 }
 
-dfg.operator @opr inputs(%a: i32, %b: i32, %c: i32) outputs(%d: i32, %e: i32) {
-    %0 = arith.addi %a, %b : i32
-    %1 = arith.muli %0, %c : i32
-    dfg.output %0, %1 : i32, i32
+dfg.operator @lshifter inputs(%in: i32) outputs(%out: i32) {
+    %0 = arith.constant 2 : i32
+    %1 = arith.muli %in, %0 : i32   
+    dfg.output %1: i32  
 }
 
-dfg.region @top inputs(%arg0: i64, %arg1: i64, %arg2: i64, %arg7: i32, %arg8: i32, %arg9: i32) 
-             outputs(%arg3: i64, %arg4: i64, %arg5: i32, %arg6: i32) {
-    dfg.instantiate @mul inputs(%arg0, %arg1, %arg2) outputs(%arg3, %arg4) : (i64, i64, i64) -> (i64, i64)
-    dfg.instantiate @opr inputs(%arg7, %arg8, %arg9) outputs(%arg5, %arg6) : (i32, i32, i32) -> (i32, i32)
+dfg.region @top inputs(%arg0: i32) outputs(%arg1: i32) {
+	%0:2 = dfg.channel(1) : i32
+    dfg.instantiate @accumulator inputs(%arg0) outputs(%0#0) : (i32) -> i32
+    dfg.instantiate @lshifter inputs(%0#1) outputs(%arg1) : (i32) -> i32
 }
 ```
-This structure enables a modular design and can be automatically translated into XDF networks and CAL actors for deployment in the Orcc toolchain. The generated files include `top.xdf` and `top.xdfdiag` in the `baseline/` directory (these file names are always the same), and `mul.cal` and `opr.cal` in the `custom/` directory (the file names correspond to the operator names defined in the MLIR).
+This structure enables a **modular and composable design** and can be **automatically translated into XDF networks and CAL actors** for deployment within the Orcc toolchain. The generated files include `top.xdf` and `top.xdfdiag` (stored in the `baseline/` directory and always named consistently), as well as `accumulator.cal` and `lshifter.cal` (stored in the `custom/` directory, named after the operators defined in the MLIR).
 
+### **Meging MLIR in verilog by MDC Backend**
 
+We aim to **merge the MLIR design** from the example above with the following simple hardware-oriented accumulator using the Orcc environment for hardware implementation:
+
+```mlir
+dfg.operator @accumulator inputs(%in: i32) outputs(%out: i32) {
+    %0 = arith.constant 1 : i32
+    %1 = arith.addi %in, %0 : i32      
+    dfg.output %1: i32
+    
+}
+
+dfg.region @top inputs(%arg0: i32, %arg1: i32) outputs(%arg3: i32, %arg4: i32) {
+    	dfg.instantiate @accumulator inputs(%arg0) outputs(%arg3) : (i32) -> i32
+    	dfg.instantiate @accumulator inputs(%arg1) outputs(%arg4) : (i32) -> i32
+}
+```
+
+After generating MDC files following the [instructions provided here](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MDC), the Verilog files can be obtained by applying the **conversion and translation** flow for the FPGA backend. This is achieved using the `dfg-translate` tool with the `--for-MDC=true` flag, as shown below:
+
+```bash
+dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-generate-project \
+    --output-dir=/path/you/want/ --target-device="device-name" --for-MDC=true
+```
+
+Each operator results in a corresponding Verilog file. All Verilog files should be placed in the same folder, as shown in this [example directory](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MLIR%20verilog).
+
+In the Orcc environment, you can import:
+
+* [Verilog files](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MLIR%20verilog),
+* [MDC files](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MDC),
+* and the [Vivado protocol file](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/protocol/protocol_VIVADO_us.xml).
+
+Orcc will then generate the complete set of Verilog outputs, including the top module, submodules, and testbench, which are stored in the [`Merged verilog`](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/Merged%20verilog%20) directory.
+ 
