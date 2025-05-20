@@ -159,7 +159,7 @@ dfg.region @top inputs(%arg0: i32) outputs(%arg1: i32) {
 ```
 This structure enables a **modular and composable design** and can be **automatically translated into XDF networks and CAL actors** for deployment within the Orcc toolchain. The generated files include `top.xdf` and `top.xdfdiag` (stored in the `baseline/` directory and always named consistently), as well as `accumulator.cal` and `lshifter.cal` (stored in the `custom/` directory, named after the operators defined in the MLIR).
 
-### **Meging MLIR in verilog by MDC Backend**
+### **Merging MLIR in verilog by MDC Backend**
 
 We aim to **merge the MLIR design** from the example above with the following simple hardware-oriented accumulator using the Orcc environment for hardware implementation:
 
