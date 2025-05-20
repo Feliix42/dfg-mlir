@@ -177,11 +177,11 @@ dfg.region @top inputs(%arg0: i32, %arg1: i32) outputs(%arg3: i32, %arg4: i32) {
 }
 ```
 
-After generating MDC files following the [instructions provided here](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MDC), the Verilog files can be obtained by applying the **conversion and translation** flow for the FPGA backend. This is achieved using the `dfg-translate` tool with the `--for-MDC=true` flag, as shown below:
+After generating MDC files following the the above instructions (find example files [here](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MDC)), the Verilog files can be obtained by applying the **conversion and translation** flow for the FPGA backend. This is achieved using the `dfg-translate` tool with the `--for-MDC=true` flag, as shown below:
 
 ```bash
 dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-generate-project \
-    --output-dir=/path/you/want/ --target-device="device-name" --for-MDC=true
+    (--output-dir=/path/you/want/ --target-device="device-name") --for-MDC=true
 ```
 
 Each operator results in a corresponding Verilog file. All Verilog files should be placed in the same folder, as shown in this [example directory](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MLIR%20verilog).
