@@ -177,20 +177,20 @@ dfg.region @top inputs(%arg0: i32, %arg1: i32) outputs(%arg3: i32, %arg4: i32) {
 }
 ```
 
-After generating MDC files following the the above instructions (find example files [here](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MDC)), the Verilog files can be obtained by applying the **conversion and translation** flow for the FPGA backend. This is achieved using the `dfg-translate` tool with the `--for-MDC=true` flag, as shown below:
+After generating MDC files following the the above instructions (find example files [here](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Target/Merging%20MDC/MDC)), the Verilog files can be obtained by applying the **conversion and translation** flow for the FPGA backend. This is achieved using the `dfg-translate` tool with the `--for-MDC=true` flag, as shown below:
 
 ```bash
 dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-generate-project \
     (--output-dir=/path/you/want/ --target-device="device-name") --for-MDC=true
 ```
 
-Each operator results in a corresponding Verilog file. All Verilog files should be placed in the same folder, as shown in this [example directory](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MLIR%20verilog).
+Each operator results in a corresponding Verilog file. All Verilog files should be placed in the same folder, as shown in this [example directory](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Target/Merging%20MDC/MLIR%20verilog).
 
 In the Orcc environment, you can import:
 
-* [Verilog files](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MLIR%20verilog),
-* [MDC files](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/MDC),
-* and the [Vivado protocol file](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/protocol/protocol_VIVADO_us.xml).
+* [Verilog files](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Target/Merging%20MDC/MLIR%20verilog),
+* [MDC files](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Target/Merging%20MDC/MDC),
+* and the [Vivado protocol file](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Target/Merging%20MDC/protocol/protocol_VIVADO_us.xml).
 
-Orcc will then generate the complete set of Verilog outputs, including the top module, submodules, and testbench, which are stored in the [`Merged verilog`](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Merging%20MDC/Merged%20verilog%20) directory.
+Orcc will then generate the complete set of Verilog outputs, including the top module, submodules, and testbench, which are stored in the [`Merged verilog`](https://github.com/fraratto/dfg-mlir/blob/dev-myrtus/test/Target/Merging%20MDC/Merged%20verilog%20) directory.
  
