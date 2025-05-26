@@ -1409,6 +1409,8 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
         parser.getBuilder().getDenseI32ArrayAttr({numInputs, numOutputs});
     result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
+    if (parser.parseOptionalAttrDict(result.attributes)) return failure();
+
     return success();
 }
 
@@ -1437,6 +1439,13 @@ void InstantiateOp::print(OpAsmPrinter &p)
 
     p << " : ";
     p.printFunctionalType(inpChans, outChans);
+
+    SmallVector<StringRef> elided;
+    elided.push_back(getCalleeAttrName());
+    elided.push_back(getOffloadedAttrName());
+    elided.push_back(kOperandSegmentSizesAttr);
+
+    p.printOptionalAttrDict((*this)->getAttrs(), elided);
 }
 
 LogicalResult InstantiateOp::verify()
