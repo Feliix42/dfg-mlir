@@ -97,7 +97,9 @@ struct OffloadedInstantiateOpLowering
             parent.lookupSymbol<ProcessOp>(adaptor.getCallee());
 
         if (kernelDefinition == NULL)
-            return ::emitError(parent.lookupSymbol(adaptor.getCallee())->getLoc(), "Expected this to be a ProcessOp");
+            return ::emitError(
+                parent.lookupSymbol(adaptor.getCallee())->getLoc(),
+                "Expected this to be a ProcessOp");
 
         // verify that both argument lengths match
         size_t kernelArgLength =
@@ -144,6 +146,14 @@ struct OffloadedInstantiateOpLowering
         int i = 0;
         ArrayRef<int64_t> multiplicities = kernelDefinition.getMultiplicity();
 
+        if (multiplicities.empty()) {
+            // initialize with all 1's
+            SmallVector<int64_t> newMults;
+            for (size_t i = 0; i < op.getOperands().size(); i++)
+                newMults.push_back(1);
+
+            multiplicities = newMults;
+        }
         // verify that the number of arguments matches the defined multiplicity
         if (op.getOperands().size() != multiplicities.size()) {
             emitError(
@@ -228,12 +238,15 @@ struct OffloadedInstantiateOpLowering
         // ====================================================================
         // Olympus wrapper call
         // ====================================================================
-        rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<func::CallOp>(
-            op,
-            wrapperName,
-            op->getResultTypes(),
-            adaptor.getOperands());
+        // Technically, we don't care about any dfg past this point, but this
+        // seems safe(r)
+        op.setOffloaded(false);
+        // rewriter.setInsertionPoint(op);
+        // rewriter.replaceOpWithNewOp<func::CallOp>(
+        //     op,
+        //     wrapperName,
+        //     op->getResultTypes(),
+        //     adaptor.getOperands());
 
         return success();
     }
