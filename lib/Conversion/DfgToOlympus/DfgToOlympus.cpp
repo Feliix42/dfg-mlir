@@ -22,6 +22,38 @@ using namespace mlir;
 using namespace mlir::dfg;
 
 // ========================================================
+// Utility functions
+// ========================================================
+
+static std::string OLYMPUS_CONFIG = "olympus.config";
+
+SmallVector<NamedAttribute>
+deriveAttributesFromConfig(ConversionPatternRewriter &rewriter, StringRef cfg)
+{
+    SmallVector<StringRef> splitValues;
+    SmallVector<NamedAttribute> attributes;
+
+    cfg.split(splitValues, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+
+    for (auto pair : splitValues) {
+        if (pair.contains('=')) {
+            auto [name, val] = pair.split('=');
+            NamedAttribute a(
+                rewriter.getStringAttr(name),
+                rewriter.getStringAttr(val));
+            attributes.push_back(a);
+        } else {
+            NamedAttribute a(
+                rewriter.getStringAttr(pair),
+                rewriter.getBoolAttr(true));
+            attributes.push_back(a);
+        }
+    }
+
+    return attributes;
+}
+
+// ========================================================
 // Lowerings
 // ========================================================
 
@@ -42,7 +74,7 @@ struct OffloadedInstantiateOpLowering
     OffloadedInstantiateOpLowering(
         TypeConverter &typeConverter,
         MLIRContext* context)
-            : OpConversionPattern<InstantiateOp>(typeConverter, context){};
+            : OpConversionPattern<InstantiateOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         InstantiateOp op,
@@ -63,6 +95,9 @@ struct OffloadedInstantiateOpLowering
         // find associated ProcessOp
         ProcessOp kernelDefinition =
             parent.lookupSymbol<ProcessOp>(adaptor.getCallee());
+
+        if (kernelDefinition == NULL)
+            return ::emitError(parent.lookupSymbol(adaptor.getCallee())->getLoc(), "Expected this to be a ProcessOp");
 
         // verify that both argument lengths match
         size_t kernelArgLength =
@@ -155,16 +190,33 @@ struct OffloadedInstantiateOpLowering
             op.getOperandSegmentSizeAttr(),
             op->getAttr(op.getOperandSegmentSizesAttrName()));
 
-        std::string pathAttrName("evp.path");
-        Attribute pathAttr = kernelDefinition->getAttr(pathAttrName);
-        if (!pathAttr) {
-            emitError(
-                kernelDefinition.getLoc(),
-                "Kernel declaration must have an `evp.path` argument pointing "
-                "to the kernel source file");
-            return failure();
+        // propagate all olympus configuration attributes
+        if (op->hasAttrOfType<StringAttr>(OLYMPUS_CONFIG)) {
+            StringAttr olympusConfig =
+                op->getAttrOfType<StringAttr>(OLYMPUS_CONFIG);
+            SmallVector<NamedAttribute> cfgAttrs =
+                deriveAttributesFromConfig(rewriter, olympusConfig.getValue());
+            kernelOpState.addAttributes(cfgAttrs);
+        } else {
+            if (op->hasAttr(OLYMPUS_CONFIG))
+                ::emitWarning(
+                    op.getLoc(),
+                    "The Olympus configuration attribute was found but ignored "
+                    "as it was not a string attribute");
         }
-        kernelOpState.addAttribute(pathAttrName, pathAttr);
+
+        std::string pathAttrName("path");
+        if (kernelOpState.attributes.get("path") == NULL) {
+            Attribute pathAttr = kernelDefinition->getAttr(pathAttrName);
+            if (!pathAttr) {
+                return ::emitError(
+                    kernelDefinition.getLoc(),
+                    "Kernel declaration must have an `path` argument pointing "
+                    "to the kernel source file");
+            }
+            kernelOpState.addAttribute(pathAttrName, pathAttr);
+        }
+
         // add channels as arguments
         kernelOpState.addOperands(chans);
 
