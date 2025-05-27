@@ -5,4 +5,6 @@
 
 #pragma once
 
-#include "dfg-mlir/Dialect/dfg/Interfaces/DataflowGraphOp.h"
+#include "dfg-mlir/Dialect/dfg/Interfaces/EdgeOp.h"
+#include "dfg-mlir/Dialect/dfg/Interfaces/GraphOp.h"
+#include "dfg-mlir/Dialect/dfg/Interfaces/NodeOp.h"

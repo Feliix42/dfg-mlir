@@ -1,7 +1,7 @@
 /// Implements the dfg dialect ops.
 ///
 /// @file
-/// @author     Felix Suchert (felix.suchert@tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 
@@ -13,6 +13,13 @@
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
+
+#include <llvm/Support/LogicalResult.h>
+#include <mlir/IR/BuiltinTypeInterfaces.h>
+#include <mlir/IR/Diagnostics.h>
+#include <mlir/IR/DialectRegistry.h>
+#include <mlir/IR/ValueRange.h>
+#include <string>
 
 #define DEBUG_TYPE "dfg-ops"
 
@@ -62,6 +69,20 @@ static ParseResult parseChannelArgumentList(
 //===----------------------------------------------------------------------===//
 // RegionOp
 //===----------------------------------------------------------------------===//
+
+void RegionOp::getAsmBlockArgumentNames(
+    Region &region,
+    OpAsmSetValueNameFn setNameFn)
+{
+    unsigned numInputs = getFunctionType().getNumInputs();
+    for (unsigned i = 0, e = region.getNumArguments(); i < e; ++i)
+        if (i < numInputs)
+            setNameFn(region.getArgument(i), ("in" + std::to_string(i)));
+        else
+            setNameFn(
+                region.getArgument(i),
+                ("out" + std::to_string(i - numInputs)));
+}
 
 void RegionOp::build(
     OpBuilder &builder,
@@ -269,13 +290,18 @@ LogicalResult RegionOp::verify()
     }
 
     thisRegion.walk([&](ChannelOp channelOp) {
-        if (channelOp.getInChan().getUses().empty()) {
+        auto inputPortUses = channelOp.getInChan().getUses();
+        auto outputPortUses = channelOp.getOutChan().getUses();
+        if (inputPortUses.empty() || outputPortUses.empty()) {
             if (!channelOp.getOutChan().getUses().empty()) {
                 // ignore the problem if both input and output are unused
-                ::emitWarning(channelOp.getLoc(), "Channel input is unused. This is probably a bug in your graph.");
+                ::emitWarning(
+                    channelOp.getLoc(),
+                    "Channel input is unused. This is probably a bug in your "
+                    "graph.");
             }
         } else {
-            auto inputUser = channelOp.getInChan().getUses().begin().getUser();
+            auto inputUser = inputPortUses.begin().getUser();
             if (auto instantiateOp = dyn_cast<InstantiateOp>(inputUser)) {
                 auto calleeName =
                     instantiateOp.getCallee().getRootReference().str();
@@ -453,6 +479,28 @@ void ConnectInputOp::print(OpAsmPrinter &p)
       << getRegionPort().getType().getElementType();
 }
 
+LogicalResult ConnectInputOp::verify()
+{
+    auto regionPortTy = getRegionPort().getType().getElementType();
+    auto channelPortTy = getChannelPort().getType().getElementType();
+    auto isRegionPortShaped = isa<ShapedType>(regionPortTy);
+    auto isChannelPortShaped = isa<ShapedType>(channelPortTy);
+    auto isBothShaped = isRegionPortShaped && isChannelPortShaped;
+
+    if (isBothShaped) {
+        auto regionShapedTy = cast<ShapedType>(regionPortTy);
+        auto channelShapedTy = cast<ShapedType>(channelPortTy);
+        if ((regionShapedTy.getShape() == channelShapedTy.getShape())
+            && (regionShapedTy.getElementType()
+                == channelShapedTy.getElementType()))
+            return success();
+    } else if (!isBothShaped && (regionPortTy == channelPortTy)) {
+        return success();
+    }
+
+    return ::emitError(getLoc(), "Region and channel port types don't match");
+}
+
 //===----------------------------------------------------------------------===//
 // ConnectOutputOp
 //===----------------------------------------------------------------------===//
@@ -481,6 +529,28 @@ void ConnectOutputOp::print(OpAsmPrinter &p)
 {
     p << " " << getRegionPort() << ", " << getChannelPort() << " : "
       << getRegionPort().getType().getElementType();
+}
+
+LogicalResult ConnectOutputOp::verify()
+{
+    auto regionPortTy = getRegionPort().getType().getElementType();
+    auto channelPortTy = getChannelPort().getType().getElementType();
+    auto isRegionPortShaped = isa<ShapedType>(regionPortTy);
+    auto isChannelPortShaped = isa<ShapedType>(channelPortTy);
+    auto isBothShaped = isRegionPortShaped && isChannelPortShaped;
+
+    if (isBothShaped) {
+        auto regionShapedTy = cast<ShapedType>(regionPortTy);
+        auto channelShapedTy = cast<ShapedType>(channelPortTy);
+        if ((regionShapedTy.getShape() == channelShapedTy.getShape())
+            && (regionShapedTy.getElementType()
+                == channelShapedTy.getElementType()))
+            return success();
+    } else if (!isBothShaped && (regionPortTy == channelPortTy)) {
+        return success();
+    }
+
+    return ::emitError(getLoc(), "Region and channel port types don't match");
 }
 
 //===----------------------------------------------------------------------===//
@@ -599,6 +669,20 @@ ParseResult ProcessOp::parse(OpAsmParser &parser, OperationState &result)
     return success();
 }
 
+void ProcessOp::getAsmBlockArgumentNames(
+    Region &region,
+    OpAsmSetValueNameFn setNameFn)
+{
+    unsigned numInputs = getFunctionType().getNumInputs();
+    for (unsigned i = 0, e = region.getNumArguments(); i < e; ++i)
+        if (i < numInputs)
+            setNameFn(region.getArgument(i), ("in" + std::to_string(i)));
+        else
+            setNameFn(
+                region.getArgument(i),
+                ("out" + std::to_string(i - numInputs)));
+}
+
 void ProcessOp::print(OpAsmPrinter &p)
 {
     Operation* op = getOperation();
@@ -646,11 +730,19 @@ void ProcessOp::print(OpAsmPrinter &p)
         p << ")";
     }
 
+    SmallVector<StringRef, 3> elidedAttrs = {
+        getFunctionTypeAttrName(),
+        getSymNameAttrName()};
+    if (auto multiplicityAttr =
+            cast<DenseI64ArrayAttr>(op->getAttr("multiplicity"))) {
+        if (multiplicityAttr.empty()) elidedAttrs.push_back("multiplicity");
+    }
+
     // print any attributes in the attribute list into the dict
     if (!op->getAttrs().empty())
         p.printOptionalAttrDictWithKeyword(
             op->getAttrs(),
-            /*elidedAttrs=*/{getFunctionTypeAttrName(), getSymNameAttrName()});
+            /*elidedAttrs=*/elidedAttrs);
 
     // Print the region
     if (!isExternal) {
@@ -662,21 +754,8 @@ void ProcessOp::print(OpAsmPrinter &p)
     }
 }
 
-// TODO: ProcessOp should allow ops outside of loop
 LogicalResult ProcessOp::verify()
 {
-    // If there is a LoopOp, it must be the first op in the body
-    // if (!getBody().empty()) {
-    //     auto ops = getBody().getOps();
-    //     bool isFirstLoop, hasLoop = false;
-    //     for (const auto &op : ops)
-    //         if (auto loopOp = dyn_cast<LoopOp>(op)) hasLoop = true;
-    //     if (auto loopOp = dyn_cast<LoopOp>(&getBody().front().front()))
-    //         isFirstLoop = true;
-    //     if (hasLoop && !isFirstLoop)
-    //         return emitError("The LoopOp must be the first op of ProcessOp");
-    // }
-
     // Ensure that all inputs are of type OutputType and all outputs of type
     // InputType
     FunctionType fnSig = getFunctionType();
@@ -1235,6 +1314,21 @@ LogicalResult LoopOp::verify()
 // ChannelOp
 //===----------------------------------------------------------------------===//
 
+void ChannelOp::getAsmResultNames(
+    function_ref<void(Value, StringRef)> setNameFn)
+{
+    Block* block = getOperation()->getBlock();
+    int count = 0;
+
+    for (auto &opi : *block) {
+        if (&opi == getOperation()) break;
+        if (opi.getName() == getOperation()->getName()) ++count;
+    }
+
+    setNameFn(getResult(0), "in_chan_" + std::to_string(count));
+    setNameFn(getResult(1), "out_chan_" + std::to_string(count));
+}
+
 void ChannelOp::build(
     OpBuilder &builder,
     OperationState &state,
@@ -1337,6 +1431,28 @@ LogicalResult ChannelOp::verify()
 //===----------------------------------------------------------------------===//
 // InstantiateOp
 //===----------------------------------------------------------------------===//
+
+void InstantiateOp::build(
+    OpBuilder &builder,
+    OperationState &result,
+    std::string callee,
+    ValueRange inputs,
+    ValueRange outputs,
+    bool offloaded)
+{
+    auto calleeAttr = SymbolRefAttr::get(builder.getContext(), callee);
+    result.addAttribute(getCalleeAttrName(result.name), calleeAttr);
+    result.addOperands(inputs);
+    result.addOperands(outputs);
+    result.addAttribute(
+        getOffloadedAttrName(result.name),
+        builder.getBoolAttr(offloaded));
+    result.addAttribute(
+        kOperandSegmentSizesAttr,
+        builder.getDenseI32ArrayAttr(
+            {static_cast<int32_t>(inputs.size()),
+             static_cast<int32_t>(outputs.size())}));
+}
 
 ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 {
@@ -1491,7 +1607,6 @@ LogicalResult InstantiateOp::verify()
     else {
         auto operatorFunc = calledOperatorOp.getFunctionType();
         SmallVector<Type> inTy, outTy;
-        // SmallVector<Type> outTy;
         for (auto type : operatorFunc.getInputs())
             inTy.push_back(OutputType::get(getContext(), type));
         for (auto type : operatorFunc.getResults())
@@ -1509,6 +1624,19 @@ LogicalResult InstantiateOp::verify()
 //===----------------------------------------------------------------------===//
 // PullOp
 //===----------------------------------------------------------------------===//
+
+void PullOp::getAsmResultNames(function_ref<void(Value, StringRef)> setNameFn)
+{
+    Block* block = getOperation()->getBlock();
+    int count = 0;
+
+    for (auto &opi : *block) {
+        if (&opi == getOperation()) break;
+        if (opi.getName() == getOperation()->getName()) ++count;
+    }
+
+    setNameFn(getResult(), "pull" + std::to_string(count));
+}
 
 ParseResult PullOp::parse(OpAsmParser &parser, OperationState &result)
 {
@@ -1603,7 +1731,7 @@ LogicalResult PullNOp::verify()
 }
 
 //===----------------------------------------------------------------------===//
-// PushOp
+// PushNOp
 //===----------------------------------------------------------------------===//
 
 ParseResult PushNOp::parse(OpAsmParser &parser, OperationState &result)
@@ -1642,39 +1770,6 @@ LogicalResult PushNOp::verify()
             "must match");
 
     return success();
-}
-
-//===----------------------------------------------------------------------===//
-// Intermediate HW operations
-//===----------------------------------------------------------------------===//
-
-//===----------------------------------------------------------------------===//
-// HWConnectOp
-//===----------------------------------------------------------------------===//
-
-ParseResult HWConnectOp::parse(OpAsmParser &parser, OperationState &result)
-{
-    OpAsmParser::UnresolvedOperand portArgument;
-    OpAsmParser::UnresolvedOperand portQueue;
-    Type dataTy;
-
-    if (parser.parseOperand(portArgument) || parser.parseComma()
-        || parser.parseOperand(portQueue) || parser.parseColon()
-        || parser.parseType(dataTy))
-        return failure();
-
-    Type channelTy = InputType::get(dataTy.getContext(), dataTy);
-    if (parser.resolveOperand(portArgument, channelTy, result.operands)
-        || parser.resolveOperand(portQueue, channelTy, result.operands))
-        return failure();
-
-    return success();
-}
-
-void HWConnectOp::print(OpAsmPrinter &p)
-{
-    p << " " << getPortArgument() << ", " << getPortQueue() << " : "
-      << getPortArgument().getType().getElementType();
 }
 
 //===----------------------------------------------------------------------===//

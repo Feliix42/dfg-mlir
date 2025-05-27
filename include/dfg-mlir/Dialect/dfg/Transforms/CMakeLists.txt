@@ -1,1 +1,1 @@
-mlir_gen_passes(Dfg)
+mlir_gen_transforms(Dfg)

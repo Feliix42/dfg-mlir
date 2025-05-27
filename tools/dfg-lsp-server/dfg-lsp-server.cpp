@@ -2,10 +2,9 @@
 ///
 /// @file
 /// @author     Felix Suchert (felix.suchert@tu-dresden.de)
+/// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
 
-#include "circt/InitAllDialects.h"
-#include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
-#include "mlir/IR/Dialect.h"
+#include "dfg-mlir/InitAllDialects.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/Tools/mlir-lsp-server/MlirLspServerMain.h"
@@ -21,9 +20,7 @@ int main(int argc, char* argv[])
 {
     DialectRegistry registry;
     registerAllDialects(registry);
-    circt::registerAllDialects(registry);
-
-    registry.insert<dfg::DfgDialect>();
+    registerAllDFGMLIRDialects(registry);
 
     return asMainReturnCode(MlirLspServerMain(argc, argv, registry));
 }

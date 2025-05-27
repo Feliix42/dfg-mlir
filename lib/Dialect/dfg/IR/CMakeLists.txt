@@ -1,15 +1,15 @@
-add_mlir_dialect_library(DfgDialect
+add_mlir_dialect_library(DFGMLIRDfgDialect
         Dialect.cpp
         Ops.cpp
         Types.cpp
 
     DEPENDS
-        DfgIncGen
+        DFGMLIRDfgIncGen
 
     LINK_LIBS PUBLIC
         MLIRIR
         MLIRParser
         MLIRSideEffectInterfaces
-        DfgEnums
-        DfgInterfaces
+        DFGMLIRDfgEnums
+        DFGMLIRDfgInterfaces
 )

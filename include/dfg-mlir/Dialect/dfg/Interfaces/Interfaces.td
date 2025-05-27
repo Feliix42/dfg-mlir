@@ -7,6 +7,8 @@
 #ifndef DFG_INTERFACES
 #define DFG_INTERFACES
 
-include "dfg-mlir/Dialect/dfg/Interfaces/DataflowGraphOp.td"
+include "dfg-mlir/Dialect/dfg/Interfaces/EdgeOp.td"
+include "dfg-mlir/Dialect/dfg/Interfaces/GraphOp.td"
+include "dfg-mlir/Dialect/dfg/Interfaces/NodeOp.td"
 
 #endif // DFG_INTERFACES

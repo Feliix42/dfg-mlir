@@ -1,8 +1,8 @@
-add_mlir_conversion_library(DfgToOlympus
+add_mlir_conversion_library(DFGMLIRDfgToOlympus
         DfgToOlympus.cpp
 
     DEPENDS
-        ConversionIncGen
+        DFGMLIRConversionIncGen
 
     LINK_COMPONENTS
         Core
@@ -11,6 +11,6 @@ add_mlir_conversion_library(DfgToOlympus
         MLIRDialectUtils
         MLIRTransformUtils
         MLIRFuncDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )
 

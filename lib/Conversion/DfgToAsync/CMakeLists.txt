@@ -1,8 +1,8 @@
-add_mlir_conversion_library(DfgToAsync
+add_mlir_conversion_library(DFGMLIRDfgToAsync
         DfgToAsync.cpp
 
     DEPENDS
-        ConversionIncGen
+        DFGMLIRConversionIncGen
     
     LINK_COMPONENTS
         Core
@@ -11,5 +11,5 @@ add_mlir_conversion_library(DfgToAsync
         MLIRDialectUtils
         MLIRTransformUtils
         MLIRAsyncDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )

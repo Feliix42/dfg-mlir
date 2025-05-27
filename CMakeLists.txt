@@ -39,30 +39,23 @@ if(POLICY CMP0116)
     cmake_policy(SET CMP0116 OLD)
 endif()
 
-# Find MLIR and CIRCT
+# Find MLIR
 find_package(MLIR REQUIRED CONFIG)
 message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
-find_package(CIRCT REQUIRED CONFIG)
-message(STATUS "Using CIRCTConfig.cmake in: ${CIRCT_DIR}")
 
-# Load LLVM and MLIR and CIRCT CMake modules.
+# Load LLVM and MLIR CMake modules.
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
-list(APPEND CMAKE_MODULE_PATH "${CIRCT_CMAKE_DIR}")
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/circt/cmake/modules")
 include(TableGen)
-include(AddCIRCT)
 include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
 
-# Apply target properties for LLVM/MLIR/CIRCT globally.
+# Apply target properties for LLVM/MLIR globally.
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 include_directories(SYSTEM ${MLIR_INCLUDE_DIRS})
-include_directories(SYSTEM ${CIRCT_INCLUDE_DIRS})
 link_directories(${LLVM_BUILD_LIBRARY_DIR})
-link_directories(${CIRCT_BUILD_LIBRARY_DIR})
 add_definitions(${LLVM_DEFINITIONS})
 
 # Apply target properties for this project globally.
@@ -81,5 +74,5 @@ add_compile_options(
 # add_subdirectory(docs)
 add_subdirectory(include)
 add_subdirectory(lib)
-# add_subdirectory(test)
+add_subdirectory(test)
 add_subdirectory(tools)

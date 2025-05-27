@@ -1,8 +1,8 @@
-add_mlir_conversion_library(DfgToLLVM
+add_mlir_conversion_library(DFGMLIRDfgToLLVM
         DfgToLLVM.cpp
 
     DEPENDS
-        ConversionIncGen
+        DFGMLIRConversionIncGen
 
     LINK_COMPONENTS
         Core
@@ -14,5 +14,5 @@ add_mlir_conversion_library(DfgToLLVM
         MLIRControlFlowDialect
         MLIRLLVMCommonConversion
         MLIRLLVMDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )

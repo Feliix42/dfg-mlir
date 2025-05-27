@@ -4,7 +4,7 @@
 # MLIR DFG dialect generated includes.
 ################################################################################
 
-add_custom_target(DfgIncGen)
+add_custom_target(DFGMLIRDfgIncGen)
 
 mlir_gen_enums(Dfg)
 

@@ -323,7 +323,7 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
     using OpConversionPattern<ChannelOp>::OpConversionPattern;
 
     ChannelOpLowering(TypeConverter &typeConverter, MLIRContext* context)
-            : OpConversionPattern<ChannelOp>(typeConverter, context){};
+            : OpConversionPattern<ChannelOp>(typeConverter, context) {};
 
     LogicalResult matchAndRewrite(
         ChannelOp op,
@@ -420,8 +420,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
         [&](OpBuilder &builder,
             Type resultType,
             ValueRange inputs,
-            Location loc) -> std::optional<Value> {
-            if (inputs.size() != 1) return std::nullopt;
+            Location loc) -> Value {
+            if (inputs.size() != 1) return Value{};
 
             return builder
                 .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
@@ -431,8 +431,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
         [&](OpBuilder &builder,
             Type resultType,
             ValueRange inputs,
-            Location loc) -> std::optional<Value> {
-            if (inputs.size() != 1) return std::nullopt;
+            Location loc) -> Value {
+            if (inputs.size() != 1) return Value{};
 
             return builder
                 .create<UnrealizedConversionCastOp>(loc, resultType, inputs)

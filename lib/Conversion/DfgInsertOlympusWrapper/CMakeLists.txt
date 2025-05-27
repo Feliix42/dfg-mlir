@@ -1,8 +1,8 @@
-add_mlir_conversion_library(DfgInsertOlympusWrapper
+add_mlir_conversion_library(DFGMLIRDfgInsertOlympusWrapper
         DfgInsertOlympusWrapper.cpp
 
     DEPENDS
-        ConversionIncGen
+        DFGMLIRConversionIncGen
 
     LINK_COMPONENTS
         Core
@@ -11,6 +11,6 @@ add_mlir_conversion_library(DfgInsertOlympusWrapper
         MLIRDialectUtils
         MLIRTransformUtils
         MLIRFuncDialect
-        DfgDialect
+        DFGMLIRDfgDialect
 )
 

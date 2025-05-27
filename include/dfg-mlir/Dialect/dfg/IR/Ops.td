@@ -8,24 +8,25 @@
 #define DFG_OPS
 
 include "dfg-mlir/Dialect/dfg/Enums.td"
-include "dfg-mlir/Dialect/dfg/IR/Types.td"
 include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.td"
 include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
-include "dfg-mlir/Dialect/dfg/IR/HWOps.td"
-include "mlir/Interfaces/InferTypeOpInterface.td"
-include "mlir/Interfaces/SideEffectInterfaces.td"
+include "dfg-mlir/Dialect/dfg/IR/Types.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/IR/OpAsmInterface.td"
 include "mlir/IR/RegionKindInterface.td"
 
 def Dfg_RegionOp : Dfg_Op<
         "region",
         [
-            Dfg_DataflowGraphOp,
-
+            Dfg_NodeOpInterface,
+            Dfg_GraphOpInterface,
             IsolatedFromAbove,
-            NoTerminator
+            NoTerminator,
+            DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>
         ]>
 {
     let summary = "Defines a region in a graph.";
@@ -43,17 +44,95 @@ def Dfg_RegionOp : Dfg_Op<
     let hasVerifier = 1;
 
     code extraClassDeclaration = [{
-        //===--------------------------------------------------------------===//
-        // DataflowGraphOp
-        //===--------------------------------------------------------------===//
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
 
-        void foo() { return; }
+        std::string getNodeName() { return getSymName().str(); }
+        unsigned getNumInputPorts() { return getFunctionType().getNumInputs(); }
+        Value getInputPort(unsigned index) {
+            return getBody().getArgument(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getInputs())
+                types.push_back(cast<OutputType>(type).getElementType());
+            return types;
+        }
+        SmallVector<Value> getInputPorts() {
+            SmallVector<Value> inputs;
+            for (size_t i = 0; i < getNumInputPorts(); ++i) {
+                inputs.push_back(getInputPort(i));
+            }
+            return inputs;
+        }
+        unsigned getNumOutputPorts() { return getFunctionType().getNumResults(); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getBody().getArgument(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getResults()) {
+                auto inTy = cast<InputType>(type);
+                types.push_back(inTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() {
+            SmallVector<Value> outputs;
+            for (size_t i = 0; i < getNumOutputPorts(); ++i) {
+                outputs.push_back(getOutputPort(i));
+            }
+            return outputs;
+        }
+
+        //===------------------------------------------------------------------===//
+        // DFGMLIR GraphOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getGraphName() { return getNodeName(); }
+        bool isSubGraph() {
+            bool isSub = false;
+            auto module = getOperation()->getParentOfType<ModuleOp>();
+            module.walk([&](EmbedOp embedOp) {
+                if (embedOp.getNodeName() == getGraphName()) {
+                    isSub = true;
+                    return WalkResult::interrupt();
+                }
+                return WalkResult::advance();
+            });
+            return isSub;
+        }
+        SmallVector<Operation*> getGraphNodes() {
+            SmallVector<Operation*> nodes;
+            for (auto &opi : getBody().getOps())
+                if (isa<NodeOpInterface>(opi) && !isa<GraphOpInterface>(opi))
+                    nodes.push_back(&opi);
+            return nodes;
+        }
+        SmallVector<Operation*> getGraphSubGs() {
+            SmallVector<Operation*> subgraphs;
+            for (auto &opi : getBody().getOps())
+                if (isa<NodeOpInterface>(opi) && isa<GraphOpInterface>(opi))
+                    subgraphs.push_back(&opi);
+            return subgraphs;
+        }
+        SmallVector<Operation*> getGraphEdges() {
+            SmallVector<Operation*> edges;
+            for (auto &opi : getBody().getOps())
+                if (isa<EdgeOpInterface>(opi))
+                    edges.push_back(&opi);
+            return edges;
+        }
     }];
 }
 
 def Dfg_EmbedOp : Dfg_Op<
         "embed",
         [
+            Dfg_NodeOpInterface,
+            Dfg_GraphOpInterface,
             AttrSizedOperandSegments//,
             // HasParent<"RegionOp">
         ]>
@@ -66,6 +145,60 @@ def Dfg_EmbedOp : Dfg_Op<
 
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
+
+    let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getNodeName() { return getCallee().getRootReference().str(); }
+        unsigned getNumInputPorts() { return std::ranges::size(getInputs()); }
+        Value getInputPort(unsigned index) {
+            return getOperation()->getOperand(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getInputs().getTypes()) {
+                auto outTy = cast<OutputType>(type);
+                types.push_back(outTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getInputPorts() { return getInputs(); }
+        unsigned getNumOutputPorts() { return std::ranges::size(getOutputs()); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getOperation()->getOperand(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getOutputs().getTypes()) {
+                auto inTy = cast<InputType>(type);
+                types.push_back(inTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() { return getOutputs(); }
+
+        //===------------------------------------------------------------------===//
+        // DFGMLIR GraphOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getGraphName() { return getNodeName(); }
+        bool isSubGraph() { return true; }
+
+        //===------------------------------------------------------------------===//
+        // Custom Methods
+        //===------------------------------------------------------------------===//
+
+        FunctionType getFunctionType() {
+            FunctionType::get(
+                getContext(),
+                getInputs().getTypes(),
+                getOutputs().getTypes()
+            );
+        }
+    }];
 }
 
 def Dfg_ConnectInputOp : Dfg_Op<
@@ -78,6 +211,7 @@ def Dfg_ConnectInputOp : Dfg_Op<
                          Dfg_InputType:$channelPort);
 
     let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
 }
 
 def Dfg_ConnectOutputOp : Dfg_Op<
@@ -90,16 +224,20 @@ def Dfg_ConnectOutputOp : Dfg_Op<
                          Dfg_OutputType:$channelPort);
 
     let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
 }
 
 def Dfg_ProcessOp : Dfg_Op<
         "process",
         [
+            Dfg_NodeOpInterface,
+            AffineScope,
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
             IsolatedFromAbove,
             HasParent<"ModuleOp">,
-            NoTerminator
+            NoTerminator,
+            DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>
         ]> {
     let summary = "Defines a process in the KPN MoC";
     let description = [{
@@ -137,29 +275,77 @@ def Dfg_ProcessOp : Dfg_Op<
                        CArg<"ArrayRef<int64_t>", "{}">:$multiplicity)>
     ];
 
+    let hasCustomAssemblyFormat = 1;
+    let hasVerifier = 1;
+
     let extraClassDeclaration = [{
-        /// Returns whether the process is externally defined
-        bool isExternal();
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getNodeName() { return getSymName().str(); }
+        unsigned getNumInputPorts() { return getFunctionType().getNumInputs(); }
+        Value getInputPort(unsigned index) {
+            return getBody().getArgument(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            // types.clear();
+            for (auto type : getFunctionType().getInputs())
+                types.push_back(cast<OutputType>(type).getElementType());
+            return types;
+        }
+        SmallVector<Value> getInputPorts() {
+            SmallVector<Value> inputs;
+            for (size_t i = 0; i < getNumInputPorts(); ++i) {
+                inputs.push_back(getInputPort(i));
+            }
+            return inputs;
+        }
+        unsigned getNumOutputPorts() { return getFunctionType().getNumResults(); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getBody().getArgument(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getResults()) {
+                auto inTy = cast<InputType>(type);
+                types.push_back(inTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() {
+            SmallVector<Value> outputs;
+            for (size_t i = 0; i < getNumOutputPorts(); ++i) {
+                outputs.push_back(getOutputPort(i));
+            }
+            return outputs;
+        }
 
         //===------------------------------------------------------------------===//
         // SymbolOpInterface Methods
         //===------------------------------------------------------------------===//
 
         bool isDeclaration() { return isExternal(); }
+
+        //===------------------------------------------------------------------===//
+        // Custom Methods
+        //===------------------------------------------------------------------===//
+
+        /// Returns whether the process is externally defined
+        bool isExternal();
     }];
-
-    let hasCustomAssemblyFormat = 1;
-
-    let hasVerifier = 1;
 }
 
 def Dfg_OperatorOp : Dfg_Op<"operator", [
+            Dfg_NodeOpInterface,
+            AffineScope,
             AutomaticAllocationScope,
             // AttrSizedOperandSegments,
             IsolatedFromAbove,
             HasParent<"ModuleOp">,
             NoTerminator
-            // SingleBlockImplicitTerminator<"YieldOp">,
         ]> {
     let summary = "define an SDF node in DFG";
 
@@ -182,14 +368,59 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
     ];
 
     let extraClassDeclaration = [{
-        /// Returns whether the process is externally defined
-        bool isExternal();
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getNodeName() { return getSymName().str(); }
+        unsigned getNumInputPorts() { return getFunctionType().getNumInputs(); }
+        Value getInputPort(unsigned index) {
+            return getBody().getArgument(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getInputs())
+                types.push_back(type);
+            return types;
+        }
+        SmallVector<Value> getInputPorts() {
+            SmallVector<Value> inputs;
+            for (size_t i = 0; i < getNumInputPorts(); ++i) {
+                inputs.push_back(getInputPort(i));
+            }
+            return inputs;
+        }
+        unsigned getNumOutputPorts() { return getFunctionType().getNumResults(); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getBody().getArgument(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getFunctionType().getResults())
+                types.push_back(type);
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() {
+            SmallVector<Value> outputs;
+            for (size_t i = 0; i < getNumOutputPorts(); ++i) {
+                outputs.push_back(getOutputPort(i));
+            }
+            return outputs;
+        }
 
         //===------------------------------------------------------------------===//
         // SymbolOpInterface Methods
         //===------------------------------------------------------------------===//
 
         bool isDeclaration() { return isExternal(); }
+
+        //===------------------------------------------------------------------===//
+        // Custom Methods
+        //===------------------------------------------------------------------===//
+
+        /// Returns whether the process is externally defined
+        bool isExternal();
     }];
 
     let hasCustomAssemblyFormat = 1;
@@ -197,7 +428,6 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
 }
 
 def Dfg_OutputOp : Dfg_Op<"output", [
-            // Terminator,
             HasParent<"OperatorOp">
         ]> {
     let summary = "Yield op for a dfg.operator";
@@ -209,7 +439,6 @@ def Dfg_OutputOp : Dfg_Op<"output", [
 }
 
 def Dfg_YieldOp : Dfg_Op<"yield", [
-            // Terminator,
             ParentOneOf<["OperatorOp", "LoopOp"]>
         ]> {
     let summary = "Yield op for a dfg.operator";
@@ -272,7 +501,9 @@ def Dfg_LoopOp : Dfg_Op<
 def Dfg_ChannelOp : Dfg_Op<
         "channel",
         [
-            Pure
+            Dfg_EdgeOpInterface,
+            MemoryEffectsOpInterface,
+            DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
         ]> {
     let summary = "Defines a channel with one input and one output port";
     let description = [{
@@ -313,30 +544,38 @@ def Dfg_ChannelOp : Dfg_Op<
     ];
 
     let hasCustomAssemblyFormat = 1;
-
     let hasVerifier = 1;
-}
 
-def Dfg_SetChannelStyleOp : Dfg_Op<
-    "set_channel_style",
-    [
-        HasParent<"ModuleOp">
-    ]>
-{
-    let summary = "Set up global channel style";
+    let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // DFGMLIR EdgeOpInterface Methods
+        //===------------------------------------------------------------------===//
 
-    let arguments = (ins Dfg_ChannelStyleDefaultAttr:$channel_style);
+        Operation* getInputConnection() { return *getInChan().getUsers().begin(); }
 
-    let assemblyFormat = [{
-        $channel_style attr-dict
+        Operation* getOutputConnection() { return *getOutChan().getUsers().begin(); }
+
+        //===------------------------------------------------------------------===//
+        // MemoryEffectsOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        void getEffects(
+                SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+                &effects)
+        {
+            effects.emplace_back(MemoryEffects::Read::get(), getOperation()->getOpResult(0),
+                                 SideEffects::DefaultResource::get());
+            effects.emplace_back(MemoryEffects::Write::get(), getOperation()->getOpResult(0),
+                                 SideEffects::DefaultResource::get());
+        }
     }];
 }
 
 def Dfg_InstantiateOp : Dfg_Op<
     "instantiate",
     [
-        AttrSizedOperandSegments//,
-        // HasParent<"RegionOp">
+        Dfg_NodeOpInterface,
+        AttrSizedOperandSegments
     ]> {
     let summary = "Instantiates an process with the given inputs, forming (part of) a data flow graph.";
     let description = [{
@@ -363,11 +602,66 @@ def Dfg_InstantiateOp : Dfg_Op<
                          Variadic<Dfg_OutputType>:$inputs,
                          Variadic<Dfg_InputType>:$outputs,
                          DefaultValuedAttr<BoolAttr, "false">:$offloaded);
+    
+    let skipDefaultBuilders = 1;
+    let builders = [
+        OpBuilder<(ins "std::string":$callee,
+                       "ValueRange":$inputs,
+                       "ValueRange":$outputs,
+                       CArg<"bool", "false">: $offloaded)>
+    ];
 
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
-}
 
+    let extraClassDeclaration = [{
+        //===------------------------------------------------------------------===//
+        // DFGMLIR NodeOpInterface Methods
+        //===------------------------------------------------------------------===//
+
+        std::string getNodeName() { return getCallee().getRootReference().str(); }
+        unsigned getNumInputPorts() { return std::ranges::size(getInputs()); }
+        Value getInputPort(unsigned index) {
+            return getOperation()->getOperand(index);
+        }
+        SmallVector<Type> getInputPortTypes() {
+            SmallVector<Type> types;
+            // types.clear();
+            for (auto type : getInputs().getTypes()) {
+                auto outTy = cast<OutputType>(type);
+                types.push_back(outTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getInputPorts() { return getInputs(); }
+        unsigned getNumOutputPorts() { return std::ranges::size(getOutputs()); }
+        Value getOutputPort(unsigned index) {
+            unsigned idx = index + getNumInputPorts();
+            return getOperation()->getOperand(idx);
+        }
+        SmallVector<Type> getOutputPortTypes() {
+            SmallVector<Type> types;
+            for (auto type : getOutputs().getTypes()) {
+                auto inTy = cast<InputType>(type);
+                types.push_back(inTy.getElementType());
+            }
+            return types;
+        }
+        SmallVector<Value> getOutputPorts() { return getOutputs(); }
+
+        //===------------------------------------------------------------------===//
+        // Custom Methods
+        //===------------------------------------------------------------------===//
+
+        FunctionType getFunctionType() {
+            FunctionType::get(
+                getContext(),
+                getInputs().getTypes(),
+                getOutputs().getTypes()
+            );
+        }
+    }];
+}
 
 def Dfg_PushOp : Dfg_Op<
     "push",
@@ -398,10 +692,6 @@ def Dfg_PushOp : Dfg_Op<
 
     let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
 
-    // let assemblyFormat = [{
-    //     `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
-    // }];
-
     let hasCustomAssemblyFormat = 1;
 }
 
@@ -410,7 +700,8 @@ def Dfg_PullOp : Dfg_Op<
     [
         TypesMatchWith<"Channel type matches pulled type",
                        "chan", "outp",
-                       "$_self.dyn_cast<OutputType>().getElementType()">
+                       "$_self.dyn_cast<OutputType>().getElementType()">,
+        DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
     ]
 > {
     let summary = "Pulls a value from a channel.";
@@ -435,13 +726,8 @@ def Dfg_PullOp : Dfg_Op<
     let arguments = (ins Dfg_OutputType: $chan);
     let results = (outs AnyType: $outp);
 
-    // let assemblyFormat = [{
-    //     $chan attr-dict `:` functional-type($chan, $outp)
-    // }];
-
     let hasCustomAssemblyFormat = 1;
 }
-
 
 def Dfg_PushNOp : Dfg_Op<
     "push_n",
@@ -468,10 +754,6 @@ def Dfg_PushNOp : Dfg_Op<
     }];
 
     let arguments = (ins AnyMemRef: $inp, Dfg_InputType: $chan);
-
-    // let assemblyFormat = [{
-    //     `(` $inp `)` $chan attr-dict `:` functional-type($inp, $chan)
-    // }];
 
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
@@ -504,69 +786,8 @@ def Dfg_PullNOp : Dfg_Op<
     let arguments = (ins Dfg_OutputType: $chan);
     let results = (outs AnyMemRef: $outp);
 
-    // let assemblyFormat = [{
-    //     $chan attr-dict `:` functional-type($chan, $outp)
-    // }];
-
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;
 }
-
-//===----------------------------------------------------------------------===//
-// Intermediate HW operations
-//===----------------------------------------------------------------------===//
-
-// // Template for hw ops.
-// class Dfg_HWOpBase<string mnemonic, list<Trait> traits = []>
-//         : Dfg_Op< "hw." # mnemonic, traits> {}
-
-// def Dfg_HWConnectOp
-//         : Dfg_HWOpBase<"connect", []>
-// {
-//     let summary = "intermediate connect between ports";
-
-//     let description = [{
-//         This op will replace the dfg.push during conversion
-//         of StdToCirct. It represents the actual connection
-//         between top module ports and head/tail fifo buffer
-//         ports.
-//     }];
-
-//     let arguments = (ins
-//         Dfg_InputType: $portArgument,
-//         Dfg_InputType: $portQueue
-//     );
-
-//     let hasCustomAssemblyFormat = 1;
-// }
-
-// // def Dfg_HWJoinOp
-// //         : Dfg_HWOpBase<"join", []>
-// // {
-// //     let summary = "";
-// //     let description = [{}];
-
-// //     let arguments = (ins
-// //         AnyType: $toPush,
-// //         Dfg_OutputType: $channel
-// //     );
-// // }
-
-// def Dfg_HWInstanceOp
-//         : Dfg_HWOpBase<"instance", []>
-// {
-//     let summary = "";
-//     let description = [{}];
-
-//     let arguments = (ins
-//         SymbolRefAttr:$module,
-//         Variadic<AnyType>:$operands
-//     );
-//     let results = (outs Variadic<AnyType>:$results);
-
-//     let assemblyFormat = [{
-//         $module `(` $operands `)` attr-dict `:` functional-type($operands, $results)
-//     }];
-// }
 
 #endif

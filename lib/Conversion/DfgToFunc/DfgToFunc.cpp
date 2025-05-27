@@ -267,15 +267,16 @@ void ConvertDfgToFuncPass::runOnOperation()
 
         omp::ParallelOp par = localRewriter.create<omp::ParallelOp>(
             loc,
+            ValueRange(),
+            ValueRange(),
             Value{},
             threadCount.getResult(),
             ValueRange(),
-            ValueRange(),
-            ValueRange(),
-            DenseBoolArrayAttr{},
             ArrayAttr{},
             omp::ClauseProcBindKindAttr{},
+            // omp::ReductionModifierAttr{},
             ValueRange(),
+            DenseBoolArrayAttr{},
             nullptr);
         Block* parBlock = localRewriter.createBlock(&par.getRegion());
 
@@ -290,10 +291,10 @@ void ConvertDfgToFuncPass::runOnOperation()
         for (auto op : group) {
             localRewriter.create<InstantiateOp>(
                 op->getLoc(),
-                op.getCallee(),
+                op.getNodeName(),
                 op.getInputs(),
                 op.getOutputs(),
-                op.getOffloadedAttr());
+                op.getOffloadedAttr().getValue());
             // localRewriter.eraseOp(op);
             op->erase();
         }
