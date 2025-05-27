@@ -6,13 +6,13 @@
 
 cmake_minimum_required(VERSION 3.22)
 
-# Add custom modules to the search path.
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
-
 project(dfg-mlir
     VERSION     0.1.1
     LANGUAGES   C CXX
 )
+
+# Add custom modules to the search path.
+list(PREPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
 # Set global language standard to C++20.
 set(CMAKE_CXX_STANDARD 20 CACHE STRING "C++ standard to conform to")
