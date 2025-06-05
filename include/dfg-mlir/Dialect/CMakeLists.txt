@@ -1,2 +1,2 @@
 add_subdirectory(dfg)
-add_subdirectory(vitis)
+add_subdirectory(emitHLS)

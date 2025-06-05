@@ -1,8 +1,8 @@
-// RUN: dfg-opt --convert-to-vitis %s | dfg-opt | FileCheck %s
+// RUN: dfg-opt --convert-to-emitHLS %s | dfg-opt | FileCheck %s
 
-// CHECK: vitis.include "ap_int.h"
-// CHECK: vitis.include "hls_stream.h"
-// CHECK-LABEL: vitis.func @stream2mem_i32_12(
+// CHECK: emitHLS.include "ap_int.h"
+// CHECK: emitHLS.include "hls_stream.h"
+// CHECK-LABEL: emitHLS.func @stream2mem_i32_12(
 
 dfg.operator @matmul inputs(%mat0: tensor<4x5xi32>, %mat1: tensor<5x3xi32>)
                      outputs(%mat2: tensor<4x3xi32>)

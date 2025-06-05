@@ -23,6 +23,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Debug.h>
 #include <mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h>
+#include <mlir/Conversion/TosaToArith/TosaToArith.h>
 #include <mlir/Conversion/TosaToLinalg/TosaToLinalg.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectRegistry.h>
@@ -55,7 +56,7 @@ struct DfgLowerInsideToLinalgPass
         RewritePatternSet patterns(&getContext());
 
         // From tosa to linalg.
-        tosa::populateTosaDecomposeDepthwise(&getContext(), patterns);
+        tosa::populateTosaToArithConversionPatterns(&patterns);
         tosa::populateTosaDecomposeTransposeConv(&getContext(), patterns);
         tosa::populateTosaDecomposeDepthwise(&getContext(), patterns);
         tosa::populateTosaToLinalgConversionPatterns(converter, &patterns);

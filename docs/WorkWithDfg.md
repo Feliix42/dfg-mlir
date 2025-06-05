@@ -8,8 +8,8 @@ Then, if you want to use the `dfg-mlir` library in your project, make sure you u
 
 ## Create Operations
 
-Check [dfg dialect definition](../include/dfg-mlir/Dialect/dfg/IR/Dialect.td) and [vitis arith operation definition](../include/dfg-mlir/Dialect/vitis/IR/ArithOps.td) to make sure you understand and will use the same guideline to create ops.
+Check [dfg dialect definition](../include/dfg-mlir/Dialect/dfg/IR/Dialect.td) and [emitHLS arith operation definition](../include/dfg-mlir/Dialect/emitHLS/IR/ArithOps.td) to make sure you understand and will use the same guideline to create ops.
 
 ## Use Passes
 
-See [conversion passes](../include/dfg-mlir/Conversion/Passes.td) and [vitis transformation passes](../include/dfg-mlir/Dialect/vitis/Transforms/Passes.td) to understand the definition and implementation of passes.
+See [conversion passes](../include/dfg-mlir/Conversion/Passes.td) and [emitHLS transformation passes](../include/dfg-mlir/Dialect/emitHLS/Transforms/Passes.td) to understand the definition and implementation of passes.

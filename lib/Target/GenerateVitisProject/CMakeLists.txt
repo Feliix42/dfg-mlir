@@ -1,9 +1,9 @@
-add_mlir_translation_library(DFGMLIRVitisTargetProject
+add_mlir_translation_library(DFGMLIREmitHLSTargetProject
     TranslateRegistration.cpp
     GenerateVitisProject.cpp
 
     LINK_LIBS PUBLIC
-    DFGMLIRVitisDialect
+    DFGMLIREmitHLSDialect
     MLIRIR
     MLIRSupport
     MLIRTranslateLib

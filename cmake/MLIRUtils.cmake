@@ -31,7 +31,11 @@ endfunction()
 
 function(mlir_gen_ir prefix)
     set(full_prefix DFGMLIR${prefix})
-    string(TOLOWER ${prefix} filter)
+    # string(TOLOWER ${prefix} filter)
+    string(SUBSTRING ${prefix} 0 1 first_char)
+    string(SUBSTRING ${prefix} 1 -1 rest_chars)
+    string(TOLOWER ${first_char} first_char_lower)
+    set(filter "${first_char_lower}${rest_chars}")
 
     set(LLVM_TARGET_DEFINITIONS Ops.td)
 

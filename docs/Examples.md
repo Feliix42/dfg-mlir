@@ -61,13 +61,13 @@ dfg.region @top inputs(%arg0: tensor<1x4x8xf32>, %arg1 : tensor<1x4x8xf32>)
 ```
 
 ## Convertion and Translation for FPGA backend
-To get a working FPGA design we provide a conversion pass pipeline: `--convert-to-vitis`, which will lower up-to-tosa operations to scf level along with bufferizations of tensor values. Then operations in `arith`, `index`, `math`, `scf` and `dfg` will be converted to vitis equivalent operations. The result of this pipeline will be used in translation (i.e. `--vitis-generate-project`).
+To get a working FPGA design we provide a conversion pass pipeline: `--convert-to-emitHLS`, which will lower up-to-tosa operations to scf level along with bufferizations of tensor values. Then operations in `arith`, `index`, `math`, `scf` and `dfg` will be converted to emitHLS equivalent operations. The result of this pipeline will be used in translation (i.e. `--emitHLS-generate-project`).
 
 Let's assume the input file is named `dfg.mlir`, to get the bitstream file one only needs to execute these commands one by one:
 
 1. Get the files needed for this project from current program
 ```
-dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-generate-project (--output-dir=/path/you/want/ --target-device="device-name")
+dfg-opt dfg.mlir --convert-to-emitHLS | dfg-translate --emitHLS-generate-project (--output-dir=/path/you/want/ --target-device="device-name")
 ```
 2. Set up the environmental variables
 ```
@@ -89,4 +89,4 @@ To set up on PYNQ in JupyterNotebook or Python file, please use the following cl
 2. method `compute`: this method accepts a list, within which you should set up the correct number of inputs based on your own-defined `dfg.region` in MLIR.
 3. method `get_execution_time`: this method will return a float number, which is the execution time in seconds roughly measured using `time` package.
 
-In this work, [AMD Vivado Design Suite](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado.html) version 2024.2 is tested without any problems. If one need to use lower version of the tools, please modify the version of Xilinx IPs in [this](../lib/Target/GenerateVitisProject/GenerateVitisProject.cpp#L1170) translation respectively.
+In this work, [AMD Vivado Design Suite](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado.html) version 2024.2 is tested without any problems. If one need to use lower version of the tools, please modify the version of Xilinx IPs in [this](../lib/Target/GenerateemitHLSProject/GenerateemitHLSProject.cpp#L1170) translation respectively.
