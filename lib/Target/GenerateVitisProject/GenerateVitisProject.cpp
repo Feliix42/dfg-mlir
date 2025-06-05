@@ -1307,12 +1307,12 @@ if [ -z "$XILINX_VERSION" ]; then
     echo "XILINX_VERSION not set"
     exit 1
 fi
-VITIS_HLS="$XILINX_PATH/emitHLS/$XILINX_VERSION/bin/emitHLS-run"
+VITIS_HLS="$XILINX_PATH/Vitis/$XILINX_VERSION/bin/vitis-run"
 VIVADO="$XILINX_PATH/Vivado/$XILINX_VERSION/bin/vivado"
-echo "Runing emitHLS HLS"
+echo "Runing Vitis HLS"
 "$VITIS_HLS" --mode hls --tcl run_hls.tcl
 if [ $? -ne 0 ]; then
-    echo "ERROR: emitHLS HLS execution failed"
+    echo "ERROR: Vitis HLS execution failed"
     exit 1
 fi
 echo "Runing Vivado"
