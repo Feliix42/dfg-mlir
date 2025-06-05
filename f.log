@@ -1,0 +1,14 @@
+module {
+  dfg.process @accumulator inputs(%in0 : i4) outputs(%out0 : i4) {
+    %c1_i4 = arith.constant 1 : i4
+    dfg.loop inputs (%in0 : i4) {
+      %pull0 = dfg.pull %in0 : i4
+      %0 = arith.addi %pull0, %c1_i4 : i4
+      dfg.push (%0) %out0 : i4
+    }
+  }
+  dfg.region @top inputs(%in0 : i4)  outputs(%out0 : i4)  {
+    dfg.instantiate @accumulator inputs(%in0) outputs(%out0) : (i4) -> i4
+  }
+}
+

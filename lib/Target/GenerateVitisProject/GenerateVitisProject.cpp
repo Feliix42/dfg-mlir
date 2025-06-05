@@ -780,6 +780,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::PragmaInlineOp inlineOp)
     cppOS << "#pragma HLS INLINE ";
     if (inlineOp.getOff()) cppOS << "off";
     cppOS << "\n";
+    if (reduceOneIteration) cppOS << "#pragma HLS INTERFACE ap_ctrl_none port=return\n";
 
     return success();
 }
@@ -1401,7 +1402,7 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
         dbgOS << "Creating run_hls.tcl file\n";
         // Use pre-defined template and replace the key
         std::string content;
-                if (!reduceOneIteration) {
+        if (!reduceOneIteration) {
             // Normal case: single top function
             std::string tempcontent(kRunHLSTclTemplate);
             tempcontent = replaceAll(tempcontent, "{{TARGET_DEVICE}}", targetDevice);
