@@ -222,9 +222,12 @@ namespace mlir {
                 os << "<XDF name=\"top"<<std::to_string(counter)<<"\">\n";
                 // Process ModuleOp inputs/outputs
                 if (auto module = dyn_cast<ModuleOp>(op)) {
+                    
                     auto topRegion = module.lookupSymbol<RegionOp>("top");
+                    
                     if (topRegion) {
-                        //llvm::errs() << "[INFO] Found dfg.region 'top' with inputs/outputs\n";            
+                        //llvm::errs() << "[INFO] Found dfg.region 'top' with inputs/outputs\n";  
+                        //llvm::errs() <<  topRegion;         
                         auto inputTypes = topRegion.getFunctionType().getInputs();
                         auto outputTypes = topRegion.getFunctionType().getResults();
                         int isz = inputTypes.size();

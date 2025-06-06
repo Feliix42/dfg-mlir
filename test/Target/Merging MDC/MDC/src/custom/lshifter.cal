@@ -1,8 +1,0 @@
-package custom;
-
-actor lshifter()
-  int(size=32) arg0
-  ==>
-  int(size=32) arg1
-:
-end

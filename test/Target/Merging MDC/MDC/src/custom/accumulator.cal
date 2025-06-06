@@ -1,8 +1,0 @@
-package custom;
-
-actor accumulator()
-  int(size=32) arg0
-  ==>
-  int(size=32) arg1
-:
-end
