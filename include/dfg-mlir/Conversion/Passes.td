@@ -9,15 +9,15 @@
 
 include "mlir/Pass/PassBase.td"
 
-def ConvertArithIndexToVitis : Pass<"convert-arith-index-to-vitis"> {
-    let summary = "Convert Arith and Math dialect to vitis";
+def ConvertArithIndexToEmitHLS : Pass<"convert-arith-index-to-emitHLS"> {
+    let summary = "Convert Arith and Math dialect to emitHLS";
 
-    let constructor = "mlir::createConvertArithIndexToVitisPass()";
+    let constructor = "mlir::createConvertArithIndexToEmitHLSPass()";
 
     let dependentDialects = [
         "arith::ArithDialect",
         "index::IndexDialect",
-        "vitis::VitisDialect"
+        "emitHLS::emitHLSDialect"
     ];
 }
 
@@ -84,16 +84,27 @@ def ConvertDfgInsertOlympusWrapper : Pass<"insert-olympus-wrappers"> {
     ];
 }
 
-def ConvertDfgToVitis : Pass<"convert-dfg-to-vitis"> {
-    let summary = "Convert DFG dialect graph nodes to vitis dialect.";
+def ConvertDfgToEmitHLS : Pass<"convert-dfg-to-emitHLS"> {
+    let summary = "Convert DFG dialect graph nodes to emitHLS dialect.";
 
-    let constructor = "mlir::createConvertDfgToVitisPass()";
+    let constructor = "mlir::createConvertDfgToEmitHLSPass()";
 
     let dependentDialects = [
         "dfg::DfgDialect",
-        "vitis::VitisDialect",
+        "emitHLS::emitHLSDialect",
 
         "arith::ArithDialect"
+    ];
+}
+
+def ConvertFuncToDfg : Pass<"convert-func-to-dfg"> {
+    let summary = "Convert functions to dfg representations.";
+
+    let constructor = "mlir::createConvertFuncToDfgPass()";
+
+    let dependentDialects = [
+        "dfg::DfgDialect",
+        "func::FuncDialect"
     ];
 }
 
@@ -110,35 +121,35 @@ def ConvertLinalgToDfg : Pass<"convert-linalg-to-dfg"> {
     ];
 }
 
-def ConvertMathToVitis : Pass<"convert-math-to-vitis"> {
-    let summary = "Convert math operations to vitis math lib call.";
+def ConvertMathToEmitHLS : Pass<"convert-math-to-emitHLS"> {
+    let summary = "Convert math operations to emitHLS math lib call.";
 
-    let constructor = "mlir::createConvertMathToVitisPass()";
+    let constructor = "mlir::createConvertMathToEmitHLSPass()";
 
     let dependentDialects = [
-        "vitis::VitisDialect",
+        "emitHLS::emitHLSDialect",
         "math::MathDialect"
     ];
 }
 
-def ConvertMemrefToVitis : Pass<"convert-memref-to-vitis"> {
-    let summary = "Convert memref operations to vitis array operations.";
+def ConvertMemrefToEmitHLS : Pass<"convert-memref-to-emitHLS"> {
+    let summary = "Convert memref operations to emitHLS array operations.";
 
-    let constructor = "mlir::createConvertMemrefToVitisPass()";
+    let constructor = "mlir::createConvertMemrefToEmitHLSPass()";
 
     let dependentDialects = [
-        "vitis::VitisDialect",
+        "emitHLS::emitHLSDialect",
         "memref::MemRefDialect"
     ];
 }
 
-def ConvertScfToVitis : Pass<"convert-scf-to-vitis"> {
-    let summary = "Convert scf operations to vitis array operations.";
+def ConvertScfToEmitHLS : Pass<"convert-scf-to-emitHLS"> {
+    let summary = "Convert scf operations to emitHLS array operations.";
 
-    let constructor = "mlir::createConvertScfToVitisPass()";
+    let constructor = "mlir::createConvertScfToEmitHLSPass()";
 
     let dependentDialects = [
-        "vitis::VitisDialect",
+        "emitHLS::emitHLSDialect",
         "scf::SCFDialect"
     ];
 }

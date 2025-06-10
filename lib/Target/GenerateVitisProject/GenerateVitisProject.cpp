@@ -1,10 +1,11 @@
-//===- GenerateVitisProject.cpp - Translating to Vitis Cpp ----------------===//
+//===- GenerateVitisProject.cpp - Translating to emitHLS Cpp
+//----------------===//
 //
 //===----------------------------------------------------------------------===//
 
-#include "dfg-mlir/Dialect//vitis/IR/Ops.h"
-#include "dfg-mlir/Dialect/vitis/Enums.h"
-#include "dfg-mlir/Dialect/vitis/IR/Types.h"
+#include "dfg-mlir/Dialect//emitHLS/IR/Ops.h"
+#include "dfg-mlir/Dialect/emitHLS/Enums.h"
+#include "dfg-mlir/Dialect/emitHLS/IR/Types.h"
 #include "dfg-mlir/Target/GenerateVitisProject/GenerateVitisProjectEmitter.h"
 #include "mlir/IR/BlockSupport.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -47,7 +48,7 @@
 #include <utility>
 
 using namespace mlir;
-using namespace mlir::vitis;
+using namespace mlir::emitHLS;
 using llvm::formatv;
 
 // Convenience functions to produce interleaved output with functions returning
@@ -95,8 +96,8 @@ inline LogicalResult interleaveCommaWithError(
 
 namespace {
 // Emitter class
-struct VitisProjectEmitter {
-    explicit VitisProjectEmitter(
+struct emitHLSProjectEmitter {
+    explicit emitHLSProjectEmitter(
         raw_ostream &os,
         std::string outputDir,
         std::string formdc,
@@ -154,7 +155,7 @@ struct VitisProjectEmitter {
     // All the ops to be translated can only have one block in its region if
     // existed
     struct BlockScope {
-        BlockScope(VitisProjectEmitter &emitter, Block* block)
+        BlockScope(emitHLSProjectEmitter &emitter, Block* block)
                 : emitter(emitter),
                   block(block)
         {
@@ -170,7 +171,7 @@ struct VitisProjectEmitter {
         }
 
     private:
-        VitisProjectEmitter &emitter;
+        emitHLSProjectEmitter &emitter;
         Block* block;
         SmallVector<Value> oldValues;
     };
@@ -261,11 +262,11 @@ private:
 bool reduceOneIteration = false;
 std::vector<std::string> funcNames;
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
+printOperation(emitHLSProjectEmitter &emitter, ModuleOp moduleOp)
 {
     // The last function in the module should be the top function
     FuncOp lastFunc =
-        dyn_cast<vitis::FuncOp>(moduleOp.getBodyRegion().front().back());
+        dyn_cast<emitHLS::FuncOp>(moduleOp.getBodyRegion().front().back());
     if (!lastFunc)
         return ::emitError(moduleOp.getLoc(), "Failed to find top function.");
 
@@ -312,7 +313,7 @@ printOperation(VitisProjectEmitter &emitter, ModuleOp moduleOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::IncludeOp includeOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::IncludeOp includeOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -326,7 +327,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::IncludeOp includeOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::VariableOp variableOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::VariableOp variableOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -351,7 +352,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::VariableOp variableOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::UpdateOp updateOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::UpdateOp updateOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -363,11 +364,11 @@ printOperation(VitisProjectEmitter &emitter, vitis::UpdateOp updateOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::FuncOp funcOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::FuncOp funcOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
-    VitisProjectEmitter::BlockScope scope(emitter, &funcOp.getBody().front());
+    emitHLSProjectEmitter::BlockScope scope(emitter, &funcOp.getBody().front());
 
     auto funcName = funcOp.getSymName().str();
     //llvm::errs() << "[INFO] funcName: " << funcName << "\n";
@@ -399,7 +400,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::FuncOp funcOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::CallOp callOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::CallOp callOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -422,11 +423,13 @@ printOperation(VitisProjectEmitter &emitter, vitis::CallOp callOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ForOp forOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ForOp forOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
-    VitisProjectEmitter::BlockScope scope(emitter, &forOp.getRegion().front());
+    emitHLSProjectEmitter::BlockScope scope(
+        emitter,
+        &forOp.getRegion().front());
 
     dbgOS << "Translating ForOp at " << forOp.getLoc() << "\n";
     auto loc = forOp.getLoc();
@@ -456,7 +459,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ForOp forOp)
 //===----------------------------------------------------------------------===//
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithAddOp addOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithAddOp addOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -472,7 +475,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithAddOp addOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithSubOp subOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithSubOp subOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -488,7 +491,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithSubOp subOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithMulOp mulOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithMulOp mulOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -504,7 +507,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithMulOp mulOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithDivOp divOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithDivOp divOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -520,7 +523,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithDivOp divOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithRemOp remOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithRemOp remOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -536,7 +539,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithRemOp remOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithAndOp andOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithAndOp andOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -552,7 +555,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithAndOp andOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithOrOp orOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithOrOp orOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -568,7 +571,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithOrOp orOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithCastOp castOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithCastOp castOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -587,7 +590,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithCastOp castOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithCmpOp cmpOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithCmpOp cmpOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -598,13 +601,13 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithCmpOp cmpOp)
 
     cppOS << emitter.getOrCreateName(cmpOp.getLhs());
     switch (cmpOp.getPredicate()) {
-    case vitis::CmpPredicate::eq: cppOS << " == "; break;
-    case vitis::CmpPredicate::ne: cppOS << " != "; break;
-    case vitis::CmpPredicate::lt: cppOS << " < "; break;
-    case vitis::CmpPredicate::le: cppOS << " <= "; break;
-    case vitis::CmpPredicate::gt: cppOS << " > "; break;
-    case vitis::CmpPredicate::ge: cppOS << " >= "; break;
-    case vitis::CmpPredicate::three_way: cppOS << " <=> "; break;
+    case emitHLS::CmpPredicate::eq: cppOS << " == "; break;
+    case emitHLS::CmpPredicate::ne: cppOS << " != "; break;
+    case emitHLS::CmpPredicate::lt: cppOS << " < "; break;
+    case emitHLS::CmpPredicate::le: cppOS << " <= "; break;
+    case emitHLS::CmpPredicate::gt: cppOS << " > "; break;
+    case emitHLS::CmpPredicate::ge: cppOS << " >= "; break;
+    case emitHLS::CmpPredicate::three_way: cppOS << " <=> "; break;
     }
     cppOS << emitter.getOrCreateName(cmpOp.getRhs()) << ";";
 
@@ -612,7 +615,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithCmpOp cmpOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArithSelectOp selectOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArithSelectOp selectOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -633,7 +636,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArithSelectOp selectOp)
 //===----------------------------------------------------------------------===//
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArrayReadOp readOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArrayReadOp readOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -651,7 +654,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArrayReadOp readOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArrayWriteOp writeOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::ArrayWriteOp writeOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -665,8 +668,9 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArrayWriteOp writeOp)
     return success();
 }
 
-static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArrayPointerReadOp readOp)
+static LogicalResult printOperation(
+    emitHLSProjectEmitter &emitter,
+    emitHLS::ArrayPointerReadOp readOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -681,8 +685,9 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArrayPointerReadOp readOp)
     return success();
 }
 
-static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::ArrayPointerWriteOp writeOp)
+static LogicalResult printOperation(
+    emitHLSProjectEmitter &emitter,
+    emitHLS::ArrayPointerWriteOp writeOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -700,7 +705,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::ArrayPointerWriteOp writeOp)
 //===----------------------------------------------------------------------===//
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::MathSinOp sinOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::MathSinOp sinOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -715,7 +720,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::MathSinOp sinOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::MathCosOp cosOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::MathCosOp cosOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -734,8 +739,8 @@ printOperation(VitisProjectEmitter &emitter, vitis::MathCosOp cosOp)
 //===----------------------------------------------------------------------===//
 
 static LogicalResult printOperation(
-    VitisProjectEmitter &emitter,
-    vitis::PragmaBindStorageOp bindStorageOp)
+    emitHLSProjectEmitter &emitter,
+    emitHLS::PragmaBindStorageOp bindStorageOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -747,7 +752,7 @@ static LogicalResult printOperation(
     cppOS << " type=" << bindStorageOp.getType() << " impl=";
 
     auto impl = bindStorageOp.getImpl();
-    if (impl == vitis::PragmaStorageImpl::automatic)
+    if (impl == emitHLS::PragmaStorageImpl::automatic)
         cppOS << "auto";
     else
         cppOS << impl;
@@ -756,8 +761,9 @@ static LogicalResult printOperation(
     return success();
 }
 
-static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::PragmaDataflowOp dataflowOp)
+static LogicalResult printOperation(
+    emitHLSProjectEmitter &emitter,
+    emitHLS::PragmaDataflowOp dataflowOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -771,7 +777,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::PragmaDataflowOp dataflowOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::PragmaInlineOp inlineOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::PragmaInlineOp inlineOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -786,8 +792,8 @@ printOperation(VitisProjectEmitter &emitter, vitis::PragmaInlineOp inlineOp)
 }
 
 static LogicalResult printOperation(
-    VitisProjectEmitter &emitter,
-    vitis::PragmaInterfaceOp interfaceOp)
+    emitHLSProjectEmitter &emitter,
+    emitHLS::PragmaInterfaceOp interfaceOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -805,8 +811,8 @@ static LogicalResult printOperation(
 }
 
 static LogicalResult printOperation(
-    VitisProjectEmitter &emitter,
-    vitis::PragmaReturnInterfaceOp interfaceOp)
+    emitHLSProjectEmitter &emitter,
+    emitHLS::PragmaReturnInterfaceOp interfaceOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -819,8 +825,9 @@ static LogicalResult printOperation(
     return success();
 }
 
-static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::PragmaPipelineOp pipelineOp)
+static LogicalResult printOperation(
+    emitHLSProjectEmitter &emitter,
+    emitHLS::PragmaPipelineOp pipelineOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -833,7 +840,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::PragmaPipelineOp pipelineOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::PragmaStreamOp streamOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::PragmaStreamOp streamOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -851,7 +858,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::PragmaStreamOp streamOp)
 //===----------------------------------------------------------------------===//
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::StreamReadOp readOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::StreamReadOp readOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -866,7 +873,7 @@ printOperation(VitisProjectEmitter &emitter, vitis::StreamReadOp readOp)
 }
 
 static LogicalResult
-printOperation(VitisProjectEmitter &emitter, vitis::StreamWriteOp writeOp)
+printOperation(emitHLSProjectEmitter &emitter, emitHLS::StreamWriteOp writeOp)
 {
     raw_indented_ostream &cppOS = emitter.getCppOS();
     raw_indented_ostream &dbgOS = emitter.getDebugOS();
@@ -882,55 +889,55 @@ printOperation(VitisProjectEmitter &emitter, vitis::StreamWriteOp writeOp)
 // Emitter Methods
 //===----------------------------------------------------------------------===//
 
-LogicalResult VitisProjectEmitter::emitOperation(Operation &op)
+LogicalResult emitHLSProjectEmitter::emitOperation(Operation &op)
 {
     LogicalResult status =
         llvm::TypeSwitch<Operation*, LogicalResult>(&op)
             .Case<ModuleOp>([&](auto op) { return printOperation(*this, op); })
-            .Case<vitis::IncludeOp, vitis::FuncOp, vitis::CallOp>(
+            .Case<emitHLS::IncludeOp, emitHLS::FuncOp, emitHLS::CallOp>(
                 [&](auto op) { return printOperation(*this, op); })
-            .Case<vitis::VariableOp, vitis::UpdateOp, vitis::ForOp>(
-                [&](auto op) { return printOperation(*this, op); })
-            .Case<
-                vitis::ArithAddOp,
-                vitis::ArithSubOp,
-                vitis::ArithMulOp,
-                vitis::ArithDivOp,
-                vitis::ArithRemOp,
-                vitis::ArithAndOp,
-                vitis::ArithOrOp,
-                vitis::ArithCastOp,
-                vitis::ArithCmpOp,
-                vitis::ArithSelectOp>(
+            .Case<emitHLS::VariableOp, emitHLS::UpdateOp, emitHLS::ForOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
-                vitis::ArrayReadOp,
-                vitis::ArrayWriteOp,
-                vitis::ArrayPointerReadOp,
-                vitis::ArrayPointerWriteOp>(
-                [&](auto op) { return printOperation(*this, op); })
-            .Case<vitis::MathSinOp, vitis::MathCosOp>(
-                [&](auto op) { return printOperation(*this, op); })
-            .Case<vitis::StreamReadOp, vitis::StreamWriteOp>(
+                emitHLS::ArithAddOp,
+                emitHLS::ArithSubOp,
+                emitHLS::ArithMulOp,
+                emitHLS::ArithDivOp,
+                emitHLS::ArithRemOp,
+                emitHLS::ArithAndOp,
+                emitHLS::ArithOrOp,
+                emitHLS::ArithCastOp,
+                emitHLS::ArithCmpOp,
+                emitHLS::ArithSelectOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Case<
-                vitis::PragmaBindStorageOp,
-                vitis::PragmaDataflowOp,
-                vitis::PragmaInlineOp,
-                vitis::PragmaInterfaceOp,
-                vitis::PragmaReturnInterfaceOp,
-                vitis::PragmaPipelineOp,
-                vitis::PragmaStreamOp>(
+                emitHLS::ArrayReadOp,
+                emitHLS::ArrayWriteOp,
+                emitHLS::ArrayPointerReadOp,
+                emitHLS::ArrayPointerWriteOp>(
+                [&](auto op) { return printOperation(*this, op); })
+            .Case<emitHLS::MathSinOp, emitHLS::MathCosOp>(
+                [&](auto op) { return printOperation(*this, op); })
+            .Case<emitHLS::StreamReadOp, emitHLS::StreamWriteOp>(
+                [&](auto op) { return printOperation(*this, op); })
+            .Case<
+                emitHLS::PragmaBindStorageOp,
+                emitHLS::PragmaDataflowOp,
+                emitHLS::PragmaInlineOp,
+                emitHLS::PragmaInterfaceOp,
+                emitHLS::PragmaReturnInterfaceOp,
+                emitHLS::PragmaPipelineOp,
+                emitHLS::PragmaStreamOp>(
                 [&](auto op) { return printOperation(*this, op); })
             .Default(
                 [](auto op) { return op->emitError("unsupported operation"); });
     return status;
 }
 
-LogicalResult VitisProjectEmitter::emitType(Location loc, Type vitisType)
+LogicalResult emitHLSProjectEmitter::emitType(Location loc, Type emitHLSType)
 {
     raw_indented_ostream &os = getCppOS();
-    if (auto type = dyn_cast<IntegerType>(vitisType)) {
+    if (auto type = dyn_cast<IntegerType>(emitHLSType)) {
         auto datawidth = type.getWidth();
         if (datawidth == 1)
             return (os << "bool"), success();
@@ -939,11 +946,11 @@ LogicalResult VitisProjectEmitter::emitType(Location loc, Type vitisType)
         else
             return (os << "ap_int<" << datawidth << ">"), success();
     }
-    if (auto type = dyn_cast<IndexType>(vitisType)) {
+    if (auto type = dyn_cast<IndexType>(emitHLSType)) {
         os << "size_t";
         return success();
     }
-    if (auto type = dyn_cast<FloatType>(vitisType)) {
+    if (auto type = dyn_cast<FloatType>(emitHLSType)) {
         auto bitwidth = type.getIntOrFloatBitWidth();
         switch (bitwidth) {
         case 16: os << "half"; break;
@@ -952,35 +959,35 @@ LogicalResult VitisProjectEmitter::emitType(Location loc, Type vitisType)
         }
         return success();
     }
-    if (auto type = dyn_cast<ArrayType>(vitisType)) {
+    if (auto type = dyn_cast<ArrayType>(emitHLSType)) {
         if (failed(emitType(loc, type.getElementType()))) return failure();
         return success();
     }
-    if (auto type = dyn_cast<APFixedType>(vitisType)) {
+    if (auto type = dyn_cast<APFixedType>(emitHLSType)) {
         os << "ap_fixed<" << type.getDatawidth() << ", " << type.getIntWidth()
            << ">";
         return success();
     }
-    if (auto type = dyn_cast<APFixedUType>(vitisType)) {
+    if (auto type = dyn_cast<APFixedUType>(emitHLSType)) {
         os << "ap_ufixed<" << type.getDatawidth() << ", " << type.getIntWidth()
            << ">";
         return success();
     }
-    if (auto type = dyn_cast<StreamType>(vitisType)) {
+    if (auto type = dyn_cast<StreamType>(emitHLSType)) {
         os << "hls::stream<";
         if (failed(emitType(loc, type.getStreamType()))) return failure();
         os << ">";
         return success();
     }
-    if (auto type = dyn_cast<PointerType>(vitisType)) {
+    if (auto type = dyn_cast<PointerType>(emitHLSType)) {
         if (failed(emitType(loc, type.getPointerType()))) return failure();
         return success();
     }
 
-    return emitError(loc, "cannot emit type ") << vitisType;
+    return emitError(loc, "cannot emit type ") << emitHLSType;
 }
 
-LogicalResult VitisProjectEmitter::emitAttribute(Location loc, Attribute attr)
+LogicalResult emitHLSProjectEmitter::emitAttribute(Location loc, Attribute attr)
 {
     raw_indented_ostream &os = getCppOS();
     auto printInt = [&](const APInt &val, bool isUnsigned) {
@@ -1099,7 +1106,7 @@ LogicalResult VitisProjectEmitter::emitAttribute(Location loc, Attribute attr)
     return emitError(loc, "cannot emit attribute: ") << attr;
 }
 
-LogicalResult VitisProjectEmitter::emitVariableDeclaration(OpResult result)
+LogicalResult emitHLSProjectEmitter::emitVariableDeclaration(OpResult result)
 {
     raw_indented_ostream &os = getCppOS();
     if (isInScope(result)) {
@@ -1114,7 +1121,7 @@ LogicalResult VitisProjectEmitter::emitVariableDeclaration(OpResult result)
     return success();
 }
 
-LogicalResult VitisProjectEmitter::emitAssignPrefix(Operation &op)
+LogicalResult emitHLSProjectEmitter::emitAssignPrefix(Operation &op)
 {
     raw_indented_ostream &os = getCppOS();
     switch (op.getNumResults()) {
@@ -1130,7 +1137,7 @@ LogicalResult VitisProjectEmitter::emitAssignPrefix(Operation &op)
     return success();
 }
 
-LogicalResult VitisProjectEmitter::initializeProject(
+LogicalResult emitHLSProjectEmitter::initializeProject(
     StringRef funcName,
     size_t funcNumArgs,
     ArrayRef<int64_t> argBufferSizes,
@@ -1186,7 +1193,7 @@ LogicalResult VitisProjectEmitter::initializeProject(
     cppIndentedOS = std::make_unique<raw_indented_ostream>(*cppOS);
 
     dbgOS << "Creating main.cpp file\n";
-    *cppOS << "// Generated HLS code from MLIR Vitis Dialect\n";
+    *cppOS << "// Generated HLS code from MLIR emitHLS Dialect\n";
 
     return success();
 }
@@ -1385,7 +1392,7 @@ echo "Extract bitfile done!"
 )";
 } // namespace
 
-LogicalResult VitisProjectEmitter::createScriptFiles()
+LogicalResult emitHLSProjectEmitter::createScriptFiles()
 {
     // Generate Tcl script for HLS design
     {
@@ -1508,7 +1515,7 @@ LogicalResult VitisProjectEmitter::createScriptFiles()
             dbgOS << "Error creating run_design.sh: " << ec.message() << "\n";
             return failure();
         }
-        // Create shell script to automatic run Vitis HLS and Vivado
+        // Create shell script to automatic run emitHLS HLS and Vivado
         dbgOS << "Creating run_design.sh file\n";
         std::string content(kRunDesignShTemplate);
         if (reduceOneIteration) {
@@ -1645,7 +1652,7 @@ static std::string typeToNumpyTypeString(Type type)
     return "unknown";
 }
 
-LogicalResult VitisProjectEmitter::createPythonDriverFiles()
+LogicalResult emitHLSProjectEmitter::createPythonDriverFiles()
 {
     auto sizeArrayToString = [&](llvm::ArrayRef<int64_t> array) -> std::string {
         std::stringstream ss;
@@ -1720,7 +1727,7 @@ LogicalResult VitisProjectEmitter::createPythonDriverFiles()
     return success();
 }
 
-bool VitisProjectEmitter::isNameInUse(const std::string &name)
+bool emitHLSProjectEmitter::isNameInUse(const std::string &name)
 {
     for (const auto &entry : valueNames)
         if (entry.second == name) return true;
@@ -1728,7 +1735,7 @@ bool VitisProjectEmitter::isNameInUse(const std::string &name)
 }
 
 StringRef
-VitisProjectEmitter::addNameForValue(Value value, const std::string &baseName)
+emitHLSProjectEmitter::addNameForValue(Value value, const std::string &baseName)
 {
     unsigned suffix = 0;
     std::string nameStr;
@@ -1742,7 +1749,7 @@ VitisProjectEmitter::addNameForValue(Value value, const std::string &baseName)
     return valueNames[value];
 }
 
-StringRef VitisProjectEmitter::getOrCreateName(Value value)
+StringRef emitHLSProjectEmitter::getOrCreateName(Value value)
 {
     // Check if the value already has a name
     auto it = valueNames.find(value);
@@ -1794,16 +1801,16 @@ StringRef VitisProjectEmitter::getOrCreateName(Value value)
 }
 
 //===----------------------------------------------------------------------===//
-// Generate Vitis Project
+// Generate emitHLS Project
 //===----------------------------------------------------------------------===//
 
-LogicalResult vitis::generateVitisProject(
+LogicalResult emitHLS::generateemitHLSProject(
     Operation* op,
     raw_ostream &os,
     StringRef outputDir,
     StringRef formdc,
     StringRef targetDevice)
 {
-    VitisProjectEmitter emitter(os, outputDir.str(), formdc.str(), targetDevice.str());
+    emitHLSProjectEmitter emitter(os, outputDir.str(), targetDevice.str());
     return emitter.emitOperation(*op);
 }

@@ -17,8 +17,9 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
     MLIRLspServerLib
 
-    DFGMLIRVitisTargetProject
+    DFGMLIREmitHLSTargetProject
     DFGMLIRMDCTargetProject
+
     ${dialect_libs}
     ${translation_libs}
 )

@@ -1,4 +1,4 @@
-// Generated HLS code from MLIR Vitis Dialect
+// Generated HLS code from MLIR emitHLS Dialect
 #include "hls_stream.h"
 #include "hls_math.h"
 void stream2mem_float_32(hls::stream<float> &arg0, float *arg1)

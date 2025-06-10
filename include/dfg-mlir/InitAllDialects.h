@@ -5,7 +5,7 @@
 
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/BufferizableOpInterfaceImpl.h"
-#include "dfg-mlir/Dialect/vitis/IR/Dialect.h"
+#include "dfg-mlir/Dialect/emitHLS/IR/Dialect.h"
 
 #include <mlir/IR/DialectRegistry.h>
 #include <mlir/InitAllDialects.h>
@@ -14,7 +14,7 @@ namespace mlir {
 
 inline void registerAllDFGMLIRDialects(DialectRegistry &registry)
 {
-    registry.insert<dfg::DfgDialect, vitis::VitisDialect>();
+    registry.insert<dfg::DfgDialect, emitHLS::emitHLSDialect>();
 
     dfg::registerBufferizableOpInterfaceExternalModels(registry);
 }

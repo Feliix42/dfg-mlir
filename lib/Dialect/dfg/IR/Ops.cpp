@@ -18,6 +18,7 @@
 #include <mlir/IR/BuiltinTypeInterfaces.h>
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/DialectRegistry.h>
+#include <mlir/IR/ValueRange.h>
 #include <string>
 
 #define DEBUG_TYPE "dfg-ops"
@@ -291,8 +292,7 @@ LogicalResult RegionOp::verify()
     thisRegion.walk([&](ChannelOp channelOp) {
         auto inputPortUses = channelOp.getInChan().getUses();
         auto outputPortUses = channelOp.getOutChan().getUses();
-        if ((inputPortUses.empty() && !outputPortUses.empty())
-            || (outputPortUses.empty() && !inputPortUses.empty())) {
+        if (inputPortUses.empty() || outputPortUses.empty()) {
             if (!channelOp.getOutChan().getUses().empty()) {
                 // ignore the problem if both input and output are unused
                 ::emitWarning(
@@ -301,7 +301,7 @@ LogicalResult RegionOp::verify()
                     "graph.");
             }
         } else {
-            auto inputUser = channelOp.getInChan().getUses().begin().getUser();
+            auto inputUser = inputPortUses.begin().getUser();
             if (auto instantiateOp = dyn_cast<InstantiateOp>(inputUser)) {
                 auto calleeName =
                     instantiateOp.getCallee().getRootReference().str();
@@ -1432,6 +1432,28 @@ LogicalResult ChannelOp::verify()
 // InstantiateOp
 //===----------------------------------------------------------------------===//
 
+void InstantiateOp::build(
+    OpBuilder &builder,
+    OperationState &result,
+    std::string callee,
+    ValueRange inputs,
+    ValueRange outputs,
+    bool offloaded)
+{
+    auto calleeAttr = SymbolRefAttr::get(builder.getContext(), callee);
+    result.addAttribute(getCalleeAttrName(result.name), calleeAttr);
+    result.addOperands(inputs);
+    result.addOperands(outputs);
+    result.addAttribute(
+        getOffloadedAttrName(result.name),
+        builder.getBoolAttr(offloaded));
+    result.addAttribute(
+        kOperandSegmentSizesAttr,
+        builder.getDenseI32ArrayAttr(
+            {static_cast<int32_t>(inputs.size()),
+             static_cast<int32_t>(outputs.size())}));
+}
+
 ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
 {
     // optionally mark as `offloaded`
@@ -1503,6 +1525,8 @@ ParseResult InstantiateOp::parse(OpAsmParser &parser, OperationState &result)
         parser.getBuilder().getDenseI32ArrayAttr({numInputs, numOutputs});
     result.addAttribute(kOperandSegmentSizesAttr, operandSegmentSizes);
 
+    if (parser.parseOptionalAttrDict(result.attributes)) return failure();
+
     return success();
 }
 
@@ -1531,6 +1555,13 @@ void InstantiateOp::print(OpAsmPrinter &p)
 
     p << " : ";
     p.printFunctionalType(inpChans, outChans);
+
+    SmallVector<StringRef> elided;
+    elided.push_back(getCalleeAttrName());
+    elided.push_back(getOffloadedAttrName());
+    elided.push_back(kOperandSegmentSizesAttr);
+
+    p.printOptionalAttrDict((*this)->getAttrs(), elided);
 }
 
 LogicalResult InstantiateOp::verify()

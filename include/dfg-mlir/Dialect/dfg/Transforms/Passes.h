@@ -6,10 +6,14 @@
 #pragma once
 
 #include "dfg-mlir/Dialect/dfg/Transforms/InlineRegion.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/InlineScalarArgument.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/LowerInsideToScf.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/OperatorToProcess.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/PrintGraph.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/PrintOperatorToYaml.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/RemoveScalarGlobals.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/RetrieveGraphLayers.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/SoftTranspose.h"
 
 namespace mlir::dfg {
 

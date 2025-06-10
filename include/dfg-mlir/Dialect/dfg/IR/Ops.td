@@ -602,6 +602,14 @@ def Dfg_InstantiateOp : Dfg_Op<
                          Variadic<Dfg_OutputType>:$inputs,
                          Variadic<Dfg_InputType>:$outputs,
                          DefaultValuedAttr<BoolAttr, "false">:$offloaded);
+    
+    let skipDefaultBuilders = 1;
+    let builders = [
+        OpBuilder<(ins "std::string":$callee,
+                       "ValueRange":$inputs,
+                       "ValueRange":$outputs,
+                       CArg<"bool", "false">: $offloaded)>
+    ];
 
     let hasCustomAssemblyFormat = 1;
     let hasVerifier = 1;

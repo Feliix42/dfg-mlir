@@ -61,13 +61,13 @@ dfg.region @top inputs(%arg0: tensor<1x4x8xf32>, %arg1 : tensor<1x4x8xf32>)
 ```
 
 ## Convertion and Translation for FPGA backend
-To get a working FPGA design we provide a conversion pass pipeline: `--convert-to-vitis`, which will lower up-to-tosa operations to scf level along with bufferizations of tensor values. Then operations in `arith`, `index`, `math`, `scf` and `dfg` will be converted to vitis equivalent operations. The result of this pipeline will be used in translation (i.e. `--vitis-generate-project`).
+To get a working FPGA design we provide a conversion pass pipeline: `--convert-to-emitHLS`, which will lower up-to-tosa operations to scf level along with bufferizations of tensor values. Then operations in `arith`, `index`, `math`, `scf` and `dfg` will be converted to emitHLS equivalent operations. The result of this pipeline will be used in translation (i.e. `--emitHLS-generate-project`).
 
 Let's assume the input file is named `dfg.mlir`, to get the bitstream file one only needs to execute these commands one by one:
 
 1. Get the files needed for this project from current program
 ```
-dfg-opt dfg.mlir --convert-to-vitis | dfg-translate --vitis-generate-project (--output-dir=/path/you/want/ --target-device="device-name")
+dfg-opt dfg.mlir --convert-to-emitHLS | dfg-translate --emitHLS-generate-project (--output-dir=/path/you/want/ --target-device="device-name")
 ```
 2. Set up the environmental variables
 ```

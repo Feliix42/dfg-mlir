@@ -2,14 +2,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "dfg-mlir/Dialect//vitis/IR/Dialect.h"
+#include "dfg-mlir/Dialect//emitHLS/IR/Dialect.h"
 #include "dfg-mlir/Target/GenerateVitisProject/GenerateVitisProjectEmitter.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 
 using namespace mlir;
 
 namespace mlir {
-namespace vitis {
+namespace emitHLS {
 
 static llvm::cl::opt<std::string> TargetDevice(
     "target-device", // Unique name
@@ -18,7 +18,7 @@ static llvm::cl::opt<std::string> TargetDevice(
 
 static llvm::cl::opt<std::string> OutputDirOpt(
     "output-dir",
-    llvm::cl::desc("Output directory for Vitis project generation"),
+    llvm::cl::desc("Output directory for emitHLS project generation"),
     llvm::cl::value_desc("path to the directory"),
     llvm::cl::init("."));
 
@@ -28,14 +28,15 @@ static llvm::cl::opt<std::string> formdc(
     llvm::cl::value_desc("generation files for MDC"),
     llvm::cl::init("false"));
 
-void registerGenerateVitisProject()
+void registerGenerateemitHLSProject()
 {
     TranslateFromMLIRRegistration reg(
-        "vitis-generate-project",
-        "translate from vitis dialect to HLS file with scripts to generate the "
+        "emitHLS-generate-project",
+        "translate from emitHLS dialect to HLS file with scripts to generate "
+        "the "
         "full project",
         [](Operation* op, raw_ostream &output) {
-            return vitis::generateVitisProject(
+            return emitHLS::generateemitHLSProject(
                 op,
                 output,
                 OutputDirOpt,
@@ -43,9 +44,9 @@ void registerGenerateVitisProject()
                 TargetDevice);
         },
         [](DialectRegistry &registry) {
-            registry.insert<vitis::VitisDialect>();
+            registry.insert<emitHLS::emitHLSDialect>();
         });
 }
 
-} // namespace vitis
+} // namespace emitHLS
 } // namespace mlir

@@ -5,9 +5,9 @@
 
 namespace mlir {
 
-namespace vitis {
-void registerGenerateVitisProject();
-} // namespace vitis
+namespace emitHLS {
+void registerGenerateemitHLSProject();
+} // namespace emitHLS
 namespace dfg {
 void registerToVivadoTclTranslation();
 void registerToMDCTranslation();
@@ -16,9 +16,8 @@ void registerToMDCTranslation();
 inline void registerAllDFGMLIRTranslations()
 {
     static bool initOnce = []() {
-        vitis::registerGenerateVitisProject();
+        emitHLS::registerGenerateemitHLSProject();
         dfg::registerToMDCTranslation();
-
         return true;
     }();
     (void)initOnce;
