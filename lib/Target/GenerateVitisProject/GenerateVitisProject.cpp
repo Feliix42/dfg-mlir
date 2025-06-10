@@ -1811,6 +1811,6 @@ LogicalResult emitHLS::generateemitHLSProject(
     StringRef formdc,
     StringRef targetDevice)
 {
-    emitHLSProjectEmitter emitter(os, outputDir.str(), targetDevice.str());
+    emitHLSProjectEmitter emitter(os, outputDir.str(),  formdc.str(),  targetDevice.str());
     return emitter.emitOperation(*op);
 }
