@@ -1,0 +1,46 @@
+Found DFG Region: top2
+  Inputs:
+    in0 : !dfg.output<i32>
+  Outputs:
+    out1 : !dfg.input<i32>
+  Region body:
+    - dfg.instantiate (instantiate "lshifter")
+----------------------------------------
+Found DFG Region: top1
+  Inputs:
+    in0 : !dfg.output<i32>
+    in1 : !dfg.output<i32>
+  Outputs:
+    out2 : !dfg.input<i32>
+  Region body:
+    - dfg.channel
+    - dfg.instantiate (instantiate "accumulator")
+    - dfg.instantiate (instantiate "lshifter")
+----------------------------------------
+module {
+  dfg.process @accumulator inputs(%in0 : i32, %in1 : i32) outputs(%out0 : i32) {
+    dfg.loop inputs (%in0 : i32, %in1 : i32) outputs (%out0 : i32) {
+      %pull0 = dfg.pull %in0 : i32
+      %pull1 = dfg.pull %in1 : i32
+      %0 = arith.addi %pull0, %pull1 : i32
+      dfg.push (%0) %out0 : i32
+    }
+  }
+  dfg.process @lshifter inputs(%in0 : i32) outputs(%out0 : i32) {
+    %c2_i32 = arith.constant 2 : i32
+    dfg.loop inputs (%in0 : i32) outputs (%out0 : i32) {
+      %pull0 = dfg.pull %in0 : i32
+      %0 = arith.muli %pull0, %c2_i32 : i32
+      dfg.push (%0) %out0 : i32
+    }
+  }
+  dfg.region @top2 inputs(%in0 : i32)  outputs(%out0 : i32)  {
+    dfg.instantiate @lshifter inputs(%in0) outputs(%out0) : (i32) -> i32
+  }
+  dfg.region @top1 inputs(%in0 : i32, %in1 : i32)  outputs(%out0 : i32)  {
+    %in_chan_0, %out_chan_0 = dfg.channel(1) : i32
+    dfg.instantiate @accumulator inputs(%in0, %in1) outputs(%in_chan_0) : (i32, i32) -> i32
+    dfg.instantiate @lshifter inputs(%out_chan_0) outputs(%out0) : (i32) -> i32
+  }
+}
+

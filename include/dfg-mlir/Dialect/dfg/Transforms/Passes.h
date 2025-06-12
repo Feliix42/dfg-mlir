@@ -6,6 +6,7 @@
 #pragma once
 
 #include "dfg-mlir/Dialect/dfg/Transforms/InlineRegion.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/mergingregions.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/InlineScalarArgument.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/LowerInsideToScf.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/OperatorToProcess.h"
@@ -20,6 +21,7 @@ namespace mlir::dfg {
 //===- Generated passes ---------------------------------------------------===//
 
 #define GEN_PASS_REGISTRATION
+#define GEN_PASS_DEF_DFGMERGING
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h.inc"
 
 //===----------------------------------------------------------------------===//

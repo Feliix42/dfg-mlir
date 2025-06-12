@@ -28,6 +28,16 @@ def LinalgInlineScalarArgument : Pass<"linalg-inline-scalar-argument">
     let constructor = "mlir::linalg::createLinalgInlineScalarArgumentPass()";
 }
 
+def MergingRegions : Pass<"dfg-merge-regions", "ModuleOp"> {
+  let summary = "Merge multiple DFG regions into a single region";
+  let description = [{
+    Identifies and merges multiple DFG regions for MDC flow preparation.
+  }];
+  let dependentDialects = ["mlir::dfg::DfgDialect"];
+  
+  let constructor = "mlir::dfg::createMergingRegionsPass()";
+}
+
 def DfgLowerInsideToLinalg : Pass<"dfg-lower-inside-to-linalg">
 {
     let summary = "lower the contents of operator/process to linalg level";
