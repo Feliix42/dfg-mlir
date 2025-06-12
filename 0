@@ -1,0 +1,27 @@
+module {
+  vitis.include "ap_int.h"
+  vitis.include "hls_stream.h"
+  vitis.func @accumulator(%arg0: !vitis.stream<i32>, %arg1: !vitis.stream<i32>) {
+    vitis.pragma.inline off
+    %const_int_0 = vitis.variable as const i32 = 1
+    %0 = vitis.stream.read %arg0 : !vitis.stream<i32> -> i32
+    %1 = vitis.arith.add %0, %const_int_0 : i32
+    vitis.stream.write(%1) %arg1 : i32 -> !vitis.stream<i32>
+  }
+  vitis.func @top(%arg0: !vitis.ptr<i32>, %arg1: !vitis.ptr<i32>, %arg2: !vitis.ptr<i32>, %arg3: !vitis.ptr<i32>) attributes {argBufferSizes = array<i64: 1, 1, 1, 1>, num_inputs = 2 : i64, num_outputs = 2 : i64} {
+    vitis.pragma.interface mode=m_axi port=%arg0(!vitis.ptr<i32>) offset=slave bundle=gmem_arg0
+    vitis.pragma.interface mode=s_axilite port=%arg0(!vitis.ptr<i32>) bundle=control
+    vitis.pragma.interface mode=m_axi port=%arg1(!vitis.ptr<i32>) offset=slave bundle=gmem_arg1
+    vitis.pragma.interface mode=s_axilite port=%arg1(!vitis.ptr<i32>) bundle=control
+    vitis.pragma.interface mode=m_axi port=%arg2(!vitis.ptr<i32>) offset=slave bundle=gmem_arg2
+    vitis.pragma.interface mode=s_axilite port=%arg2(!vitis.ptr<i32>) bundle=control
+    vitis.pragma.interface mode=m_axi port=%arg3(!vitis.ptr<i32>) offset=slave bundle=gmem_arg3
+    vitis.pragma.interface mode=s_axilite port=%arg3(!vitis.ptr<i32>) bundle=control
+    vitis.pragma.return_interface
+    vitis.pragma.dataflow {
+      vitis.call @accumulator(%arg0, %arg2) : (!vitis.ptr<i32>, !vitis.ptr<i32>) -> ()
+      vitis.call @accumulator(%arg1, %arg3) : (!vitis.ptr<i32>, !vitis.ptr<i32>) -> ()
+    }
+  }
+}
+

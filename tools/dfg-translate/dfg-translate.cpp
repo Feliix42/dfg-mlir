@@ -13,7 +13,6 @@ int main(int argc, char* argv[])
 {
     registerAllTranslations();
     registerAllDFGMLIRTranslations();
-
     return failed(
         mlirTranslateMain(argc, argv, "DFG Translation Testing Tool"));
 }

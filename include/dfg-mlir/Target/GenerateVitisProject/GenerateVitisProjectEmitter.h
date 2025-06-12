@@ -8,9 +8,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
-
 #include "llvm/Support/raw_ostream.h"
-
 #include <llvm/ADT/StringRef.h>
 
 namespace mlir {
@@ -24,6 +22,7 @@ LogicalResult generateemitHLSProject(
     Operation* op,
     raw_ostream &os,
     StringRef outputDirOpt,
+    StringRef formdc,
     StringRef targetDevice);
 
 } // namespace emitHLS
