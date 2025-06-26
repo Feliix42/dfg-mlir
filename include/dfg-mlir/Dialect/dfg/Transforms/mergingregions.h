@@ -12,7 +12,6 @@ namespace dfg {
 
 // Keep this name consistent with the constructor in Passes.td
 std::unique_ptr<Pass> createMergingRegionsPass();
-
 } // namespace dfg
 } // namespace mlir
 

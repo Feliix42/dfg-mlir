@@ -7,6 +7,7 @@
 
 #include "dfg-mlir/Dialect/dfg/Transforms/InlineRegion.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/mergingregions.h"
+#include "dfg-mlir/Dialect/dfg/Transforms/addSBox.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/InlineScalarArgument.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/LowerInsideToScf.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/OperatorToProcess.h"

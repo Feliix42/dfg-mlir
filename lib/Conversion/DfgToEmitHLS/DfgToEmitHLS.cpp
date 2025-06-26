@@ -789,6 +789,7 @@ void mlir::dfg::registerConvertToEmitHLSPipelines()
         [](OpPassManager &pm) { addConvertToEmitHLSPasses(pm); });
 }
 void mlir::addPrepareForMdcPasses(OpPassManager &pm) {
+    pm.addPass(mlir::dfg::createInsertSBoxPass());
     pm.addPass(dfg::createDfgOperatorToProcessPass());    
     pm.addPass(dfg::createDfgInlineRegionPass());
     pm.addPass(createCanonicalizerPass());

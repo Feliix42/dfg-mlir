@@ -328,10 +328,14 @@ namespace mlir {
                             instNum++;
                         });
                         // Second pass: create connections
+                        llvm::StringMap<unsigned> actorInputCounts;
+
                         instNum = 0;
                         topRegion.getBody().walk([&](InstantiateOp inst) {
                             std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum);
-                            
+                            std::string actorName = inst.getCallee().getRootReference().str();
+                            actorInputCounts[instName] = inst.getInputs().size(); // ← correct actor's input count
+
                             // Connect inputs
                             for (unsigned i = 0; i < inst.getInputs().size(); ++i) {
                                 Value input = inst.getInputs()[i];
@@ -347,11 +351,14 @@ namespace mlir {
                                     if (auto channelOp = input.getDefiningOp<ChannelOp>()) {
                                         sourceValue = channelOp.getOutChan(); // Use the output side of channel
                                     }
-                                    
+                                     //llvm::errs() << "[INFO] "<< sourceValue <<"\n";
                                     if (valueToSource.count(sourceValue)) {
                                         auto source = valueToSource[sourceValue];
+                                        unsigned srcInputCount = actorInputCounts.lookup(source.first); 
                                         os << "  <Connection dst=\"" << instName << "\" dst-port=\"arg" << i
-                                        << "\" src=\"" << source.first << "\" src-port=\"arg" << source.second +1<< "\"/>\n"; //***********/
+                                        << "\" src=\"" << source.first << "\" src-port=\"arg" << source.second +srcInputCount<< "\"/>\n"; //***********/
+                                        //llvm::errs() << "[INFO] "<<source.first<<" : source.second: "<< source.second<<" input szie: "<<inst.getInputs().size();
+                                        //llvm::errs() << " port number: "<< srcInputCount<<" port number2: "<<source.second + inst.getInputs().size()<< "\n";
                                     }
                                 }
                             }

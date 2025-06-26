@@ -37,6 +37,19 @@ def MergingRegions : Pass<"dfg-merge-regions", "ModuleOp"> {
   
   let constructor = "mlir::dfg::createMergingRegionsPass()";
 }
+//===----------------------------------------------------------------------===//
+// InsertSBox Pass
+//===----------------------------------------------------------------------===//
+
+def InsertSBox : Pass<"insert-sbox", "mlir::ModuleOp"> {
+  let summary = "Insert @sbox12int32 process if missing";
+  let description = [{
+    This pass inserts a fixed @sbox12int32 process into the IR if it is not already present.
+    The inserted process contains a loop that pulls an input, adds 1, and pushes to two outputs.
+  }];
+  let constructor = "mlir::dfg::createInsertSBoxPass()";
+  let dependentDialects = ["mlir::dfg::DfgDialect", "mlir::arith::ArithDialect"];
+}
 
 def DfgLowerInsideToLinalg : Pass<"dfg-lower-inside-to-linalg">
 {
