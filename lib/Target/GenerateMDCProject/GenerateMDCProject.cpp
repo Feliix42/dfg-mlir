@@ -328,14 +328,23 @@ namespace mlir {
                             instNum++;
                         });
                         // Second pass: create connections
+                        instNum = 0;
                         llvm::StringMap<unsigned> actorInputCounts;
+                        std::string instName;
+                        std::string actorName;
+                        topRegion.getBody().walk([&](InstantiateOp inst) {
+                            instName = inst.getCallee().getRootReference().str() + std::to_string(instNum);
+                            actorInputCounts[instName] = inst.getInputs().size(); // Store input count for this instance
+                            //llvm::errs() << "[INFO] Processing instance: " << instName << " input size: " << inst.getInputs().size() << "\n";
+                            instNum++;
+                        });
 
                         instNum = 0;
                         topRegion.getBody().walk([&](InstantiateOp inst) {
-                            std::string instName = inst.getCallee().getRootReference().str() + std::to_string(instNum);
-                            std::string actorName = inst.getCallee().getRootReference().str();
-                            actorInputCounts[instName] = inst.getInputs().size(); // ← correct actor's input count
-
+                            instName = inst.getCallee().getRootReference().str() + std::to_string(instNum);
+                            //std::string actorName = inst.getCallee().getRootReference().str();
+                            //actorInputCounts[instName] = inst.getInputs().size(); // ← correct actor's input count
+                            //llvm::errs() << "[INFO] Processing instance: " << instName << " actorName: " << actorName << " input size: " << inst.getInputs().size() << "\n";
                             // Connect inputs
                             for (unsigned i = 0; i < inst.getInputs().size(); ++i) {
                                 Value input = inst.getInputs()[i];
@@ -351,13 +360,13 @@ namespace mlir {
                                     if (auto channelOp = input.getDefiningOp<ChannelOp>()) {
                                         sourceValue = channelOp.getOutChan(); // Use the output side of channel
                                     }
-                                     //llvm::errs() << "[INFO] "<< sourceValue <<"\n";
+                                     //llvm::errs() << "[INFO] sourceValue : "<< sourceValue <<"\n";
                                     if (valueToSource.count(sourceValue)) {
                                         auto source = valueToSource[sourceValue];
                                         unsigned srcInputCount = actorInputCounts.lookup(source.first); 
                                         os << "  <Connection dst=\"" << instName << "\" dst-port=\"arg" << i
                                         << "\" src=\"" << source.first << "\" src-port=\"arg" << source.second +srcInputCount<< "\"/>\n"; //***********/
-                                        //llvm::errs() << "[INFO] "<<source.first<<" : source.second: "<< source.second<<" input szie: "<<inst.getInputs().size();
+                                        //llvm::errs() << "[INFO] source.first:"<<source.first <<" : source.second: "<< source.second<<" input szie: "<<inst.getInputs().size();
                                         //llvm::errs() << " port number: "<< srcInputCount<<" port number2: "<<source.second + inst.getInputs().size()<< "\n";
                                     }
                                 }
