@@ -80,7 +80,7 @@ struct ConvertArithBinaryOp : OpConversionPattern<OpFrom> {
 
     LogicalResult matchAndRewrite(
         OpFrom op,
-        OpFrom::Adaptor adaptor,
+        typename OpFrom::Adaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         rewriter.replaceOpWithNewOp<OpTo>(op, op.getLhs(), op.getRhs());
@@ -128,7 +128,7 @@ struct ConvertArithCastOp : OpConversionPattern<OpFrom> {
 
     LogicalResult matchAndRewrite(
         OpFrom op,
-        OpFrom::Adaptor adaptor,
+        typename OpFrom::Adaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         rewriter.replaceOpWithNewOp<OpTo>(

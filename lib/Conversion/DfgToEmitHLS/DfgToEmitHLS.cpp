@@ -393,7 +393,7 @@ struct ConvertConnectToCall : OpConversionPattern<ConnectDirection> {
 
     LogicalResult matchAndRewrite(
         ConnectDirection op,
-        ConnectDirection::Adaptor adaptor,
+        typename ConnectDirection::Adaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto loc = op.getLoc();
@@ -787,4 +787,22 @@ void mlir::dfg::registerConvertToEmitHLSPipelines()
         "convert-to-emitHLS",
         "Convert everything to emitHLS dialect",
         [](OpPassManager &pm) { addConvertToEmitHLSPasses(pm); });
+}
+void mlir::addPrepareForMdcPasses(OpPassManager &pm) {
+    pm.addPass(mlir::dfg::createInsertSBoxPass());
+    pm.addPass(dfg::createDfgOperatorToProcessPass());    
+    pm.addPass(dfg::createDfgInlineRegionPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(dfg::createMergingRegionsPass());
+
+    pm.addPass(bufferization::createOneShotBufferizePass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createSymbolDCEPass());
+    pm.addPass(createCSEPass());
+}
+void mlir::registerPrepareForMdcPipelines() {
+    PassPipelineRegistration<>(
+        "prepare-for-mdc",
+        "Lower DFG dialect to a form ready for MDC translation",
+        [](OpPassManager &pm) { addPrepareForMdcPasses(pm); });
 }

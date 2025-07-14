@@ -19,7 +19,7 @@ int main(int argc, char* argv[])
 
     registerAllDialects(registry);
     registerAllDFGMLIRDialects(registry);
-
+    registerPrepareForMdcPipelines();
     registerAllPasses();
     registerAllDFGMLIRPasses();
 

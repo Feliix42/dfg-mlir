@@ -100,13 +100,16 @@ struct emitHLSProjectEmitter {
     explicit emitHLSProjectEmitter(
         raw_ostream &os,
         std::string outputDir,
+        std::string formdc,
         std::string targetDevice)
             : dbgOS(os),
               outputDir(outputDir),
+              formdc(formdc),
               targetDevice(targetDevice)
     {}
 
     // Class to manage argument and variable names
+    bool getFormdc() const { return formdc == "true"; }
     struct NameManager {
         NameManager() = default;
         std::string getPrefix(Operation* op)
@@ -232,6 +235,7 @@ private:
     std::unique_ptr<raw_indented_ostream> cppIndentedOS;
     // Command line options
     std::string outputDir;
+    std::string formdc;
     std::string targetDevice;
     // Utils
     std::string projectDir;
@@ -255,7 +259,8 @@ private:
 //===----------------------------------------------------------------------===//
 // StandardOps
 //===----------------------------------------------------------------------===//
-
+bool reduceOneIteration = false;
+std::vector<std::string> funcNames;
 static LogicalResult
 printOperation(emitHLSProjectEmitter &emitter, ModuleOp moduleOp)
 {
@@ -277,9 +282,26 @@ printOperation(emitHLSProjectEmitter &emitter, ModuleOp moduleOp)
         return ::emitError(
             moduleOp.getLoc(),
             "Failed to initialize the project.");
+    
+    reduceOneIteration = emitter.getFormdc();       
+    auto &ops = moduleOp.getBody()->getOperations();        
+    auto begin = ops.begin();
+    auto end = ops.end();
+    if (reduceOneIteration && ops.size() > 0) {
+     funcNames.clear();   
+        --end;
 
-    for (Operation &op : moduleOp)
+    }
+    for (auto it = begin; it != end; ++it){
+        Operation &op = *it;
+        //
         if (failed(emitter.emitOperation(op))) return failure();
+        else if (auto symbolOp = dyn_cast<mlir::SymbolOpInterface>(&op)) {
+            auto funcName = symbolOp.getName().str();
+            funcNames.push_back(funcName);
+        }
+    }
+    
 
     // Create scripts after succesfully generate the cpp file
     if (failed(emitter.createScriptFiles())) return failure();
@@ -349,7 +371,7 @@ printOperation(emitHLSProjectEmitter &emitter, emitHLS::FuncOp funcOp)
     emitHLSProjectEmitter::BlockScope scope(emitter, &funcOp.getBody().front());
 
     auto funcName = funcOp.getSymName().str();
-
+    //llvm::errs() << "[INFO] funcName: " << funcName << "\n";
     dbgOS << "Translating FuncOp at " << funcOp.getLoc() << "\n";
     cppOS << "void " << funcName << "(";
     if (failed(interleaveCommaWithError(
@@ -764,6 +786,7 @@ printOperation(emitHLSProjectEmitter &emitter, emitHLS::PragmaInlineOp inlineOp)
     cppOS << "#pragma HLS INLINE ";
     if (inlineOp.getOff()) cppOS << "off";
     cppOS << "\n";
+    if (reduceOneIteration) cppOS << "#pragma HLS INTERFACE ap_ctrl_none port=return\n";
 
     return success();
 }
@@ -1297,6 +1320,7 @@ puts "INFO: Exporting hardware with bitstream"
 write_hw_platform -fixed -include_bit -force -file $project_dir/${project_name}_bd.xsa
 exit
 )";
+
 constexpr const char* kRunDesignShTemplate =
     R"(#!/bin/bash
 if [ -z "$XILINX_PATH" ]; then
@@ -1380,18 +1404,48 @@ LogicalResult emitHLSProjectEmitter::createScriptFiles()
             dbgOS << "Error creating run_hls.tcl: " << ec.message() << "\n";
             return failure();
         }
+        
         // Create tcl script based on top function name and target device
         dbgOS << "Creating run_hls.tcl file\n";
         // Use pre-defined template and replace the key
-        std::string content(kRunHLSTclTemplate);
-        content = replaceAll(content, "{{TARGET_DEVICE}}", targetDevice);
-        content = replaceAll(content, "{{TOP_FUNC_NAME}}", topFuncName);
+        std::string content;
+        if (!reduceOneIteration) {
+            // Normal case: single top function
+            std::string tempcontent(kRunHLSTclTemplate);
+            tempcontent = replaceAll(tempcontent, "{{TARGET_DEVICE}}", targetDevice);
+            tempcontent = replaceAll(tempcontent, "{{TOP_FUNC_NAME}}", topFuncName);
+            content = tempcontent;
+        } else {
+            std::string templateStr(kRunHLSTclTemplate);
+            const std::string loopStart = "open_solution \"solution_{{TOP_FUNC_NAME}}\"";
+            const std::string loopEnd = "close_solution";
+            size_t startPos = templateStr.find(loopStart);
+            size_t endPos = templateStr.find(loopEnd, startPos);
+            if (startPos == std::string::npos || endPos == std::string::npos) {
+                dbgOS << "Error: Template does not contain expected block\n";
+                return failure();
+            }
+            endPos += std::string("close_solution").length();
+            std::string prefix = templateStr.substr(0, startPos);
+            std::string loopBlock = templateStr.substr(startPos, endPos - startPos);
+            std::string suffix = templateStr.substr(endPos);
+            prefix = replaceAll(prefix, "{{TARGET_DEVICE}}", targetDevice);
+            content += prefix;
+            for (const auto &funcName : funcNames) {
+                std::string block = loopBlock;
+                block = replaceAll(block, "{{TOP_FUNC_NAME}}", funcName);
+                content += block + "\n";
+            }
+            content += suffix;
+        }
+        
         tclFile << content;
         // Debug info
         dbgOS << "Created run_hls.tcl\n";
     }
-
+     
     // Generate Tcl script for FPGA design
+    if(!reduceOneIteration)
     {
         SmallString<128> tclPath(projectDir);
         llvm::sys::path::append(tclPath, "run_vivado.tcl");
@@ -1464,6 +1518,14 @@ LogicalResult emitHLSProjectEmitter::createScriptFiles()
         // Create shell script to automatic run emitHLS HLS and Vivado
         dbgOS << "Creating run_design.sh file\n";
         std::string content(kRunDesignShTemplate);
+        if (reduceOneIteration) {
+            std::string vivadoStart = R"(echo "Runing Vivado")";
+            size_t pos = content.find(vivadoStart);
+            if (pos != std::string::npos) {
+                content = content.substr(0, pos); // Truncate everything from Vivado onwards
+            }
+        }
+       
         content = replaceAll(content, "{{TOP_FUNC_NAME}}", topFuncName);
         shFile << content;
         // Debug info
@@ -1746,8 +1808,9 @@ LogicalResult emitHLS::generateemitHLSProject(
     Operation* op,
     raw_ostream &os,
     StringRef outputDir,
+    StringRef formdc,
     StringRef targetDevice)
 {
-    emitHLSProjectEmitter emitter(os, outputDir.str(), targetDevice.str());
+    emitHLSProjectEmitter emitter(os, outputDir.str(),  formdc.str(),  targetDevice.str());
     return emitter.emitOperation(*op);
 }

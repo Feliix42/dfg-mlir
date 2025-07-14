@@ -29,4 +29,7 @@ void registerConvertToEmitHLSPipelines();
 void addConvertToEmitHLSPasses(OpPassManager &pm);
 } // namespace dfg
 
+void registerPrepareForMdcPipelines();
+void addPrepareForMdcPasses(OpPassManager &pm);
+
 } // namespace mlir

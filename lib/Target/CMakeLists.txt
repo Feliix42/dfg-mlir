@@ -1,1 +1,2 @@
 add_subdirectory(GenerateVitisProject)
+add_subdirectory(GenerateMDCProject)

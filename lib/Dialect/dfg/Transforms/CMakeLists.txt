@@ -9,6 +9,8 @@ add_mlir_conversion_library(DFGMLIRDfgTransforms
     RemoveScalarGlobals.cpp
     RetrieveGraphLayers.cpp
     SoftTranspose.cpp
+    mergingregions.cpp
+    addSBox.cpp
 
     DEPENDS
     DFGMLIRDfgTransformsIncGen

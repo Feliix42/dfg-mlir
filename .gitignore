@@ -13,4 +13,5 @@ playground/*.s
 playground/*.ll
 playground/*.out
 playground/lowered.mlir
+build_dfg1.sh
 

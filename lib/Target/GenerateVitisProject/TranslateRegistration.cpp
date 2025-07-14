@@ -22,6 +22,12 @@ static llvm::cl::opt<std::string> OutputDirOpt(
     llvm::cl::value_desc("path to the directory"),
     llvm::cl::init("."));
 
+static llvm::cl::opt<std::string> formdc(
+    "for-MDC",
+    llvm::cl::desc("Vitis project generation for MDC"),
+    llvm::cl::value_desc("generation files for MDC"),
+    llvm::cl::init("false"));
+
 void registerGenerateemitHLSProject()
 {
     TranslateFromMLIRRegistration reg(
@@ -34,6 +40,7 @@ void registerGenerateemitHLSProject()
                 op,
                 output,
                 OutputDirOpt,
+                formdc,
                 TargetDevice);
         },
         [](DialectRegistry &registry) {

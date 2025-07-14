@@ -28,6 +28,29 @@ def LinalgInlineScalarArgument : Pass<"linalg-inline-scalar-argument">
     let constructor = "mlir::linalg::createLinalgInlineScalarArgumentPass()";
 }
 
+def MergingRegions : Pass<"dfg-merge-regions", "ModuleOp"> {
+  let summary = "Merge multiple DFG regions into a single region";
+  let description = [{
+    Identifies and merges multiple DFG regions for MDC flow preparation.
+  }];
+  let dependentDialects = ["mlir::dfg::DfgDialect"];
+  
+  let constructor = "mlir::dfg::createMergingRegionsPass()";
+}
+//===----------------------------------------------------------------------===//
+// InsertSBox Pass
+//===----------------------------------------------------------------------===//
+
+def InsertSBox : Pass<"insert-sbox", "mlir::ModuleOp"> {
+  let summary = "Insert @sbox12int32 process if missing";
+  let description = [{
+    This pass inserts a fixed @sbox12int32 process into the IR if it is not already present.
+    The inserted process contains a loop that pulls an input, adds 1, and pushes to two outputs.
+  }];
+  let constructor = "mlir::dfg::createInsertSBoxPass()";
+  let dependentDialects = ["mlir::dfg::DfgDialect", "mlir::arith::ArithDialect"];
+}
+
 def DfgLowerInsideToLinalg : Pass<"dfg-lower-inside-to-linalg">
 {
     let summary = "lower the contents of operator/process to linalg level";
