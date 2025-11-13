@@ -7,27 +7,27 @@
         ]
       },
       "locked": {
-        "lastModified": 1706542027,
-        "narHash": "sha256-kunu519u5RI6ZQZ3tDoDpoFeGjY/93cBTbbFi1iiRCI=",
+        "lastModified": 1748862994,
+        "narHash": "sha256-mjKgTHlhICSKsB7jlgU6lBUjsns/JuRb/9fpy1QOQcU=",
         "owner": "Feliix42",
         "repo": "mlir.nix",
-        "rev": "7845731a3091da638be59cce1ca62554ce7faea3",
+        "rev": "11e688e9648a54fc04c84066f8d272b06869f696",
         "type": "github"
       },
       "original": {
         "owner": "Feliix42",
-        "ref": "circt",
+        "ref": "main",
         "repo": "mlir.nix",
         "type": "github"
       }
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1709479366,
-        "narHash": "sha256-n6F0n8UV6lnTZbYPl1A9q1BS0p4hduAv1mGAP17CVd0=",
+        "lastModified": 1762844143,
+        "narHash": "sha256-SlybxLZ1/e4T2lb1czEtWVzDCVSTvk9WLwGhmxFmBxI=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "b8697e57f10292a6165a20f03d2f42920dfaf973",
+        "rev": "9da7f1cf7f8a6e2a7cb3001b048546c92a8258b4",
         "type": "github"
       },
       "original": {

@@ -4,8 +4,7 @@
   inputs = {
     nixpkgs.url = "nixpkgs/nixos-unstable";
     mlir = {
-      #url = "github:Feliix42/mlir.nix/main";
-      url = "github:Feliix42/mlir.nix/circt";
+      url = "github:Feliix42/mlir.nix/main";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -35,7 +34,7 @@
       # A Nixpkgs overlay.
       overlay = final: prev: {
 
-        dfg_dialect = with final; final.callPackage ({ inShell ? false }: llvmPackages_17.stdenv.mkDerivation rec {
+        dfg_dialect = with final; final.callPackage ({ inShell ? false }: llvmPackages_20.stdenv.mkDerivation rec {
           pname = "dfg-mlir";
           inherit version;
 
@@ -46,12 +45,11 @@
             python3
             ninja
             cmake
-            llvmPackages_17.clang
-            llvmPackages_17.bintools
-            llvmPackages_17.openmp
-            clang-tools_17
+            llvmPackages_20.clang
+            llvmPackages_20.bintools
+            llvmPackages_20.openmp
+            llvmPackages_20.clang-tools
             mlir.packages.x86_64-linux.mlir
-            mlir.packages.x86_64-linux.circt
             lit
           ];
 
@@ -63,7 +61,6 @@
             "-GNinja"
             "-DMLIR_DIR=${mlir}/lib/cmake/mlir"
             "-DLLVM_DIR=${mlir}/lib/cmake/llvm"
-            "-DCIRCT_DIR=${circt}/lib/cmake/circt"
 
             # Debug for debug builds
             #"-DCMAKE_BUILD_TYPE=RelWithDebInfo"
