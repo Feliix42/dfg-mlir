@@ -135,7 +135,7 @@ struct OffloadedInstantiateOpLowering
 
         rewriter.setInsertionPointToStart(parent.getBody());
         func::FuncOp olympusWrapper =
-            rewriter.create<func::FuncOp>(op.getLoc(), wrapperName, fnType);
+            func::FuncOp::create(rewriter, op.getLoc(), wrapperName, fnType);
         Block* entryBlock = olympusWrapper.addEntryBlock();
         rewriter.setInsertionPointToEnd(entryBlock);
 
@@ -233,7 +233,7 @@ struct OffloadedInstantiateOpLowering
         rewriter.create(kernelOpState);
 
         // return
-        rewriter.create<func::ReturnOp>(op.getLoc());
+        func::ReturnOp::create(rewriter, op.getLoc());
 
         // ====================================================================
         // Olympus wrapper call

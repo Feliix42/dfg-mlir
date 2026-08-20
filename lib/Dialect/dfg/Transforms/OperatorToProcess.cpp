@@ -56,7 +56,7 @@ struct ConvertAnyOperatorToEquivalentProcess
 
         // Creating new process op
         auto processOp =
-            rewriter.create<ProcessOp>(loc, op.getSymNameAttr(), newFuncTy);
+            ProcessOp::create(rewriter, loc, op.getSymNameAttr(), newFuncTy);
         Block* processBlock = &processOp.getBody().front();
         IRMapping mapper;
         for (auto [oldArg, newArg] : llvm::zip(
@@ -83,7 +83,8 @@ struct ConvertAnyOperatorToEquivalentProcess
             iterArgs.push_back(opCloned->getResult(0));
         }
         // In process, create new operator op
-        auto loopOp = rewriter.create<LoopOp>(
+        auto loopOp = LoopOp::create(
+            rewriter,
             loc,
             processOp.getBody().getArguments().take_front(numInputs),
             processOp.getBody().getArguments().take_back(numOutputs),
@@ -93,7 +94,7 @@ struct ConvertAnyOperatorToEquivalentProcess
         // Create pull ops for input channels
         for (size_t i = 0; i < numInputs; i++) {
             auto pullOp =
-                rewriter.create<PullOp>(loc, processBlock->getArgument(i));
+                PullOp::create(rewriter, loc, processBlock->getArgument(i));
             mapper.map(op.getBody().getArgument(i), pullOp.getResult());
         }
         // Copy the content into loop
@@ -107,7 +108,7 @@ struct ConvertAnyOperatorToEquivalentProcess
                              .getArguments()
                              .drop_front(numInputs)
                              .take_front(numOutputs))) {
-                    rewriter.create<PushOp>(loc, pushedValue, OutputChannel);
+                    PushOp::create(rewriter, loc, pushedValue, OutputChannel);
                 }
                 rewriter.eraseOp(newOp);
                 break;

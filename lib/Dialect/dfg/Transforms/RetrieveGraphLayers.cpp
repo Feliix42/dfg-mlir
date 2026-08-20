@@ -431,7 +431,8 @@ LogicalResult FuncRetrieveGraphLayersPass::createLayerFunc(
             layer.output.shape,
             getTypeFromStr(layer.output.type, builder));
         builder.setInsertionPoint(op);
-        auto layerFunc = builder.create<func::FuncOp>(
+        auto layerFunc = func::FuncOp::create(
+            builder,
             loc,
             layerName,
             builder.getFunctionType(inputTypes, {outputType}));
@@ -528,7 +529,7 @@ LogicalResult FuncRetrieveGraphLayersPass::createLayerFunc(
         LLVM_DEBUG(
             llvm::dbgs() << "===INFO=== Creating return operation at "
                          << returnLoc << " ===INFO===\n");
-        builder.create<func::ReturnOp>(returnLoc, returnValue);
+        func::ReturnOp::create(builder, returnLoc, returnValue);
     }
     LLVM_DEBUG(llvm::dbgs() << "\n");
 
@@ -536,7 +537,7 @@ LogicalResult FuncRetrieveGraphLayersPass::createLayerFunc(
     LLVM_DEBUG(llvm::dbgs() << "===INFO=== Creating top function ===INFO===\n");
     SmallVector<Value> calledValues;
     builder.setInsertionPoint(op);
-    auto topFunc = builder.create<func::FuncOp>(loc, topNameAttr, topFuncTy);
+    auto topFunc = func::FuncOp::create(builder, loc, topNameAttr, topFuncTy);
     auto topLoc = topFunc.getLoc();
     Block* entryBlock = topFunc.addEntryBlock();
     builder.setInsertionPointToEnd(entryBlock);
@@ -544,7 +545,8 @@ LogicalResult FuncRetrieveGraphLayersPass::createLayerFunc(
     for (auto [idx, layer] : llvm::enumerate(layerFuncOps)) {
         func::CallOp callLayer;
         if (idx == 0) {
-            callLayer = builder.create<func::CallOp>(
+            callLayer = func::CallOp::create(
+                builder,
                 topLoc,
                 layer,
                 topFunc.getArgument(0));
@@ -552,11 +554,11 @@ LogicalResult FuncRetrieveGraphLayersPass::createLayerFunc(
             SmallVector<Value> callValues;
             for (auto valueIdx : callValueIndexMap[idx])
                 callValues.push_back(calledValues[valueIdx]);
-            callLayer = builder.create<func::CallOp>(topLoc, layer, callValues);
+            callLayer = func::CallOp::create(builder, topLoc, layer, callValues);
         }
         calledValues.push_back(callLayer.getResult(0));
     }
-    builder.create<func::ReturnOp>(topLoc, calledValues.back());
+    func::ReturnOp::create(builder, topLoc, calledValues.back());
     LLVM_DEBUG(
         llvm::dbgs() << "===INFO=== Successfully created graph ===INFO===\n");
 

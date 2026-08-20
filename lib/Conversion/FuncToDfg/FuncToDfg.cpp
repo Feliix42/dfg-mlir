@@ -73,7 +73,7 @@ struct ConvertFuncToOperator : OpConversionPattern<func::FuncOp> {
             auto newFuncTy =
                 rewriter.getFunctionType(funcTy.getInputs(), outputs);
             auto operatorOp =
-                rewriter.create<OperatorOp>(loc, funcName, newFuncTy);
+                OperatorOp::create(rewriter, loc, funcName, newFuncTy);
             LLVM_DEBUG(
                 llvm::dbgs() << "//=== Creating operator " << funcName << "\n");
             rewriter.setInsertionPointToEnd(&operatorOp.getBody().front());
@@ -101,7 +101,7 @@ struct ConvertFuncToOperator : OpConversionPattern<func::FuncOp> {
                     InputType::get(rewriter.getContext(), outTy));
             auto newFuncTy = rewriter.getFunctionType(inTypes, outTypes);
             // Create the region
-            auto regionOp = rewriter.create<RegionOp>(loc, funcName, newFuncTy);
+            auto regionOp = RegionOp::create(rewriter, loc, funcName, newFuncTy);
             LLVM_DEBUG(
                 llvm::dbgs() << "//=== Creating region " << funcName << "\n");
             auto regionLoc = regionOp.getLoc();
@@ -111,7 +111,7 @@ struct ConvertFuncToOperator : OpConversionPattern<func::FuncOp> {
             SmallVector<ChannelOp> channels;
             for (auto [i, inTy] : llvm::enumerate(funcTy.getInputs())) {
                 // (TODO) For now, set buffer size as 2
-                auto channelOp = rewriter.create<ChannelOp>(regionLoc, inTy, 2);
+                auto channelOp = ChannelOp::create(rewriter, regionLoc, inTy, 2);
                 LLVM_DEBUG(
                     llvm::dbgs()
                     << "//=== Creating input channel " << i << "\n");
@@ -121,7 +121,8 @@ struct ConvertFuncToOperator : OpConversionPattern<func::FuncOp> {
             // Connect channel's IO to region's, now there are only input/output
             // channels in the vector
             for (unsigned i = 0; i < funcTy.getNumInputs(); ++i) {
-                rewriter.create<ConnectInputOp>(
+                ConnectInputOp::create(
+                    rewriter,
                     regionLoc,
                     regionBlock->getArgument(i),
                     channels[i].getInChan());
@@ -143,7 +144,7 @@ struct ConvertFuncToOperator : OpConversionPattern<func::FuncOp> {
                 for (auto [idx, type] :
                      llvm::enumerate(operatorOp.getOutputPortTypes())) {
                     auto channelOp =
-                        rewriter.create<ChannelOp>(regionLoc, type, 2);
+                        ChannelOp::create(rewriter, regionLoc, type, 2);
                     LLVM_DEBUG(
                         llvm::dbgs()
                         << "//=== Creating channel for output " << idx
@@ -163,7 +164,8 @@ struct ConvertFuncToOperator : OpConversionPattern<func::FuncOp> {
                     valueVec.erase(valueVec.begin());
                     inputs.push_back(input);
                 }
-                auto instance = rewriter.create<InstantiateOp>(
+                auto instance = InstantiateOp::create(
+                    rewriter,
                     regionLoc,
                     operatorOp.getSymName().str(),
                     inputs,
@@ -179,7 +181,8 @@ struct ConvertFuncToOperator : OpConversionPattern<func::FuncOp> {
                         for (auto [idx, value] :
                              llvm::enumerate(returnOp.getOperands())) {
                             if (value == callResult) {
-                                rewriter.create<ConnectOutputOp>(
+                                ConnectOutputOp::create(
+                                    rewriter,
                                     regionLoc,
                                     regionBlock->getArgument(
                                         regionOp.getNumInputPorts() + idx),
@@ -218,7 +221,7 @@ struct ConvertReturnToOutput : OpConversionPattern<func::ReturnOp> {
         SmallVector<Value> results;
         for (unsigned i = 0; i < operatorOp.getNumOutputPorts(); ++i)
             results.push_back(result);
-        auto outputOp = rewriter.create<OutputOp>(loc, results);
+        auto outputOp = OutputOp::create(rewriter, loc, results);
 
         rewriter.replaceOp(op, outputOp);
         return success();

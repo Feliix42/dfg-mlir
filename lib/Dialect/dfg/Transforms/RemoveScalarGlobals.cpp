@@ -86,7 +86,8 @@ struct MakeGetGlobalConstant : public OpRewritePattern<GetGlobalOp> {
         auto name = op.getName().str();
         auto memref = op.getResult();
         auto type = memref.getType().getElementType();
-        auto constantOp = rewriter.create<arith::ConstantOp>(
+        auto constantOp = arith::ConstantOp::create(
+            rewriter,
             loc,
             type,
             scalarMemrefMap[name]);

@@ -129,7 +129,7 @@ struct TransposeAtPlace : public OpRewritePattern<TransposeOp> {
 
         rewriter.setInsertionPoint(defOp);
         auto newConst =
-            rewriter.create<arith::ConstantOp>(defLoc, initType, newDenseAttr);
+            arith::ConstantOp::create(rewriter, defLoc, initType, newDenseAttr);
         op.getResult().front().replaceAllUsesWith(newConst.getResult());
         rewriter.eraseOp(op);
         rewriter.eraseOp(defOp);

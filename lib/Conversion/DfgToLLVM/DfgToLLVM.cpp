@@ -60,7 +60,7 @@ static FlatSymbolRefAttr getOrInsertFunc(
     // Insert the function into the body of the parent module.
     PatternRewriter::InsertionGuard insertGuard(rewriter);
     rewriter.setInsertionPointToStart(module.getBody());
-    rewriter.create<func::FuncOp>(module.getLoc(), funcName, fnType)
+    func::FuncOp::create(rewriter, module.getLoc(), funcName, fnType)
         .setPrivate();
     return SymbolRefAttr::get(context, funcName);
 }
@@ -98,7 +98,8 @@ LogicalResult insertTeardownFunctionFromPush(
         std::nullopt,
         pushOp.getChan());
 
-    rewriter.create<func::CallOp>(
+    func::CallOp::create(
+        rewriter,
         pushOp.getLoc(),
         pushFuncName,
         ArrayRef<Type>(),
@@ -117,7 +118,8 @@ LogicalResult insertTeardownFunctionFromPull(
 
     // Translate to InputType, insert UnrealizedConversionCastOp
     UnrealizedConversionCastOp inputType =
-        rewriter.create<UnrealizedConversionCastOp>(
+        UnrealizedConversionCastOp::create(
+            rewriter,
             pullOp.getLoc(),
             rewriter.getType<InputType>(pullOp.getType()),
             pullOp.getChan());
@@ -130,7 +132,8 @@ LogicalResult insertTeardownFunctionFromPull(
         std::nullopt,
         inputType.getResult(0));
 
-    rewriter.create<func::CallOp>(
+    func::CallOp::create(
+        rewriter,
         pullOp.getLoc(),
         pushFuncName,
         ArrayRef<Type>(),
@@ -148,18 +151,20 @@ rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter)
     Location loc = op.getLoc();
     // create a stack allocated data segment, write the data into it and call
     // the channel send function with this pointer
-    auto one = rewriter.create<LLVM::ConstantOp>(
+    auto one = LLVM::ConstantOp::create(
+        rewriter,
         loc,
         rewriter.getI64Type(),
         rewriter.getI64IntegerAttr(1));
     auto ptrType =
         LLVM::LLVMPointerType::get(op.getInp().getType().getContext());
-    auto allocated = rewriter.create<LLVM::AllocaOp>(
+    auto allocated = LLVM::AllocaOp::create(
+        rewriter,
         loc,
         ptrType,
         op.getInp().getType(),
         one);
-    rewriter.create<LLVM::StoreOp>(loc, op.getInp(), allocated);
+    LLVM::StoreOp::create(rewriter, loc, op.getInp(), allocated);
 
     // return value
     Type boolReturnVal = rewriter.getI1Type();
@@ -181,7 +186,8 @@ rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter)
         boolReturnVal,
         arguments);
 
-    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
+    LLVM::BitcastOp casted = LLVM::BitcastOp::create(
+        rewriter,
         op.getLoc(),
         LLVM::LLVMPointerType::get(op.getContext()),
         allocated);
@@ -190,7 +196,8 @@ rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter)
     args2.push_back(op.getChan());
     args2.push_back(casted);
 
-    func::CallOp pushOperation = rewriter.create<func::CallOp>(
+    func::CallOp pushOperation = func::CallOp::create(
+        rewriter,
         loc,
         pushFuncName,
         ArrayRef<Type>(boolReturnVal),
@@ -214,11 +221,12 @@ rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter)
     SmallVector<Value> terminatorArgs;
     if (terminatorBlock->getNumArguments() > 0) {
         for (auto ty : terminatorBlock->getArgumentTypes()) {
-            LLVM::PoisonOp poison = rewriter.create<LLVM::PoisonOp>(loc, ty);
+            LLVM::PoisonOp poison = LLVM::PoisonOp::create(rewriter, loc, ty);
             terminatorArgs.push_back(poison);
         }
     }
-    rewriter.create<cf::CondBranchOp>(
+    cf::CondBranchOp::create(
+        rewriter,
         pushOperation.getLoc(),
         pushOperation.getResult(0),
         newBlock,
@@ -240,13 +248,14 @@ rewritePullOp(PullOp op, Block* terminatorBlock, IRRewriter &rewriter)
     Location loc = op.getLoc();
     // create a stack allocated data segment, write the data into it and call
     // the channel send function with this pointer
-    auto one = rewriter.create<LLVM::ConstantOp>(
+    auto one = LLVM::ConstantOp::create(
+        rewriter,
         loc,
         rewriter.getI64Type(),
         rewriter.getI64IntegerAttr(1));
     auto ptrType = LLVM::LLVMPointerType::get(op.getType().getContext());
     auto allocated =
-        rewriter.create<LLVM::AllocaOp>(loc, ptrType, op.getType(), one);
+        LLVM::AllocaOp::create(rewriter, loc, ptrType, op.getType(), one);
 
     // create the struct type that models the result
     Type boolReturnVal = rewriter.getI1Type();
@@ -265,7 +274,8 @@ rewritePullOp(PullOp op, Block* terminatorBlock, IRRewriter &rewriter)
         boolReturnVal,
         arguments);
 
-    LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
+    LLVM::BitcastOp casted = LLVM::BitcastOp::create(
+        rewriter,
         op.getLoc(),
         LLVM::LLVMPointerType::get(op.getContext()),
         allocated);
@@ -274,14 +284,15 @@ rewritePullOp(PullOp op, Block* terminatorBlock, IRRewriter &rewriter)
     args2.push_back(op.getChan());
     args2.push_back(casted);
 
-    func::CallOp valid = rewriter.create<func::CallOp>(
+    func::CallOp valid = func::CallOp::create(
+        rewriter,
         loc,
         ArrayRef<Type>(boolReturnVal),
         pullFuncName,
         args2);
 
     LLVM::LoadOp value =
-        rewriter.create<LLVM::LoadOp>(loc, op.getType(), allocated);
+        LLVM::LoadOp::create(rewriter, loc, op.getType(), allocated);
 
     op.getResult().replaceAllUsesWith(value.getResult());
 
@@ -301,11 +312,12 @@ rewritePullOp(PullOp op, Block* terminatorBlock, IRRewriter &rewriter)
     SmallVector<Value> terminatorArgs;
     if (terminatorBlock->getNumArguments() > 0) {
         for (auto ty : terminatorBlock->getArgumentTypes()) {
-            LLVM::PoisonOp poison = rewriter.create<LLVM::PoisonOp>(loc, ty);
+            LLVM::PoisonOp poison = LLVM::PoisonOp::create(rewriter, loc, ty);
             terminatorArgs.push_back(poison);
         }
     }
-    rewriter.create<cf::CondBranchOp>(
+    cf::CondBranchOp::create(
+        rewriter,
         valid.getLoc(),
         valid.getResult(0),
         newBlock,
@@ -339,14 +351,16 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
             LLVM::LLVMPointerType::get(encapsulatedType.getContext());
 
         LLVM::ZeroOp nullOp =
-            rewriter.create<LLVM::ZeroOp>(op.getLoc(), nullPtrTy);
-        LLVM::GEPOp gepResult = rewriter.create<LLVM::GEPOp>(
+            LLVM::ZeroOp::create(rewriter, op.getLoc(), nullPtrTy);
+        LLVM::GEPOp gepResult = LLVM::GEPOp::create(
+            rewriter,
             op.getLoc(),
             nullPtrTy,
             nullPtrTy,
             nullOp.getResult(),
             ArrayRef<LLVM::GEPArg>{1});
-        LLVM::PtrToIntOp bytewidthOp = rewriter.create<LLVM::PtrToIntOp>(
+        LLVM::PtrToIntOp bytewidthOp = LLVM::PtrToIntOp::create(
+            rewriter,
             op.getLoc(),
             rewriter.getI64Type(),
             gepResult.getResult());
@@ -363,7 +377,8 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
             returnedPtr,
             ArrayRef<Value>(bytewidthOp.getResult()));
 
-        func::CallOp channelCreation = rewriter.create<func::CallOp>(
+        func::CallOp channelCreation = func::CallOp::create(
+            rewriter,
             op.getLoc(),
             ArrayRef<Type>{returnedPtr},
             chanFunctionName,
@@ -374,14 +389,16 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
         // 3. replace all channel inputs and outputs with the newly created
         // results
         UnrealizedConversionCastOp convertedInput =
-            rewriter.create<UnrealizedConversionCastOp>(
+            UnrealizedConversionCastOp::create(
+                rewriter,
                 op.getLoc(),
                 rewriter.getType<InputType>(encapsulatedType),
                 channelCreation.getResult(0));
         op.getInChan().replaceAllUsesWith(convertedInput.getResult(0));
 
         UnrealizedConversionCastOp convertedOutput =
-            rewriter.create<UnrealizedConversionCastOp>(
+            UnrealizedConversionCastOp::create(
+                rewriter,
                 op.getLoc(),
                 rewriter.getType<OutputType>(encapsulatedType),
                 channelCreation.getResult(0));
@@ -423,8 +440,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
             Location loc) -> Value {
             if (inputs.size() != 1) return Value{};
 
-            return builder
-                .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+            return UnrealizedConversionCastOp::create(builder, loc, resultType, inputs)
                 .getResult(0);
         });
     converter.addTargetMaterialization(
@@ -434,8 +450,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
             Location loc) -> Value {
             if (inputs.size() != 1) return Value{};
 
-            return builder
-                .create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+            return UnrealizedConversionCastOp::create(builder, loc, resultType, inputs)
                 .getResult(0);
         });
 
@@ -487,7 +502,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
             // NOTE(feliix42): replaceWithNewOp does *not* work here!
             // localRewriter.create<cf::BranchOp>(ret->getLoc(),
             // terminatorBlock);
-            localRewriter.create<cf::BranchOp>(
+            cf::BranchOp::create(
+                localRewriter,
                 ret->getLoc(),
                 ret.getOperands(),
                 terminatorBlock);
@@ -521,7 +537,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
                     return WalkResult::interrupt();
             }
         }
-        rewriter.create<func::ReturnOp>(
+        func::ReturnOp::create(
+            rewriter,
             funcOp->getLoc(),
             terminatorBlock->getArguments());
 

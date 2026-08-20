@@ -194,6 +194,7 @@ private:
     {
         for (auto node : graphNodes)
             if (node.name == nodeName) return node;
+        return GraphNode();
     }
     void analyseChannelLoops()
     {

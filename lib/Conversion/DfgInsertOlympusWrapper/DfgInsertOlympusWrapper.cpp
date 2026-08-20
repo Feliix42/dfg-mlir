@@ -61,7 +61,7 @@ static FlatSymbolRefAttr getOrInsertFunc(
     // Insert the function into the body of the parent module.
     PatternRewriter::InsertionGuard insertGuard(rewriter);
     rewriter.setInsertionPointToStart(module.getBody());
-    rewriter.create<func::FuncOp>(module.getLoc(), funcName, fnType)
+    func::FuncOp::create(rewriter, module.getLoc(), funcName, fnType)
         .setPrivate();
     return SymbolRefAttr::get(context, funcName);
 }
@@ -151,7 +151,8 @@ LogicalResult createAlveoHostObject(SmallVector<InstantiateOp> &instantiations)
     }
 
     FunctionType opSignature = FunctionType::get(moduleCtx, {}, tyVec);
-    ProcessOp hostCreationOp = rewriter.create<ProcessOp>(
+    ProcessOp hostCreationOp = ProcessOp::create(
+        rewriter,
         instantiations[0].getLoc(),
         alveoHostWrapperName,
         opSignature);
@@ -169,7 +170,8 @@ LogicalResult createAlveoHostObject(SmallVector<InstantiateOp> &instantiations)
     Block* entryBlock = rewriter.createBlock(&opBody);
     entryBlock->addArguments(tyVec, locs);
     rewriter.setInsertionPointToEnd(entryBlock);
-    func::CallOp hostObject = rewriter.create<func::CallOp>(
+    func::CallOp hostObject = func::CallOp::create(
+        rewriter,
         hostCreationOp->getLoc(),
         hostCreationRef,
         ArrayRef<Type>(alveoHostObjectType),
@@ -184,7 +186,8 @@ LogicalResult createAlveoHostObject(SmallVector<InstantiateOp> &instantiations)
             return failure();
         }
 
-        rewriter.create<PushOp>(
+        PushOp::create(
+            rewriter,
             output.getLoc(),
             hostObject.getResult(0),
             output);
@@ -258,7 +261,8 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
     FunctionType opSignature =
         FunctionType::get(instantiation.getContext(), inputs, outputs);
 
-    ProcessOp wrapperOp = rewriter.create<ProcessOp>(
+    ProcessOp wrapperOp = ProcessOp::create(
+        rewriter,
         instantiation.getLoc(),
         wrapperOpName,
         opSignature);
@@ -274,7 +278,7 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
     // pull the host object
     Value alveoInput =
         entryBlock->getArgument(wrapperOp.getFunctionType().getNumInputs() - 1);
-    PullOp hostObject = rewriter.create<PullOp>(loc, alveoInput);
+    PullOp hostObject = PullOp::create(rewriter, loc, alveoInput);
 
     SmallVector<Value> getNumTimesArgs;
     getNumTimesArgs.push_back(hostObject);
@@ -286,7 +290,8 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
         rewriter.getI64Type(),
         getNumTimesArgs);
 
-    func::CallOp dataWidth = rewriter.create<func::CallOp>(
+    func::CallOp dataWidth = func::CallOp::create(
+        rewriter,
         loc,
         ArrayRef<Type>(rewriter.getI64Type()),
         getNumTimesFunc,
@@ -299,11 +304,13 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
     SmallVector<Value> inputDepth;
     for (size_t i = 0; i < instantiation.getInputs().size(); i++) {
         // TODO: #iterations will go here!!
-        arith::ConstantOp multI = rewriter.create<arith::ConstantOp>(
+        arith::ConstantOp multI = arith::ConstantOp::create(
+            rewriter,
             loc,
             rewriter.getI64Type(),
             rewriter.getI64IntegerAttr(multiplicities[i]));
-        arith::MulIOp bufSize = rewriter.create<arith::MulIOp>(
+        arith::MulIOp bufSize = arith::MulIOp::create(
+            rewriter,
             loc,
             dataWidth.getResults()[0],
             multI);
@@ -325,7 +332,7 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
         LLVM::LLVMPointerType ptrType =
             LLVM::LLVMPointerType::get(elementType.getContext());
         LLVM::AllocaOp allocated =
-            rewriter.create<LLVM::AllocaOp>(loc, ptrType, elementType, bufSize);
+            LLVM::AllocaOp::create(rewriter, loc, ptrType, elementType, bufSize);
 
         ioChans.push_back(allocated);
     }
@@ -339,7 +346,7 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
             outVals.push_back(entryBlock->getArgument(i));
 
     // loopOp
-    LoopOp loopOp = rewriter.create<LoopOp>(loc, inVals, outVals);
+    LoopOp loopOp = LoopOp::create(rewriter, loc, inVals, outVals);
     Block* loopEntryBlock = rewriter.createBlock(&loopOp.getBody());
     rewriter.setInsertionPointToStart(loopEntryBlock);
 
@@ -347,12 +354,14 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
 
     //   accumulate items
     for (size_t i = 0; i < instantiation.getInputs().size(); i++) {
-        LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
+        LLVM::BitcastOp casted = LLVM::BitcastOp::create(
+            rewriter,
             loc,
             LLVM::LLVMPointerType::get(instantiation.getContext()),
             ioChans[i]);
         UnrealizedConversionCastOp inputType =
-            rewriter.create<UnrealizedConversionCastOp>(
+            UnrealizedConversionCastOp::create(
+                rewriter,
                 loc,
                 llvmChannelPointer,
                 entryBlock->getArgument(i));
@@ -368,7 +377,8 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
             rewriter.getI1Type(),
             callValues);
 
-        func::CallOp pulledResult = rewriter.create<func::CallOp>(
+        func::CallOp::create(
+            rewriter,
             loc,
             ArrayRef<Type>(rewriter.getI1Type()),
             pullNFunc,
@@ -389,7 +399,8 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
         alveoHostCall,
         std::nullopt,
         alveoInputs);
-    rewriter.create<func::CallOp>(
+    func::CallOp::create(
+        rewriter,
         loc,
         ArrayRef<Type>(),
         alveoHostFunc,
@@ -399,20 +410,24 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
     for (size_t i = 0; i < instantiation.getOutputs().size(); i++) {
         size_t j = instantiation.getInputs().size() + i;
 
-        arith::ConstantOp multJ = rewriter.create<arith::ConstantOp>(
+        arith::ConstantOp multJ = arith::ConstantOp::create(
+            rewriter,
             loc,
             rewriter.getI64Type(),
             rewriter.getI64IntegerAttr(multiplicities[j]));
-        arith::MulIOp numData = rewriter.create<arith::MulIOp>(
+        arith::MulIOp numData = arith::MulIOp::create(
+            rewriter,
             loc,
             dataWidth.getResults()[0],
             multJ);
-        LLVM::BitcastOp casted = rewriter.create<LLVM::BitcastOp>(
+        LLVM::BitcastOp casted = LLVM::BitcastOp::create(
+            rewriter,
             loc,
             LLVM::LLVMPointerType::get(instantiation.getContext()),
             ioChans[j + 1 - instantiation.getOutputs().size()]);
         UnrealizedConversionCastOp inputType =
-            rewriter.create<UnrealizedConversionCastOp>(
+            UnrealizedConversionCastOp::create(
+                rewriter,
                 loc,
                 llvmChannelPointer,
                 entryBlock->getArgument(j + 1));
@@ -428,7 +443,8 @@ ProcessOp insertOlympusWrapperOp(InstantiateOp instantiation)
             rewriter.getI1Type(),
             callValues);
 
-        func::CallOp pushedResult = rewriter.create<func::CallOp>(
+        func::CallOp::create(
+            rewriter,
             loc,
             ArrayRef<Type>(rewriter.getI1Type()),
             pushNFunc,
@@ -451,7 +467,8 @@ createAlveoHostChannels(func::FuncOp topLevel, size_t numChannels)
 
     SmallVector<ChannelOp> newChans;
     for (size_t i = 0; i < numChannels; i++) {
-        ChannelOp chan = rewriter.create<ChannelOp>(
+        ChannelOp chan = ChannelOp::create(
+            rewriter,
             topLevel.getLoc(),
             InputType::get(topLevel.getContext(), alveoHostObjectType),
             OutputType::get(topLevel.getContext(), alveoHostObjectType),
@@ -491,7 +508,8 @@ LogicalResult replaceInstantiations(
     }
 
     rewriter.setInsertionPoint(instantiations[0]);
-    rewriter.create<InstantiateOp>(
+    InstantiateOp::create(
+        rewriter,
         instantiations[0].getLoc(),
         alveoHostWrapperName,
         ValueRange(),
@@ -504,7 +522,8 @@ LogicalResult replaceInstantiations(
         ins.push_back(alveoOutputs[i]);
 
         rewriter.setInsertionPoint(instantiations[i]);
-        rewriter.create<InstantiateOp>(
+        InstantiateOp::create(
+            rewriter,
             instantiations[i].getLoc(),
             newOps[i].getSymName().str(),
             ins,
