@@ -16,7 +16,6 @@ If in the root dir:
 This script will automatically configure and build both `llvm` and our `dfg-mlir` for you. You'll find the executables inside `dfg-mlir/build` directory, i.e.
 - `dfg-opt`: same concept as `opt` or `mlir-opt` in LLVM.
 - `dfg-lsp-server`: this contain the Language Server Protocol(LSP), which you can use to detect error and etc. It's fully usable with [MLIR extension](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-mlir) in VS Code.
-- `dfg-translate`: this contains the translations, which will transpile the `dfg-mlir` code into something else. You will find more information in [Design.md](Design.md)
 
 ## Using Nix
 If you're one of those `nix` enthusiastics, we kindly provide the possibility to build this project using it.
@@ -44,5 +43,3 @@ The following CMake variables must be configured:
 | `LLVM_DIR`  | `STRING` | *`/your/path/to/llvm/lib/cmake/llvm`* |
 | `MLIR_DIR`  | `STRING` | *`/your/path/to/llvm/lib/cmake/mlir`* |
 
-## Python Package
-For integrating with Neural Networks, for instance tflite model, go to folder python and install the library, further information please refer to [this](../python-lib/README.md).
