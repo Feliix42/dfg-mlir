@@ -5,7 +5,6 @@
 
 #include "dfg-mlir/Conversion/Passes.h"
 #include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
-#include "dfg-mlir/Dialect/vitis/Transforms/Passes.h"
 
 #include <mlir/IR/DialectRegistry.h>
 #include <mlir/InitAllDialects.h>
@@ -17,9 +16,6 @@ inline void registerAllDFGMLIRPasses()
     dfg::registerDFGMLIRConversionPasses();
 
     dfg::registerDFGMLIRDfgPasses();
-    vitis::registerDFGMLIRVitisPasses();
-
-    dfg::registerConvertToVitisPipelines();
 }
 
 } // namespace mlir

@@ -668,7 +668,7 @@ def Dfg_PushOp : Dfg_Op<
     [
         TypesMatchWith<"Channel type matches pushed type",
                        "chan", "inp",
-                       "$_self.dyn_cast<InputType>().getElementType()">
+                       "dyn_cast<InputType>($_self).getElementType()">
     ]
 > {
     let summary = "Pushes a value into a channel input to send it to the next process.";
@@ -700,7 +700,7 @@ def Dfg_PullOp : Dfg_Op<
     [
         TypesMatchWith<"Channel type matches pulled type",
                        "chan", "outp",
-                       "$_self.dyn_cast<OutputType>().getElementType()">,
+                       "dyn_cast<OutputType>($_self).getElementType()">,
         DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
     ]
 > {
