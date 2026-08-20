@@ -34,3 +34,7 @@ European Union projects:
 
 ## Questions and Problems
 If you run into an error or you have some brilliant ideas, please feel free to open an issue. We are looking forward to discussing with you!
+
+## License
+
+This project is licensed under the GPLv3 license. See the [LICENSE](./LICENSE) file for more details.
