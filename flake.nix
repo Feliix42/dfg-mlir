@@ -2,7 +2,7 @@
   description = "An over-engineered Hello World in C";
 
   inputs = {
-    nixpkgs.url = "nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     mlir = {
       url = "github:Feliix42/mlir.nix/main";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -34,7 +34,7 @@
       # A Nixpkgs overlay.
       overlay = final: prev: {
 
-        dfg_dialect = with final; final.callPackage ({ inShell ? false }: llvmPackages_20.stdenv.mkDerivation rec {
+        dfg_dialect = with final; final.callPackage ({ inShell ? false }: llvmPackages_22.stdenv.mkDerivation rec {
           pname = "dfg-mlir";
           inherit version;
 
@@ -45,12 +45,14 @@
             python3
             ninja
             cmake
-            llvmPackages_20.clang
-            llvmPackages_20.bintools
-            llvmPackages_20.openmp
-            llvmPackages_20.clang-tools
+            llvmPackages_22.clang
+            llvmPackages_22.bintools
+            llvmPackages_22.openmp
+            llvmPackages_22.clang-tools
             mlir.packages.x86_64-linux.mlir
             lit
+            mold
+            zlib
           ];
 
           # buildInputs = (if inShell then [
@@ -72,7 +74,7 @@
             # Using clang and lld speeds up the build, we recomment adding:
             "-DCMAKE_C_COMPILER=clang"
             "-DCMAKE_CXX_COMPILER=clang++"
-            "-DLLVM_ENABLE_LLD=ON"
+            "-DCMAKE_CXX_FLAGS='-fuse-ld=mold'"
             "-DLLVM_EXTERNAL_LIT=${lit}/bin/lit"
           ];
         }) {};
