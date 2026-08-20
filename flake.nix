@@ -77,6 +77,22 @@
             "-DCMAKE_CXX_FLAGS='-fuse-ld=mold'"
             "-DLLVM_EXTERNAL_LIT=${lit}/bin/lit"
           ];
+
+          # Generate a .clangd config pointing at the Nix-provided toolchain
+          # whenever we enter the dev shell.
+          shellHook = lib.optionalString inShell ''
+            cat > .clangd <<EOF
+            CompileFlags:
+              Compiler: ${llvmPackages_22.clang}/bin/clang++
+              CompilationDatabase: build
+              Add:
+                - -I$PWD/include
+                - -I$PWD/build/include
+                - -isystem${mlir}/include
+                - -isystem${llvmPackages_22.clang-tools}/lib/clang/22/include
+            EOF
+            echo "Generated .clangd for this dev shell."
+          '';
         }) {};
       };
 
