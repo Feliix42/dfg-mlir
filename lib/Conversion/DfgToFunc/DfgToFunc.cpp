@@ -59,7 +59,7 @@ struct ProcessOpLowering : public OpConversionPattern<ProcessOp> {
         FunctionType newFuncTy = FunctionType::get(context, inputs, {});
 
         auto genFuncOp =
-            rewriter.create<func::FuncOp>(loc, operatorName, newFuncTy);
+            func::FuncOp::create(rewriter, loc, operatorName, newFuncTy);
 
         if (!op.isExternal()) {
             rewriter.inlineRegionBefore(
@@ -69,7 +69,7 @@ struct ProcessOpLowering : public OpConversionPattern<ProcessOp> {
 
             // populate the Terminator Block (for now) with a return only
             rewriter.setInsertionPointToEnd(&genFuncOp.getRegion().back());
-            rewriter.create<func::ReturnOp>(op.getLoc());
+            func::ReturnOp::create(rewriter, op.getLoc());
         } else {
             // set the function private for linking
             genFuncOp.setPrivate();
@@ -102,17 +102,18 @@ struct InstantiateOpLowering : public OpConversionPattern<InstantiateOp> {
             return failure();
         }
 
-        omp::SectionOp sec = rewriter.create<omp::SectionOp>(op.getLoc());
+        omp::SectionOp sec = omp::SectionOp::create(rewriter, op.getLoc());
         Region &sectionRegion = sec.getRegion();
         Block* secBlock = rewriter.createBlock(&sectionRegion);
 
         rewriter.setInsertionPointToStart(secBlock);
-        rewriter.create<func::CallOp>(
+        func::CallOp::create(
+            rewriter,
             op.getLoc(),
             adaptor.getCallee(),
             ArrayRef<Type>(),
             adaptor.getOperands());
-        rewriter.create<omp::TerminatorOp>(op.getLoc());
+        omp::TerminatorOp::create(rewriter, op.getLoc());
 
         rewriter.eraseOp(op);
 
@@ -187,14 +188,14 @@ struct LoopOpLowering : public OpConversionPattern<LoopOp> {
         Region &loopRegion = op.getRegion();
         Block* loopEntry = &loopRegion.front();
         rewriter.setInsertionPointToEnd(&loopRegion.back());
-        rewriter.create<cf::BranchOp>(op.getLoc(), &loopRegion.front());
+        cf::BranchOp::create(rewriter, op.getLoc(), &loopRegion.front());
 
         // 4. move the blocks from the region to after the LoopOp
         rewriter.inlineRegionBefore(loopRegion, finalizerBlock);
 
         // 5. insert a br before the loop
         rewriter.setInsertionPointToEnd(currentBlock);
-        rewriter.create<cf::BranchOp>(op.getLoc(), loopEntry);
+        cf::BranchOp::create(rewriter, op.getLoc(), loopEntry);
 
         // 6. delete the current op
         rewriter.eraseOp(op);
@@ -260,27 +261,34 @@ void ConvertDfgToFuncPass::runOnOperation()
         OpBuilder localRewriter(group[0]->getContext());
         localRewriter.setInsertionPoint(group[0]);
 
-        arith::ConstantOp threadCount = localRewriter.create<arith::ConstantOp>(
+        arith::ConstantOp threadCount = arith::ConstantOp::create(
+            localRewriter,
             loc,
             localRewriter.getI32Type(),
             localRewriter.getI32IntegerAttr(groupSize));
 
-        omp::ParallelOp par = localRewriter.create<omp::ParallelOp>(
-            loc,
-            ValueRange(),
-            ValueRange(),
-            Value{},
-            threadCount.getResult(),
-            ValueRange(),
-            ArrayAttr{},
-            omp::ClauseProcBindKindAttr{},
-            // omp::ReductionModifierAttr{},
-            ValueRange(),
-            DenseBoolArrayAttr{},
-            nullptr);
+        // omp::ParallelOp par = omp::ParallelOp::create(
+        //     localRewriter,
+        //     loc,
+        //     ValueRange(),
+        //     ValueRange(),
+        //     Value{},
+        //     threadCount.getResult(),
+        //     ValueRange(),
+        //     ArrayAttr{},
+        //     omp::ClauseProcBindKindAttr{},
+        //     // omp::ReductionModifierAttr{},
+        //     ValueRange(),
+        //     DenseBoolArrayAttr{},
+        //     nullptr);
+        omp::ParallelOp par = omp::ParallelOp::create(
+            localRewriter,
+            loc);
+        par.getNumThreadsMutable().assign(threadCount.getResult());
         Block* parBlock = localRewriter.createBlock(&par.getRegion());
 
-        omp::SectionsOp sections = localRewriter.create<omp::SectionsOp>(
+        omp::SectionsOp sections = omp::SectionsOp::create(
+            localRewriter,
             loc,
             ArrayRef<Type>(),
             ValueRange());
@@ -289,7 +297,8 @@ void ConvertDfgToFuncPass::runOnOperation()
 
         // move instantiates here
         for (auto op : group) {
-            localRewriter.create<InstantiateOp>(
+            InstantiateOp::create(
+                localRewriter,
                 op->getLoc(),
                 op.getNodeName(),
                 op.getInputs(),
@@ -300,10 +309,10 @@ void ConvertDfgToFuncPass::runOnOperation()
         }
 
         localRewriter.setInsertionPointToEnd(sectionsBlock);
-        localRewriter.create<omp::TerminatorOp>(loc);
+        omp::TerminatorOp::create(localRewriter, loc);
 
         localRewriter.setInsertionPointToEnd(parBlock);
-        localRewriter.create<omp::TerminatorOp>(loc);
+        omp::TerminatorOp::create(localRewriter, loc);
     }
 
     if (res.wasInterrupted()) signalPassFailure();
