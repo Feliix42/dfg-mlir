@@ -6,13 +6,9 @@
 #include "dfg-mlir/Dialect/dfg/Transforms/PrintOperatorToYaml.h"
 
 #include "dfg-mlir/Conversion/Utils.h"
-#include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
-#include "dfg-mlir/Dialect/dfg/IR/Types.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #include "llvm/Support/Debug.h"
@@ -20,7 +16,6 @@
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -131,13 +126,13 @@ struct MappingTraits<GraphYaml> {
 
 template<>
 struct SequenceTraits<std::vector<GraphNodePort>> {
-    static size_t size(IO &io, std::vector<GraphNodePort> &seq)
+    static size_t size(IO &, std::vector<GraphNodePort> &seq)
     {
         return seq.size();
     }
 
     static GraphNodePort &
-    element(IO &io, std::vector<GraphNodePort> &seq, size_t index)
+    element(IO &, std::vector<GraphNodePort> &seq, size_t index)
     {
         if (index >= seq.size()) seq.resize(index + 1);
         return seq[index];
@@ -146,12 +141,12 @@ struct SequenceTraits<std::vector<GraphNodePort>> {
 
 template<>
 struct SequenceTraits<std::vector<GraphNode>> {
-    static size_t size(IO &io, std::vector<GraphNode> &seq)
+    static size_t size(IO &, std::vector<GraphNode> &seq)
     {
         return seq.size();
     }
 
-    static GraphNode &element(IO &io, std::vector<GraphNode> &seq, size_t index)
+    static GraphNode &element(IO &, std::vector<GraphNode> &seq, size_t index)
     {
         if (index >= seq.size()) seq.resize(index + 1);
         return seq[index];
@@ -160,13 +155,13 @@ struct SequenceTraits<std::vector<GraphNode>> {
 
 template<>
 struct SequenceTraits<std::vector<GraphChannel>> {
-    static size_t size(IO &io, std::vector<GraphChannel> &seq)
+    static size_t size(IO &, std::vector<GraphChannel> &seq)
     {
         return seq.size();
     }
 
     static GraphChannel &
-    element(IO &io, std::vector<GraphChannel> &seq, size_t index)
+    element(IO &, std::vector<GraphChannel> &seq, size_t index)
     {
         if (index >= seq.size()) seq.resize(index + 1);
         return seq[index];

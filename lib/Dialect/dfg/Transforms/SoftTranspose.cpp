@@ -5,7 +5,6 @@
 
 #include "dfg-mlir/Dialect/dfg/Transforms/SoftTranspose.h"
 
-#include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -159,7 +158,7 @@ void LinalgSoftTransposePass::runOnOperation()
 
     populateSoftTransposeConversionPatterns(patterns);
 
-    target.markUnknownOpDynamicallyLegal([](Operation* op) { return true; });
+    target.markUnknownOpDynamicallyLegal([](Operation*) { return true; });
     target.addDynamicallyLegalOp<TransposeOp>([](TransposeOp op) {
         auto input = op.getInput();
         auto defOp = input.getDefiningOp();

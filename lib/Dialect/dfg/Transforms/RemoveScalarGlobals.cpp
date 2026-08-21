@@ -5,7 +5,6 @@
 
 #include "dfg-mlir/Dialect/dfg/Transforms/RemoveScalarGlobals.h"
 
-#include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -128,7 +127,7 @@ struct MakeGetGlobalConstant : public OpRewritePattern<GetGlobalOp> {
                     /*doc*/ rewriter.getStringAttr(""),
                     /*libraryCall*/ rewriter.getStringAttr(""),
                     [&](OpBuilder &opBuilder,
-                        Location loc,
+                        Location,
                         ValueRange blockArgs) {
                         for (auto [oldArg, newArg] :
                              llvm::zip(genericBlock->getArguments(), blockArgs))
@@ -166,7 +165,7 @@ void MemrefRemoveScalarGlobalsPass::runOnOperation()
 
     populateRemoveScalarGlobalsConversionPatterns(patterns);
 
-    target.markUnknownOpDynamicallyLegal([](Operation* op) { return true; });
+    target.markUnknownOpDynamicallyLegal([](Operation*) { return true; });
     target.addDynamicallyLegalOp<GlobalOp>([](GlobalOp op) {
         if (auto initValue = op.getInitialValue(); initValue) {
             auto values = dyn_cast<DenseElementsAttr>(initValue.value());

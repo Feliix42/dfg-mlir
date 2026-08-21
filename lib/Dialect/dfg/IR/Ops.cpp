@@ -1,7 +1,7 @@
 /// Implements the dfg dialect ops.
 ///
 /// @file
-/// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
+/// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 
@@ -1125,7 +1125,7 @@ LogicalResult YieldOp::verify()
 //===----------------------------------------------------------------------===//
 
 void LoopOp::build(
-    OpBuilder &builder,
+    OpBuilder &,
     OperationState &state,
     ValueRange inChans,
     ValueRange outChans,

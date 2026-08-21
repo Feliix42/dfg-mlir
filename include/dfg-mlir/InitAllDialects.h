@@ -1,7 +1,7 @@
 /// Register all dialects in this project.
 ///
 /// @file
-/// @author     Jiahong Bi (jiahong.bi@tu-dresden.de)
+/// @author     Felix Suchert (felix.suchert@tu-dresden.de)
 
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 

@@ -5,21 +5,13 @@
 
 #include "dfg-mlir/Conversion/LinalgToDfg/LinalgToDfg.h"
 
-#include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
-#include "dfg-mlir/Dialect/dfg/IR/Ops.h"
-#include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/IR/BuiltinDialect.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/SymbolTable.h"
 
-#include "llvm/ADT/APInt.h"
 
-#include <cstddef>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Process.h>
@@ -30,7 +22,6 @@
 #include <mlir/IR/Types.h>
 #include <mlir/IR/Value.h>
 #include <mlir/Transforms/DialectConversion.h>
-#include <optional>
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTLINALGTODFG
@@ -43,8 +34,8 @@ using namespace mlir::dfg;
 namespace {} // namespace
 
 void mlir::populateLinalgToDfgConversionPatterns(
-    TypeConverter typeConverter,
-    RewritePatternSet &patterns)
+    TypeConverter,
+    RewritePatternSet &)
 {}
 
 // TODO: To systolic array

@@ -5,8 +5,6 @@
 
 #include "dfg-mlir/Dialect/dfg/Transforms/InlineScalarArgument.h"
 
-#include "dfg-mlir/Conversion/Utils.h"
-#include "dfg-mlir/Dialect/dfg/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -69,7 +67,7 @@ struct UpdateGenericOp : public OpRewritePattern<GenericOp> {
             op.getIteratorTypesArray(),
             /*doc*/ rewriter.getStringAttr(""),
             /*libraryCall*/ rewriter.getStringAttr(""),
-            [&](OpBuilder &opBuilder, Location loc, ValueRange blockArgs) {
+            [&](OpBuilder &opBuilder, Location, ValueRange blockArgs) {
                 for (auto [oldArg, newArg] : llvm::zip(keepUseArgs, blockArgs))
                     mapper.map(oldArg, newArg);
                 for (auto &opOrig : block->getOperations())
@@ -101,7 +99,7 @@ void LinalgInlineScalarArgumentPass::runOnOperation()
 
     populateInlineScalarArgumentConversionPatterns(patterns);
 
-    target.markUnknownOpDynamicallyLegal([](Operation* op) { return true; });
+    target.markUnknownOpDynamicallyLegal([](Operation*) { return true; });
     target.addDynamicallyLegalOp<GenericOp>([](GenericOp op) {
         for (auto input : op.getInputs())
             if (!isa<ShapedType>(input.getType())) return false;

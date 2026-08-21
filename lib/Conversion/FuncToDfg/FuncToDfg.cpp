@@ -5,15 +5,12 @@
 
 #include "dfg-mlir/Conversion/FuncToDfg/FuncToDfg.h"
 
-#include "dfg-mlir/Conversion/Utils.h"
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.h"
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "dfg-mlir/Dialect/dfg/IR/Types.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/APInt.h"
 
@@ -31,8 +28,6 @@
 #include <mlir/IR/Value.h>
 #include <mlir/Support/LLVM.h>
 #include <mlir/Transforms/DialectConversion.h>
-#include <numeric>
-#include <ranges>
 #include <string>
 
 #define DEBUG_TYPE "func-to-dfg"
@@ -57,7 +52,7 @@ struct ConvertFuncToOperator : OpConversionPattern<func::FuncOp> {
 
     LogicalResult matchAndRewrite(
         func::FuncOp op,
-        func::FuncOpAdaptor adaptor,
+        func::FuncOpAdaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto loc = op.getLoc();
@@ -211,7 +206,7 @@ struct ConvertReturnToOutput : OpConversionPattern<func::ReturnOp> {
 
     LogicalResult matchAndRewrite(
         func::ReturnOp op,
-        func::ReturnOpAdaptor adaptor,
+        func::ReturnOpAdaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         auto loc = op.getLoc();

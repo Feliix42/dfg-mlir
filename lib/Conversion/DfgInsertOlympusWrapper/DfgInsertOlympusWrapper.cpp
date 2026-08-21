@@ -91,6 +91,9 @@ struct OlympusPushNLowering : public OpConversionPattern<PushNOp> {
         PushNOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        (void)op;
+        (void)adaptor;
+        (void)rewriter;
         // TODO
 
         return success();
@@ -110,6 +113,9 @@ struct OlympusPullNLowering : public OpConversionPattern<PullNOp> {
         PullNOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        (void)op;
+        (void)adaptor;
+        (void)rewriter;
         // TODO
 
         return success();
