@@ -1,53 +1,62 @@
-# Design of `dfg-mlir` project
-Here you will find the design of the contents inside this project.
+# Design
+
+`dfg-mlir` provides dialects for dataflow graph representation at the Kahn Process Network (KPN) level.
+
+See [test/Dialect/](test/Dialect/) for usage examples.
 
 ## Dialects
-Here the dialects defined in `dfg-mlir` are listed as following. You can find examples of these dialects [here](../test/Dialect/).
 
 ### `dfg`
-This is the main dialect in this project, which represents a Data-Flow Graph (DFG) at Kahn Process Network (KPN) level. To ensure the determinism character of KPN we defined the following types and operations.
+
+The main dialect, representing Data-Flow Graphs at KPN level with deterministic semantics.
 
 #### Types
-There are two types in `dfg` dialect (see below), they both encapsulate an element type, which can be any other types from upstream or user-defined dialects. These two types are used by all the `dfg` operations, which you'll see later in details.
 
-| Type | Sementic |
-| :- | :- |
-| !dfg.input<!ElementType> | The input port of an FIFO channel |
-| !dfg.output<!ElementType> | The output port of an FIFO channel |
+Two port types encapsulate any element type:
+
+| Type | Semantic |
+|------|----------|
+| `!dfg.input<ElementType>` | Input port of an FIFO channel |
+| `!dfg.output<ElementType>` | Output port of an FIFO channel |
+
+All `dfg` operations use these types.
 
 #### Operations
-Here you can find all the operations defined in `dfg` dialect. The interoperability, e.g. creation of certain operation please see information in [WorkWithDfg.md](WorkWithDfg.md).
 
+See [WorkWithDfg.md](WorkWithDfg.md) for operation creation and interoperability.
 
 ## Passes
-Here are all the conversion/lowering passes as well as the transformation passes inside each dialect in `dfg-mlir`.
 
 ### Conversion Passes
-#### `--insert-olympus-wrappers`
-TBD
 
-#### `--convert-dfg-nodes-to-func`
-TBD
+Lower DFG to other dialects or LLVM:
 
-#### `--convert-dfg-edges-to-llvm`
-TBD
-
-#### `--convert-dfg-to-olympus`
-TBD
-
+| Pass | Description |
+|------|-------------|
+| `--insert-olympus-wrappers` | TBD |
+| `--convert-dfg-nodes-to-func` | TBD |
+| `--convert-dfg-edges-to-llvm` | TBD |
+| `--convert-dfg-to-olympus` | TBD |
 
 ### Transformation Passes
 
-#### `dfg` dialect
-##### `--dfg-inline-region`
-This transformation will inline the contents of some `dfg.region` into the place where it's embedded. Currently it only inlines all regions for FPGA backend, namely strategy **all**. Later a **smart** will be implemented.
+`dfg` dialect transformations:
 
-##### `--dfg-operator-to-process`
-Before converting dfg to other dialects or translating, `operator` must be converted to the `process` with same semantics, which pulls/pushes only once and loops monitoring the input channels.
+#### `--dfg-inline-region`
 
-##### `--dfg-print-graph`
-This pass will print to a dot file (or use the option print-to-pdf=1 to pdf file) of the graph(s) you defined using dfg dialect. For `print-to-pdf` option, make sure you installed `dot` and `inkscape`, and they're in the `PATH`.
+Inlines `dfg.region` contents at the embedding site. Currently uses strategy **all** for FPGA. Strategy **smart** planned.
 
-##### `--print-operator-to-yaml`
-This will generate yaml files for each `operator`, which can be utilized as inputs to [Mocasin](https://github.com/tud-ccc/mocasin) project.
 
+#### `--dfg-operator-to-process`
+
+Converts `operator` to `process` with equivalent semantics: single pull/push with input channel monitoring loop.
+
+
+#### `--dfg-print-graph`
+
+Prints the graph to a DOT file. Use `print-to-pdf=1` for PDF output (requires `dot` and `inkscape` in PATH).
+
+
+#### `--print-operator-to-yaml`
+
+Generates YAML files for each `operator` for use with [Mocasin](https://github.com/tud-ccc/mocasin).
