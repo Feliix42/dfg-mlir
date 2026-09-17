@@ -31,15 +31,15 @@ Build the dialect by running
 cmake -S . -B build $cmakeFlags
 # Build.
 cmake --build build
+
+# Build the documentation like so:
+cmake --build build --target build-dfg-doc
 ```
 
 ## Manually
-Well, well, well! You succesfully draw my attention by reaching here. So huh, you are one of those "I don't trust you and I master CMake" people. But here are some rules you still need to follow if you want to build `dfg-mlir` with your own configuration. (Big brother is watching you all the time!)
-
-The following CMake variables must be configured:
+To manually build the project, ensure that you configure the following CMake variables:
 
 |       Name  | Type     | Description |
 | ---------:  | :------- | --- |
 | `LLVM_DIR`  | `STRING` | *`/your/path/to/llvm/lib/cmake/llvm`* |
 | `MLIR_DIR`  | `STRING` | *`/your/path/to/llvm/lib/cmake/mlir`* |
-

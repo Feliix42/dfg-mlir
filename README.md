@@ -17,13 +17,13 @@ This repository implements an MLIR dialect for representing dataflow graphs.
 > The hardware-oriented aspects of this work have been moved to the [Laksa](https://github.com/tud-ccc/laksa) project.
 
 ## Building
-See [Install.md](docs/Install.md).
+See [Install.md](Install.md).
 
 ## Design
-See [Design.md](docs/Design.md)
+See [Design.md](Design.md)
 
 ## Integration
-If you want to work with `dfg-mlir`, see [WorkWithDfg.md](docs/WorkWithDfg.md)
+If you want to work with `dfg-mlir`, see [WorkWithDfg.md](WorkWithDfg.md)
 
 ## Acknowledgements
 

@@ -60,6 +60,8 @@ function(mlir_gen_passes prefix)
 
     add_public_tablegen_target(${full_prefix}PassesIncGen)
     add_dependencies(${full_prefix}IncGen ${full_prefix}PassesIncGen)
+
+    add_mlir_doc(Passes ${full_prefix}Passes Passes/ -gen-pass-doc)
 endfunction()
 
 function(mlir_gen_transforms prefix)
@@ -72,4 +74,6 @@ function(mlir_gen_transforms prefix)
 
     add_public_tablegen_target(${full_prefix}TransformsIncGen)
     add_dependencies(${full_prefix}IncGen ${full_prefix}TransformsIncGen)
+
+    add_mlir_doc(Passes ${full_prefix}Passes Passes/ -gen-pass-doc)
 endfunction()
