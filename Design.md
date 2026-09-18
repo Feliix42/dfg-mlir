@@ -16,8 +16,8 @@ Two port types encapsulate any element type:
 
 | Type | Semantic |
 |------|----------|
-| `!dfg.input<ElementType>` | Input port of an FIFO channel |
-| `!dfg.output<ElementType>` | Output port of an FIFO channel |
+| `!dfg.input<ElementType>` | Sending end of a channel (data is pushed to this end) |
+| `!dfg.output<ElementType>` | Receiving end of a channel (data is pulled from this end) |
 
 All `dfg` operations use these types.
 

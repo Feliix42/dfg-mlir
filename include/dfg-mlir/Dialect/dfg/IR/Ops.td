@@ -29,7 +29,42 @@ def Dfg_RegionOp : Dfg_Op<
             DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>
         ]>
 {
-    let summary = "Defines a region in a graph.";
+    let summary = "Defines a reusable subgraph (region) in a dataflow graph.";
+    let description = [{
+        The `region` operation defines a named subgraph that can be embedded in other
+        graphs using `dfg.embed`. It has input and output ports that connect to the
+        external graph, and contains an internal dataflow graph composed of channels
+        and node instantiations.
+
+        Regions enable hierarchical graph construction and reuse.
+
+        Syntax:
+
+        ```mlir
+        dfg.region @name inputs(%in0: type, ...) outputs(%out0: type, ...) {
+          // Internal graph: channels, instantiations, embeds
+        }
+        ```
+
+        Example:
+
+        ```mlir
+        dfg.region @compute_pair inputs(%a: i32, %b: i32) outputs(%sum: i32, %diff: i32) {
+          %a_in, %a_out = dfg.channel : i32
+          %b_in, %b_out = dfg.channel : i32
+          %sum_in, %sum_out = dfg.channel : i32
+          %diff_in, %diff_out = dfg.channel : i32
+
+          dfg.connect.input %a, %a_in : i32
+          dfg.connect.input %b, %b_in : i32
+          dfg.connect.output %sum_out, %sum : i32
+          dfg.connect.output %diff_out, %diff : i32
+
+          dfg.instantiate @add inputs(%a_out, %b_out) outputs(%sum_in) : (i32, i32) -> (i32)
+          dfg.instantiate @sub inputs(%a_out, %b_out) outputs(%diff_in) : (i32, i32) -> (i32)
+        }
+        ```
+    }];
 
     let arguments = (ins SymbolNameAttr:$sym_name,
                          TypeAttrOf<FunctionType>:$function_type);
@@ -137,7 +172,25 @@ def Dfg_EmbedOp : Dfg_Op<
             // HasParent<"RegionOp">
         ]>
 {
-    let summary = "Embed a region at current location.";
+    let summary = "Embeds a named region as a subgraph at the current location.";
+    let description = [{
+        The `embed` operation creates an instance of a named `dfg.region`, connecting its
+        ports to the specified input/output channels. This allows for hierarchical graph
+        construction and reuse of predefined subgraphs.
+
+        Syntax:
+
+        ```mlir
+        dfg.embed @region_name inputs(%in_chan1, %in_chan2, ...) outputs(%out_chan1, ...) : (type, type) -> (type)
+        ```
+
+        Example:
+
+        ```mlir
+        // Embed a region that computes both sum and difference
+        dfg.embed @compute_pair inputs(%x, %y) outputs(%sum, %diff) : (i32, i32) -> (i32, i32)
+        ```
+    }];
 
     let arguments = (ins SymbolRefAttr:$callee,
                          Variadic<Dfg_OutputType>:$inputs,
@@ -205,7 +258,33 @@ def Dfg_ConnectInputOp : Dfg_Op<
         "connect.input",
         []>
 {
-    let summary = "Connect region input ports with channels.";
+    let summary = "Connects a region input port to a channel.";
+    let description = [{
+        The `connect.input` operation connects a region's input port to an internal
+        channel's output port. This establishes data flow from the region boundary into
+        the internal graph.
+
+        Used within `dfg.region` to wire up the external inputs to internal channels.
+
+        Syntax:
+
+        ```mlir
+        dfg.connect.input %region_input_port, %channel_output_port : element_type
+        ```
+
+        Example:
+
+        ```mlir
+        dfg.region @my_region inputs(%in: i32) outputs(%out: i32) {
+          %chan_in, %chan_out = dfg.channel : i32
+          dfg.connect.input %in, %chan_in : i32
+          // Now data from %in flows into %chan_in
+        }
+        ```
+
+        Note: The region port has type `!dfg.output<ElementType>` (receiving end)
+        and the channel port has type `!dfg.input<ElementType>` (sending end).
+    }];
 
     let arguments = (ins Dfg_OutputType:$regionPort,
                          Dfg_InputType:$channelPort);
@@ -218,7 +297,33 @@ def Dfg_ConnectOutputOp : Dfg_Op<
         "connect.output",
         []>
 {
-    let summary = "Connect region output ports with channels.";
+    let summary = "Connects a region output port to a channel.";
+    let description = [{
+        The `connect.output` operation connects an internal channel's input port to a
+        region's output port. This establishes data flow from the internal graph out to
+        the region boundary.
+
+        Used within `dfg.region` to wire up internal channels to external outputs.
+
+        Syntax:
+
+        ```mlir
+        dfg.connect.output %region_output_port, %channel_input_port : element_type
+        ```
+
+        Example:
+
+        ```mlir
+        dfg.region @my_region inputs(%in: i32) outputs(%out: i32) {
+          %chan_in, %chan_out = dfg.channel : i32
+          dfg.connect.output %chan_out, %out : i32
+          // Now data from %chan_out flows to %out
+        }
+        ```
+
+        Note: The region port has type `!dfg.input<ElementType>` (sending end)
+        and the channel port has type `!dfg.output<ElementType>` (receiving end).
+    }];
 
     let arguments = (ins Dfg_InputType:$regionPort,
                          Dfg_OutputType:$channelPort);
@@ -239,23 +344,54 @@ def Dfg_ProcessOp : Dfg_Op<
             NoTerminator,
             DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>
         ]> {
-    let summary = "Defines a process in the KPN MoC";
+    let summary = "Defines a process in the Kahn Process Network (KPN) model";
     let description = [{
-        The `process` operation produces a dataflow node which is linked to other
-        processes by hooking up their input and output ports.
-        This is done using the `instantiate` function.
+        The `process` operation defines a computation node in the dataflow graph that
+        executes repeatedly in a loop, pulling data from its input channels, performing
+        computation, and pushing results to its output channels.
+
+        A process runs in an infinite loop (via `dfg.loop`) until one of its input
+        channels is closed, at which point it terminates and closes its output channels.
+        All processes are spawned in parallel using OpenMP.
 
         Syntax:
 
+        ```mlir
+        dfg.process @name inputs(%in0: type, %in1: type) outputs(%out0: type) [attributes] {
+          dfg.loop inputs(%in0, %in1) outputs(%out0) {
+            // Body: pull, compute, push
+          }
+        }
         ```
-        TODO
-        ```
+
+        Attributes:
+        - `multiplicity`: Optional array of integers specifying how many items to
+          consume from each channel per iteration (default: 1 for all)
 
         Examples:
 
+        ```mlir
+        // Simple adder process
+        dfg.process @add inputs(%a: i32, %b: i32) outputs(%sum: i32) {
+          dfg.loop inputs(%a, %b) outputs(%sum) {
+            %val_a = dfg.pull %a : i32
+            %val_b = dfg.pull %b : i32
+            %result = arith.addi %val_a, %val_b : i32
+            dfg.push (%result) %sum : i32
+          }
+        }
+
+        // Process with multiplicity (consumes 2 items from each input per iteration)
+        dfg.process @batch_add inputs(%a: i32, %b: i32) outputs(%sum: i32) {
+          multiplicity = [2, 2]
+          dfg.loop inputs(%a, %b) outputs(%sum) {
+            // Will pull 2 items from each input channel per iteration
+          }
+        }
         ```
-        TODO
-        ```
+
+        Lowering: Each process is lowered to an LLVM function that runs in its own
+        OpenMP task. The function blocks on channel operations (push/pull) as needed.
     }];
 
     let arguments = (ins SymbolNameAttr: $sym_name,
@@ -347,12 +483,52 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
             HasParent<"ModuleOp">,
             NoTerminator
         ]> {
-    let summary = "define an SDF node in DFG";
+    let summary = "Defines a stateful dataflow operator with iteration arguments";
 
     let description = [{
+        The `operator` operation defines a stateful node in the dataflow graph. Unlike
+        `process`, it maintains state across iterations through `iter_args` (iteration
+        arguments) that are initialized once and updated on each execution.
+
+        An operator has two regions:
+        - `initialize`: Computes the initial values for iteration arguments (executed once)
+        - `body`: Computes outputs and next state values (executed repeatedly)
+
+        Syntax:
+
+        ```mlir
+        dfg.operator @name inputs(%in0: type, ...) outputs(%out0: type, ...) iter_args(%state0: type, ...)
+            initialize {
+              // Compute initial state
+              dfg.yield %init0, %init1 : type, type
+            }
+        {
+          // Compute outputs
+          dfg.output %result : type
+          // Update state
+          dfg.yield %next_state0, %next_state1 : type, type
+        }
         ```
-        TODO
+
+        Example:
+
+        ```mlir
+        // Stateful accumulator
+        dfg.operator @accumulate inputs(%in: i32) outputs(%out: i32) iter_args(%state: i32)
+          initialize {
+            %zero = arith.constant 0 : i32
+            dfg.yield %zero : i32
+          }
+        {
+          %input = dfg.pull %in : i32
+          %new_state = arith.addi %state, %input : i32
+          dfg.output %new_state : i32
+          dfg.yield %new_state : i32
+        }
         ```
+
+        Lowering: Can be converted to `dfg.process` via the `--dfg-operator-to-process`
+        pass, which wraps the body in a loop with appropriate pull/push operations.
     }];
 
     let arguments = (ins SymbolNameAttr: $sym_name,
@@ -430,7 +606,27 @@ def Dfg_OperatorOp : Dfg_Op<"operator", [
 def Dfg_OutputOp : Dfg_Op<"output", [
             HasParent<"OperatorOp">
         ]> {
-    let summary = "Yield op for a dfg.operator";
+    let summary = "Outputs a value to an operator's output port";
+    let description = [{
+        The `output` operation writes a value to an operator's output port. This is how
+        operators produce their outputs during each iteration.
+
+        Must be used within the body region of a `dfg.operator`.
+
+        Syntax:
+
+        ```mlir
+        dfg.output %value : element_type
+        ```
+
+        Example:
+
+        ```mlir
+        dfg.operator @passthrough inputs(%in: i32) outputs(%out: i32) {
+          dfg.output %in : i32
+        }
+        ```
+    }];
 
     let arguments = (ins Variadic<AnyType>:$operands);
 
@@ -441,7 +637,38 @@ def Dfg_OutputOp : Dfg_Op<"output", [
 def Dfg_YieldOp : Dfg_Op<"yield", [
             ParentOneOf<["OperatorOp", "LoopOp"]>
         ]> {
-    let summary = "Yield op for a dfg.operator";
+    let summary = "Yields values from a loop or operator body";
+    let description = [{
+        The `yield` operation returns values from a loop iteration or operator body.
+        
+        In `dfg.operator`:
+        - In the `initialize` region: yields initial values for iteration arguments
+        - In the body region: yields updated state values for the next iteration
+        
+        In `dfg.loop`:
+        - Yields updated iteration arguments for the next loop iteration
+
+        Syntax:
+
+        ```mlir
+        dfg.yield %value1, %value2, ... : type1, type2, ...
+        ```
+
+        Example:
+
+        ```mlir
+        // In an operator
+        dfg.operator @counter inputs(%inc: i32) outputs(%count: i32) iter_args(%state: i32)
+          initialize {
+            %zero = arith.constant 0 : i32
+            dfg.yield %zero : i32  // Initial state
+          }
+        {
+          %new_state = arith.addi %state, %inc : i32
+          dfg.yield %new_state : i32  // Updated state
+        }
+        ```
+    }];
 
     let arguments = (ins Variadic<AnyType>:$operands);
 
@@ -460,25 +687,39 @@ def Dfg_LoopOp : Dfg_Op<
             AttrSizedOperandSegments,
             RecursiveMemoryEffects
         ]> {
-    let summary = "Defines a list of input/output ports maybe closed";
+    let summary = "Defines the monitoring loop for a process";
 
     let description = [{
-        The `loop` operation defines a list of input or output ports
-        that will be closed later. The close behavior will terminate
-        the process and populate to other processes so that the whole
-        dataflow graph will be shut down.
+        The `loop` operation defines which input/output ports a process monitors for
+        closure. When all monitored input channels are closed, the process terminates
+        and closes its output channels, which propagates termination through the graph.
+
+        A loop can also maintain state through iteration arguments (`iter_args`), which
+        are initialized once and updated on each iteration via `dfg.yield`.
 
         Example:
-        ```
-        dfg.process @add inputs(%a: type) outputs(%b: type)
+        ```mlir
+        dfg.process @accumulate inputs(%a: i32) outputs(%b: i32)
         {
-            %init_value = arith.constant ...
-            dfg.loop inputs(%a: type) outputs(%b: type)
+            %init_value = arith.constant 0 : i32
+            dfg.loop inputs(%a: i32) outputs(%b: i32)
                     iter_args(%sum_iter = %init_value) {
-                ops ...
+                %val = dfg.pull %a : i32
+                %new_sum = arith.addi %sum_iter, %val : i32
+                dfg.push (%new_sum) %b : i32
+                dfg.yield %new_sum : i32
             }
         }
         ```
+
+        The loop body:
+        - Pulls data from monitored input channels
+        - Performs computation
+        - Pushes results to monitored output channels
+        - Optionally updates iteration arguments via `dfg.yield`
+
+        If input channels are specified, all process input ports must be monitored.
+        If output channels are specified, all process output ports must be monitored.
     }];
 
     let arguments = (ins Variadic<Dfg_OutputType>: $inChans,
@@ -505,27 +746,40 @@ def Dfg_ChannelOp : Dfg_Op<
             MemoryEffectsOpInterface,
             DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
         ]> {
-    let summary = "Defines a channel with one input and one output port";
+    let summary = "Defines a typed FIFO channel for data transfer between nodes";
     let description = [{
-        The `channel` operation produces a typed channel (i.e., an edge in the
-        dataflow graph) that links two processes (i.e., nodes) in the dataflow
-        graph.
+        The `channel` operation creates a typed FIFO channel (edge) in the dataflow
+        graph that carries data between nodes (processes/operators). Channels can be
+        unbounded or have a fixed buffer size.
+
+        A channel has two ends:
+        - Input port (`!dfg.input<ElementType>`): The sending end where data is pushed
+        - Output port (`!dfg.output<ElementType>`): The receiving end where data is pulled
+
+        For bounded channels, when the buffer is full, push operations block until
+        space is available. When empty, pull operations block until data is available.
 
         Syntax:
 
-        ```
-        TODO
-        The results of this op have a strict order, the first one should be the
-        input port of channel and the second is the output port.
+        ```mlir
+        %input_port, %output_port = dfg.channel[(buffer_size)] : element_type
         ```
 
         Examples:
 
+        ```mlir
+        // Unbounded channel for i32 values
+        %in, %out = dfg.channel : i32
+
+        // Bounded channel with capacity for 4 ui32 values
+        %in, %out = dfg.channel(4) : ui32
+
+        // Channel for tensor data
+        %tensor_in, %tensor_out = dfg.channel : tensor<4x4xf32>
         ```
-        TODO
-        %input, %output : !dfg.channel<i32>
-        %input, %output : !dfg.channel<ui32, 4>
-        ```
+
+        Lowering: Lowered to LLVM as a typed buffer with synchronization primitives.
+        Bounded channels use a circular buffer with semaphores for synchronization.
     }];
 
     let arguments = (ins
@@ -577,25 +831,41 @@ def Dfg_InstantiateOp : Dfg_Op<
         Dfg_NodeOpInterface,
         AttrSizedOperandSegments
     ]> {
-    let summary = "Instantiates an process with the given inputs, forming (part of) a data flow graph.";
+    let summary = "Instantiates a process or operator node in the dataflow graph";
     let description = [{
-        The `instantiate` operation instantiates a data flow graph process with
-        a concrete set of inputs and outputs. This instanciation creates a node
-        in the data flow graph. The data flow is derived from the arguments to
-        the instanciation as well as the results and their uses/origin.
+        The `instantiate` operation creates a concrete instance of a named `dfg.process`
+        or `dfg.operator` in the dataflow graph, connecting it to the specified input and
+        output channels. This is how nodes are actually placed and wired in the graph.
 
         Syntax:
 
-        ```
-        TODO
-        ```
-
-        Examples:
-
-        ```
-        TODO
+        ```mlir
+        dfg.instantiate @process_name inputs(%in_chan1, %in_chan2, ...) outputs(%out_chan1, ...) : (type, type) -> (type)
         ```
 
+        Attributes:
+        - `callee`: Symbol reference to the process/operator to instantiate
+        - `offloaded`: Boolean flag (default: false) indicating if the node should be offloaded
+
+        Example:
+
+        ```mlir
+        // Create channels
+        %input_a, %input_a_out = dfg.channel : i32
+        %input_b, %input_b_out = dfg.channel : i32
+        %output_sum, %output_sum_in = dfg.channel : i32
+
+        // Instantiate an adder process
+        dfg.instantiate @add inputs(%input_a_out, %input_b_out) outputs(%output_sum_in) : (i32, i32) -> (i32)
+
+        // Instantiate with offloading
+        dfg.instantiate @expensive_kernel inputs(%in) outputs(%out) offloaded : (f32) -> (f32)
+        ```
+
+        Verification: The function type (inputs and outputs) must match the referenced
+        process or operator's signature.
+
+        Lowering: Each instantiation becomes a function call in the lowered LLVM code.
     }];
 
     let arguments = (ins SymbolRefAttr:$callee,
@@ -671,23 +941,37 @@ def Dfg_PushOp : Dfg_Op<
                        "dyn_cast<InputType>($_self).getElementType()">
     ]
 > {
-    let summary = "Pushes a value into a channel input to send it to the next process.";
+    let summary = "Pushes a value into a channel to send it to another node";
     let description = [{
-        The `push` operation transfers a value to another process by using a
-        channel supplied as argument. Since all channels are typed, the input
-        type must match the channel type.
+        The `push` operation sends a value through a channel to another process or
+        operator. If the channel has a bounded buffer that is full, this operation
+        blocks until space is available.
 
         Syntax:
 
-        ```
-        TODO
+        ```mlir
+        dfg.push (%value) %channel_output : element_type
         ```
 
-        Examples:
+        Operands:
+        - `inp`: The value to push (must match channel's element type)
+        - `chan`: Output (sending) end of the channel (`!dfg.input<ElementType>`)
 
+        Example:
+
+        ```mlir
+        %computed = arith.addi %a, %b : i32
+        dfg.push (%computed) %output_chan : i32
+
+        // Pushing a tensor
+        %tensor_result = linalg.matmul %mat_a, %mat_b : tensor<4x4xf32>
+        dfg.push (%tensor_result) %tensor_output : tensor<4x4xf32>
         ```
-        TODO
-        ```
+
+        Lowering: Lowered to a function call that blocks on the channel's send
+        operation when the buffer is full.
+
+        Verification: The type of `inp` must match the channel's element type.
     }];
 
     let arguments = (ins AnyType: $inp, Dfg_InputType: $chan);
@@ -704,23 +988,36 @@ def Dfg_PullOp : Dfg_Op<
         DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
     ]
 > {
-    let summary = "Pulls a value from a channel.";
+    let summary = "Pulls a value from a channel";
     let description = [{
-        The `pull` operation retrieves a value from another process by using a
-        channel supplied as argument. Since all channels are typed, the output
-        type must match the channel type.
+        The `pull` operation receives a value from a channel. If the channel is empty,
+        this operation blocks until data is available. The result type matches the
+        channel's element type.
 
         Syntax:
 
-        ```
-        TODO
+        ```mlir
+        %value = dfg.pull %channel_input : element_type
         ```
 
-        Examples:
+        Operands:
+        - `chan`: Input (receiving) end of the channel (`!dfg.output<ElementType>`)
 
+        Results:
+        - `outp`: The pulled value of type `element_type`
+
+        Example:
+
+        ```mlir
+        %data = dfg.pull %input_chan : i32
+        %result = arith.addi %data, %data : i32
+
+        // Pulling a tensor
+        %tensor_data = dfg.pull %tensor_input : tensor<4x4xf32>
         ```
-        TODO
-        ```
+
+        Lowering: Lowered to a function call that blocks on the channel's receive
+        operation when the buffer is empty.
     }];
 
     let arguments = (ins Dfg_OutputType: $chan);
@@ -733,24 +1030,41 @@ def Dfg_PushNOp : Dfg_Op<
     "push_n",
     []
 > {
-    let summary = "Pushes a list of values into a channel input to send it to the next operator.";
+    let summary = "Pushes multiple values from a memref into a channel";
     let description = [{
-        The `push_n` operation transfers a list of values to another operator
-        by using a channel supplied as argument. Since all channels are typed,
-        the element type of the memref must match the channel type. The shape
-        of the memref dictates how many elements will be pushed.
+        The `push_n` operation transfers multiple values from a memref to a channel.
+        The element type of the memref must match the channel's element type. The number
+        of elements pushed is determined by the memref's shape.
+
+        This is useful for batch operations where multiple values need to be sent at once.
 
         Syntax:
 
-        ```
-        TODO
+        ```mlir
+        dfg.push_n (%memref) %channel_output : memref<shape x element_type>
         ```
 
-        Examples:
+        Operands:
+        - `inp`: Memref containing values to push
+        - `chan`: Output (sending) end of the channel (`!dfg.input<ElementType>`)
 
+        Example:
+
+        ```mlir
+        // Push 10 i32 values from a memref
+        %data = memref.alloc() : memref<10xi32>
+        // ... fill data with values ...
+        dfg.push_n (%data) %output_chan : memref<10xi32>
+
+        // Push a 2D tensor of f32 values
+        %matrix = memref.alloc() : memref<4x4xf32>
+        dfg.push_n (%matrix) %matrix_output : memref<4x4xf32>
         ```
-        TODO
-        ```
+
+        Lowering: Lowered to a function call that iterates over the memref and pushes
+        each element to the channel, blocking as needed.
+
+        Verification: The element type of the memref must match the channel's element type.
     }];
 
     let arguments = (ins AnyMemRef: $inp, Dfg_InputType: $chan);
@@ -763,24 +1077,40 @@ def Dfg_PullNOp : Dfg_Op<
     "pull_n",
     []
 > {
-    let summary = "Pulls a specific number of elements from a channel.";
+    let summary = "Pulls multiple values from a channel into a memref";
     let description = [{
-        The `pull_n` operation retrieves a list of values from another operator
-        by using a channel supplied as argument. Since all channels are typed,
-        the type of the memref must match the channel type. The number of
-        elements to be pulled is determined by the shape of the memred.
+        The `pull_n` operation receives multiple values from a channel and stores them
+        in a memref. The element type of the memref must match the channel's element type.
+        The number of elements pulled is determined by the memref's shape.
+
+        This is useful for batch operations where multiple values need to be received at once.
 
         Syntax:
 
-        ```
-        TODO
+        ```mlir
+        %memref = dfg.pull_n %channel_input : memref<shape x element_type>
         ```
 
-        Examples:
+        Operands:
+        - `chan`: Input (receiving) end of the channel (`!dfg.output<ElementType>`)
 
+        Results:
+        - `outp`: A memref filled with pulled values
+
+        Example:
+
+        ```mlir
+        // Pull 10 i32 values into a memref
+        %buffer = dfg.pull_n %input_chan : memref<10xi32>
+
+        // Pull a 2D tensor of f32 values
+        %matrix = dfg.pull_n %matrix_input : memref<4x4xf32>
         ```
-        TODO
-        ```
+
+        Lowering: Lowered to a function call that iterates and pulls elements from the
+        channel into the memref, blocking as needed.
+
+        Verification: The element type of the memref must match the channel's element type.
     }];
 
     let arguments = (ins Dfg_OutputType: $chan);
