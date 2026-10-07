@@ -244,7 +244,7 @@ void ConvertDfgToFuncPass::runOnOperation()
         SmallVector<InstantiateOp> &group = rewriteGroups.back();
         group.push_back(instantiation);
 
-        if (!isa<InstantiateOp>(instantiation->getNextNode())) {
+        if (!isa_and_nonnull<InstantiateOp>(instantiation->getNextNode())) {
             // the next node is NOT an instantiation, so break here
             openGroup = false;
         }
