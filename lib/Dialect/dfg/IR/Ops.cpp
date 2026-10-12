@@ -261,12 +261,14 @@ LogicalResult RegionOp::verify()
         for (auto &op : ops)
             if (!isa<ChannelOp>(op) && !isa<InstantiateOp>(op)
                 && !isa<EmbedOp>(op) && !isa<ConnectInputOp>(op)
-                && !isa<ConnectOutputOp>(op))
+                && !isa<ConnectOutputOp>(op)
+                && !isa<arith::ConstantOp>(op) && op.getDialect()->getNamespace() != "omp") 
                 isContentCorrect = false;
     } else {
         for (auto &op : ops)
             if (!isa<ChannelOp>(op) && !isa<InstantiateOp>(op)
-                && !isa<EmbedOp>(op))
+                && !isa<EmbedOp>(op)
+                && !isa<arith::ConstantOp>(op) && op.getDialect()->getNamespace() != "omp") 
                 isContentCorrect = false;
     }
 
