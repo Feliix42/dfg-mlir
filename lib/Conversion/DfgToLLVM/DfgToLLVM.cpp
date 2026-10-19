@@ -411,6 +411,7 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
     }
 };
 
+
 void mlir::populateDfgToLLVMConversionPatterns(
     TypeConverter &typeConverter,
     RewritePatternSet &patterns)

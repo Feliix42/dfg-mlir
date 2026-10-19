@@ -332,7 +332,7 @@ void ConvertDfgToFuncPass::runOnOperation()
     target.addLegalDialect<DfgDialect>();
     // NOTE(feliix42): Offloaded InstantiateOp operations are *not* covered by
     // this lowering but are illegal.
-    target.addIllegalOp<ProcessOp, LoopOp, InstantiateOp>();
+    target.addIllegalOp<ProcessOp, LoopOp, OperatorOp, InstantiateOp>();
     // target.addDynamicallyLegalOp<InstantiateOp>(
     //     [](InstantiateOp op) { return op.getOffloaded(); });
 

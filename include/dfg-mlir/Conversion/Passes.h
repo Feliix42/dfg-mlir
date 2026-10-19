@@ -8,6 +8,7 @@
 
 #include "dfg-mlir/Conversion/DfgInsertOlympusWrapper/DfgInsertOlympusWrapper.h"
 #include "dfg-mlir/Conversion/DfgToFunc/DfgToFunc.h"
+#include "dfg-mlir/Conversion/DfgRegionToFunc/DfgRegionToFunc.h"
 #include "dfg-mlir/Conversion/DfgToLLVM/DfgToLLVM.h"
 #include "dfg-mlir/Conversion/DfgToOlympus/DfgToOlympus.h"
 #include "dfg-mlir/Conversion/FuncToDfg/FuncToDfg.h"

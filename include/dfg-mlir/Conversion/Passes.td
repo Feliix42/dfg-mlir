@@ -10,6 +10,56 @@
 include "mlir/Pass/PassBase.td"
 
 
+def ConvertDfgRegionToFunc : Pass<"convert-dfg-regions-to-func"> {
+    let summary = "Convert DFG dialect graph regions to Func declarations and invocations";
+    let description = [{
+        This pass converts DFG regions operations (`dfg.region`, `dfg.connect.input`,
+        `dfg.connect.output`) to their equivalent representations using the Func dialect and
+        dfg channel primitives. These functions can then be called from outside the graph
+        without the need for any channels, serving as entry point.
+
+        The pass performs the following conversions:
+        - `dfg.region` -> `func.func`: Each region becomes a function that takes its inputs
+          as arguments and returns its outputs
+        - `dfg.connect.input` -> `dfg.push` the supplied value into the graph. This is
+          intended to feed the graph initial inputs.
+        - `dfg.connect.output` -> `dfg.pull` the values from the graph at the end of execution.
+          The pulled values will be returned from the function.
+
+        Regions can be used to define (sub)graphs that instantiate and execute dataflow graphs.
+        After optionally running the region inlining transformation, the remaining regions and
+        accompanying I/O connectors need to be lowered to a function interface to make them
+        callable from outside the graph.
+
+        The lowering provides an interface free from any DFG internals:
+        - All arguments and return values are non-DFG types
+        - The arguments are pushed into the graph and available at the start of the graph execution.
+        - The return values are obtained from the graph. Once all values have been pulled from the
+          graph, the function returns.
+
+        Example:
+        ```mlir
+        TODO
+        ```
+
+        Note: This pass does not lower channel operations (push/pull). Use
+        `--convert-dfg-edges-to-llvm` for that.
+
+        Dependent Dialects: func, cf, omp, arith, dfg
+    }];
+
+    let constructor = "mlir::createConvertDfgRegionToFuncPass()";
+
+    let dependentDialects = [
+        "func::FuncDialect",
+        "cf::ControlFlowDialect",
+        "omp::OpenMPDialect",
+        "arith::ArithDialect",
+
+        "dfg::DfgDialect"
+    ];
+}
+
 def ConvertDfgToFunc : Pass<"convert-dfg-nodes-to-func"> {
     let summary = "Convert DFG dialect graph nodes to Func declarations and invocations";
     let description = [{

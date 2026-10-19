@@ -1,5 +1,6 @@
 add_subdirectory(DfgInsertOlympusWrapper)
 add_subdirectory(DfgToFunc)
+add_subdirectory(DfgRegionToFunc)
 add_subdirectory(DfgToLLVM)
 add_subdirectory(DfgToOlympus)
 add_subdirectory(FuncToDfg)
