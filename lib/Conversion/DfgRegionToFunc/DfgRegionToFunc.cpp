@@ -61,7 +61,7 @@ struct RegionOpLowering : public OpConversionPattern<RegionOp> {
         }
         std::vector<Type> new_outputs;
         for (auto ty : funcTy.getResults()) {
-            new_inputs.push_back(cast<InputType>(ty).getElementType());
+            new_outputs.push_back(cast<InputType>(ty).getElementType());
         }
 
         FunctionType newFuncTy = FunctionType::get(context, new_inputs, new_outputs);
@@ -88,8 +88,14 @@ struct RegionOpLowering : public OpConversionPattern<RegionOp> {
             ConnectOutputOp o = cast<ConnectOutputOp>(*out.getUsers().begin());
 
             rewriter.setInsertionPoint(o);
-            PullOp newPull = rewriter.replaceOpWithNewOp<PullOp>(o, o.getChannelPort());
+            PullOp newPull = PullOp::create(rewriter, o.getLoc(), o.getChannelPort());
             retVals.push_back(newPull.getResult());
+            rewriter.eraseOp(o);
+
+            // eraseOp on a conversion rewriter defers the op's destruction
+            // (it is kept alive for rollback), so its use of the block
+            // argument is still present; drop it so the argument can be erased.
+            out.dropAllUses();
 
             entryBlock.eraseArgument(inputCount);
         }
@@ -125,12 +131,6 @@ void mlir::populateDfgRegionToFuncConversionPatterns(
 {
     // dfg.region -> func.func
     patterns.add<RegionOpLowering>(typeConverter, patterns.getContext());
-
-    // dfg.connect.input -> [ dfg.push ]
-    // patterns.add<ConnectInputOpLowering>(typeConverter, patterns.getContext());
-
-    // dfg.connect.output -> [ dfg.pull ]
-    // patterns.add<ConnectOutputOpLowering>(typeConverter, patterns.getContext());
 }
 
 void ConvertDfgRegionToFuncPass::runOnOperation()
