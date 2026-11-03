@@ -42,19 +42,19 @@ if (DOXYGEN_FOUND)
         # the inner docs/ is what survives the copy, landing at
         # <output>/docs/LAKSA-{Dark,Light}.png as required.
         configure_file(
-            ${CMAKE_SOURCE_DIR}/WorkWithDfg.md
+            ${PROJECT_SOURCE_DIR}/WorkWithDfg.md
             ${CMAKE_CURRENT_BINARY_DIR}/WorkWithDfg.md
             COPYONLY)
         configure_file(
-            ${CMAKE_SOURCE_DIR}/Install.md
+            ${PROJECT_SOURCE_DIR}/Install.md
             ${CMAKE_CURRENT_BINARY_DIR}/Install.md
             COPYONLY)
         configure_file(
-            ${CMAKE_SOURCE_DIR}/Design.md
+            ${PROJECT_SOURCE_DIR}/Design.md
             ${CMAKE_CURRENT_BINARY_DIR}/Design.md
             COPYONLY)
         configure_file(
-            ${CMAKE_SOURCE_DIR}/README.md
+            ${PROJECT_SOURCE_DIR}/README.md
             ${CMAKE_CURRENT_BINARY_DIR}/README.md
             COPYONLY)
 

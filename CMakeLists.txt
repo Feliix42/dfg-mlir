@@ -18,7 +18,7 @@ list(PREPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 set(CMAKE_CXX_STANDARD 20 CACHE STRING "C++ standard to conform to")
 
 # Detect if this is a stand-alone build.
-if (${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR})
+if (PROJECT_IS_TOP_LEVEL)
     # Set shared output directories.
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
