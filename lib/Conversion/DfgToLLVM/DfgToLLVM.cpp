@@ -17,6 +17,7 @@
 #include "mlir/Dialect/LLVMIR/FunctionCallUtils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/OpenMP/OpenMPDialect.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -143,7 +144,8 @@ LogicalResult insertTeardownFunctionFromPull(
 }
 
 LogicalResult
-rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter)
+rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter,
+              bool closeAfterPush = false)
 {
     // create function name for PushOp in LLVM IR
     std::string funcName = "push";
@@ -233,6 +235,17 @@ rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter)
         /* trueArgs = */ ArrayRef<Value>(),
         terminatorBlock,
         /* falseArgs = */ terminatorArgs);
+
+    if (closeAfterPush) {
+        // One-shot push in the graph-instantiating function: terminate the
+        // channel input right after the send has happened (i.e. on the
+        // success path of the push, at the start of the continuation block),
+        // instead of deferring the close to the terminator block at the end
+        // of the function.
+        rewriter.setInsertionPointToStart(newBlock);
+        if (failed(insertTeardownFunctionFromPush(parentModule, op, rewriter)))
+            return failure();
+    }
 
     op->erase();
 
@@ -461,6 +474,11 @@ void ConvertDfgToLLVMPass::runOnOperation()
     // ops.
     // 1. lower `PushOp` and `PullOp` into their respective `LLVM::CallOp`s
     // 2. insert the necessary teardown logic for channels
+    //    - channels pulled from / pushed to inside the nodes are closed in the
+    //      terminator block (i.e. when the function exits)
+    //    - "one-shot" push channels in the top-level function that instantiates
+    //      the graph (pushes before the first instantiation) are closed right
+    //      after the send has happened
     //
     // The reasoning behind doing this with a walk pattern instead of a "normal"
     // ConversionRewritePattern is the irreducible entangledness between the
@@ -474,14 +492,34 @@ void ConvertDfgToLLVMPass::runOnOperation()
     WalkResult res = op->walk([&](func::FuncOp funcOp) -> WalkResult {
         SmallVector<PushOp> pushOps;
         SmallVector<PullOp> pullOps;
-        funcOp->walk([&pushOps](PushOp push) {
-            pushOps.push_back(push);
+        // Channels whose input side is only pushed *before* the graph is
+        // instantiated in this function ("one-shot" pushes in the top-level
+        // function, e.g. after the channels were created and before the
+        // instantiation starts). Those inputs are terminated right after the
+        // send instead of in the terminator block.
+        SmallPtrSet<Value, 16> oneShotChans;
+        bool seenInstantiation = false;
+        funcOp->walk([&](Operation* innerOp) -> WalkResult {
+            // In the top-level function, the instantiation of the graph is
+            // either still present as dfg.instantiate or already lowered to
+            // an omp.parallel region (by convert-dfg-nodes-to-func). Pushes
+            // before that point are one-shot pushes.
+            if (isa<InstantiateOp, omp::ParallelOp>(innerOp)) {
+                seenInstantiation = true;
+            } else if (auto push = dyn_cast<PushOp>(innerOp)) {
+                pushOps.push_back(push);
+                if (seenInstantiation)
+                    oneShotChans.erase(push.getChan());
+                else
+                    oneShotChans.insert(push.getChan());
+            } else if (auto pull = dyn_cast<PullOp>(innerOp)) {
+                pullOps.push_back(pull);
+            }
             return WalkResult::advance();
         });
-        funcOp->walk([&pullOps](PullOp pull) {
-            pullOps.push_back(pull);
-            return WalkResult::advance();
-        });
+        // only a function that actually instantiates the graph has one-shot
+        // pushes
+        if (!seenInstantiation) oneShotChans.clear();
 
         if (pullOps.empty() && pushOps.empty()) return WalkResult::advance();
         // if (pushOps.empty()) return WalkResult::advance();
@@ -521,6 +559,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
         SmallPtrSet<Value, 16> inpSet;
         for (PushOp push : pushOps) {
             Value in = push.getChan();
+            // one-shot channels are closed right after their push instead
+            if (oneShotChans.contains(in)) continue;
             if (!inpSet.contains(in)) {
                 inpSet.insert(in);
                 if (failed(
@@ -547,7 +587,9 @@ void ConvertDfgToLLVMPass::runOnOperation()
             // ConversionPatternRewriter pushRewriter(replace->getContext());
             IRRewriter pushRewriter(replace->getContext());
             pushRewriter.setInsertionPointAfter(replace);
-            if (failed(rewritePushOp(replace, terminatorBlock, pushRewriter)))
+            bool closeAfterPush = oneShotChans.contains(replace.getChan());
+            if (failed(rewritePushOp(
+                    replace, terminatorBlock, pushRewriter, closeAfterPush)))
                 return WalkResult::interrupt();
         }
 
