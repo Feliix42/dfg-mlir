@@ -110,8 +110,11 @@ bool pull(struct chan* recv, char* result)
     while (true) {
         if (atomic_load(&(recv->occupancy)) == 0) {
             // empty queue -> still active?
-            if (!atomic_load_explicit(&(recv->connected), memory_order_relaxed))
-                return false;
+            if (!atomic_load(&(recv->connected))) {
+                if (atomic_load(&(recv->occupancy)) == 0)
+                    return false;
+                continue;
+            }
 
                 // if the queue is not dead, just wait
 /*#pragma omp taskyield*/
@@ -136,7 +139,9 @@ bool pull_n(struct chan* recv, char* result, uint64_t item_count)
     while (true) {
         if (atomic_load(&(recv->occupancy)) < item_count) {
             // empty queue -> still active?
-            if (!atomic_load_explicit(&(recv->connected), memory_order_relaxed)) {
+            if (!atomic_load(&(recv->connected))) {
+                if (atomic_load(&(recv->occupancy)) >= item_count)
+                    continue;
                 // channel closed -> if not empty, copy what's there
                 uint64_t occupancy = atomic_load(&(recv->occupancy));
                 if (occupancy != 0) {
