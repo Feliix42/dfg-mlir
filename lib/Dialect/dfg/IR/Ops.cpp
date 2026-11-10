@@ -261,14 +261,18 @@ LogicalResult RegionOp::verify()
         for (auto &op : ops)
             if (!isa<ChannelOp>(op) && !isa<InstantiateOp>(op)
                 && !isa<EmbedOp>(op) && !isa<ConnectInputOp>(op)
-                && !isa<ConnectOutputOp>(op)
-                && !isa<arith::ConstantOp>(op) && op.getDialect()->getNamespace() != "omp") 
+                && !isa<ConnectOutputOp>(op) && !isa<arith::ConstantOp>(op)
+                && !isa<UnrealizedConversionCastOp>(op)
+                && op.getDialect()->getNamespace() != "llvm"
+                && op.getDialect()->getNamespace() != "omp")
                 isContentCorrect = false;
     } else {
         for (auto &op : ops)
             if (!isa<ChannelOp>(op) && !isa<InstantiateOp>(op)
-                && !isa<EmbedOp>(op)
-                && !isa<arith::ConstantOp>(op) && op.getDialect()->getNamespace() != "omp") 
+                && !isa<EmbedOp>(op) && !isa<arith::ConstantOp>(op)
+                && !isa<UnrealizedConversionCastOp>(op)
+                && op.getDialect()->getNamespace() != "llvm"
+                && op.getDialect()->getNamespace() != "omp")
                 isContentCorrect = false;
     }
 
@@ -1243,8 +1247,9 @@ void LoopOp::print(OpAsmPrinter &p)
             if (i > 0) p << ", ";
             p.printOperand(inputs[i]);
             p << " : ";
-            p.printType(cast<OutputType>(inputs[i].getImpl()->getType())
-                            .getElementType());
+            p.printType(
+                cast<OutputType>(inputs[i].getImpl()->getType())
+                    .getElementType());
         }
         p << ")";
     }
@@ -1257,8 +1262,9 @@ void LoopOp::print(OpAsmPrinter &p)
             if (i > 0) p << ", ";
             p.printOperand(outputs[i]);
             p << " : ";
-            p.printType(cast<InputType>(outputs[i].getImpl()->getType())
-                            .getElementType());
+            p.printType(
+                cast<InputType>(outputs[i].getImpl()->getType())
+                    .getElementType());
         }
         p << ")";
     }
@@ -1659,9 +1665,7 @@ ParseResult PullOp::parse(OpAsmParser &parser, OperationState &result)
 }
 
 void PullOp::print(OpAsmPrinter &p)
-{
-    p << " " << getChan() << " : " << getType();
-}
+{ p << " " << getChan() << " : " << getType(); }
 
 //===----------------------------------------------------------------------===//
 // PushOp
@@ -1687,9 +1691,7 @@ ParseResult PushOp::parse(OpAsmParser &parser, OperationState &result)
 }
 
 void PushOp::print(OpAsmPrinter &p)
-{
-    p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType();
-}
+{ p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType(); }
 
 //===----------------------------------------------------------------------===//
 // PullNOp
@@ -1714,9 +1716,7 @@ ParseResult PullNOp::parse(OpAsmParser &parser, OperationState &result)
 }
 
 void PullNOp::print(OpAsmPrinter &p)
-{
-    p << " " << getChan() << " : " << getType();
-}
+{ p << " " << getChan() << " : " << getType(); }
 
 LogicalResult PullNOp::verify()
 {
@@ -1756,9 +1756,7 @@ ParseResult PushNOp::parse(OpAsmParser &parser, OperationState &result)
 }
 
 void PushNOp::print(OpAsmPrinter &p)
-{
-    p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType();
-}
+{ p << " (" << getInp() << ") " << getChan() << " : " << getInp().getType(); }
 
 LogicalResult PushNOp::verify()
 {
