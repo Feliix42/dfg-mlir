@@ -501,11 +501,19 @@ void ConvertDfgToLLVMPass::runOnOperation()
         bool seenInstantiation = false;
         funcOp->walk([&](Operation* innerOp) -> WalkResult {
             // In the top-level function, the instantiation of the graph is
-            // either still present as dfg.instantiate or already lowered to
-            // an omp.parallel region (by convert-dfg-nodes-to-func). Pushes
-            // before that point are one-shot pushes.
+            // either still present as dfg.instantiate, already lowered to
+            // an omp.parallel region (by convert-dfg-nodes-to-func with the
+            // default omp backend), or lowered to raw pthread_create calls
+            // (parallel-backend=pthread). Pushes before that point are
+            // one-shot pushes.
             if (isa<InstantiateOp, omp::ParallelOp>(innerOp)) {
                 seenInstantiation = true;
+            } else if (auto call = dyn_cast<LLVM::CallOp>(innerOp)) {
+                // pthread backend: the graph nodes are spawned via
+                // pthread_create calls emitted by PthreadSpawnStrategy
+                FlatSymbolRefAttr callee = call.getCalleeAttr();
+                if (callee && callee.getValue() == "pthread_create")
+                    seenInstantiation = true;
             } else if (auto push = dyn_cast<PushOp>(innerOp)) {
                 pushOps.push_back(push);
                 if (seenInstantiation)

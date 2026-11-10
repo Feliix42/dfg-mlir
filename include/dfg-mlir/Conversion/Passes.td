@@ -8,6 +8,17 @@
 #define DFG_MLIR_CONVERSION_PASSES
 
 include "mlir/Pass/PassBase.td"
+include "mlir/IR/EnumAttr.td"
+
+
+/// Backend used to spawn the nodes of a dataflow graph in parallel.
+def ParallelBackend : I32EnumAttr<"ParallelBackend",
+    "Backend used to spawn the nodes of a dataflow graph in parallel",
+    [I32EnumAttrCase<"Omp", 0, "omp">,
+     I32EnumAttrCase<"Pthread", 1, "pthread">]> {
+    let cppNamespace = "mlir";
+    let genSpecializedAttr = 0;
+}
 
 
 def ConvertDfgRegionToFunc : Pass<"convert-dfg-regions-to-func"> {
@@ -116,16 +127,38 @@ def ConvertDfgToFunc : Pass<"convert-dfg-nodes-to-func"> {
         Note: This pass does not lower channel operations (push/pull). Use
         `--convert-dfg-edges-to-llvm` for that.
 
-        Dependent Dialects: func, cf, omp, arith, dfg
+        The parallel backend used to spawn the graph nodes can be selected
+        with the `parallel-backend` option: `omp` (default) wraps groups of
+        successive instantiations in `omp.parallel`/`omp.sections`, `pthread`
+        spawns one thread per instantiation via raw `pthread_create` /
+        `pthread_join` calls (LLVM dialect), using a per-instantiation thunk
+        function as the thread entry point.
+
+        Dependent Dialects: func, cf, omp, arith, llvm, dfg
     }];
 
     let constructor = "mlir::createConvertDfgToFuncPass()";
+
+    let options = [
+        Option<"backend", "parallel-backend", "mlir::ParallelBackend",
+               /*default=*/"mlir::ParallelBackend::Omp",
+               "The backend used to spawn graph nodes in parallel: 'omp' "
+               "emits OpenMP dialect ops, 'pthread' emits raw "
+               "pthread_create/pthread_join calls",
+               [{::llvm::cl::values(
+                     clEnumValN(mlir::ParallelBackend::Omp, "omp",
+                                "OpenMP dialect bindings"),
+                     clEnumValN(mlir::ParallelBackend::Pthread, "pthread",
+                                "raw pthread_create/pthread_join calls"))
+               }]>
+    ];
 
     let dependentDialects = [
         "func::FuncDialect",
         "cf::ControlFlowDialect",
         "omp::OpenMPDialect",
         "arith::ArithDialect",
+        "LLVM::LLVMDialect",
 
         "dfg::DfgDialect"
     ];

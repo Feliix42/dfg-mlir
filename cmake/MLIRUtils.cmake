@@ -57,9 +57,15 @@ function(mlir_gen_passes prefix)
     mlir_tablegen(Passes.h.inc -gen-pass-decls -name ${full_prefix})
     mlir_tablegen(Passes.capi.h.inc -gen-pass-capi-header --prefix ${full_prefix})
     mlir_tablegen(Passes.capi.cpp.inc -gen-pass-capi-impl --prefix ${full_prefix})
+    # Enums referenced by pass options are not emitted by -gen-pass-decls;
+    # generate them from the same Passes.td.
+    mlir_tablegen(PassesEnums.h.inc -gen-enum-decls)
+    mlir_tablegen(PassesEnums.cpp.inc -gen-enum-defs)
 
     add_public_tablegen_target(${full_prefix}PassesIncGen)
+    add_public_tablegen_target(${full_prefix}PassesEnumsIncGen)
     add_dependencies(${full_prefix}IncGen ${full_prefix}PassesIncGen)
+    add_dependencies(${full_prefix}IncGen ${full_prefix}PassesEnumsIncGen)
 
     add_mlir_doc(Passes ${full_prefix}Passes Passes/ -gen-pass-doc)
 endfunction()
@@ -71,9 +77,15 @@ function(mlir_gen_transforms prefix)
     mlir_tablegen(Passes.h.inc -gen-pass-decls -name ${full_prefix})
     mlir_tablegen(Passes.capi.h.inc -gen-pass-capi-header --prefix ${full_prefix})
     mlir_tablegen(Passes.capi.cpp.inc -gen-pass-capi-impl --prefix ${full_prefix})
+    # Enums referenced by pass options are not emitted by -gen-pass-decls;
+    # generate them from the same Passes.td.
+    mlir_tablegen(PassesEnums.h.inc -gen-enum-decls)
+    mlir_tablegen(PassesEnums.cpp.inc -gen-enum-defs)
 
     add_public_tablegen_target(${full_prefix}TransformsIncGen)
+    add_public_tablegen_target(${full_prefix}PassesEnumsIncGen)
     add_dependencies(${full_prefix}IncGen ${full_prefix}TransformsIncGen)
+    add_dependencies(${full_prefix}IncGen ${full_prefix}PassesEnumsIncGen)
 
     add_mlir_doc(Passes ${full_prefix}Passes Passes/ -gen-pass-doc)
 endfunction()
