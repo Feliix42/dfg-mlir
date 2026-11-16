@@ -422,7 +422,7 @@ void DfgPrintGraphPass::getGraph(ModuleOp module)
             if (!isSubGraph)
                 topGraphs.push_back(
                     replaceAll(graphStr, "{{GraphNumber}}", "0"));
-        } else {
+        } else if (isa<NodeOpInterface>(opi)) {
             // Each node (operator/process) is unique inside module
             auto nodeOp = cast<NodeOpInterface>(opi);
             auto nodeName = nodeOp.getNodeName();
