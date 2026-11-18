@@ -19,6 +19,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
 #include "mlir/IR/BuiltinDialect.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -72,6 +73,14 @@ Type getLLVMPointerFromChannelType(const Type &elementType)
     return LLVM::LLVMPointerType::get(elementType.getContext());
 }
 
+/// Returns the element type encapsulated by a channel type.
+static Type getChannelElementType(Type channelType)
+{
+    if (auto inputType = dyn_cast<InputType>(channelType))
+        return inputType.getElementType();
+    return cast<OutputType>(channelType).getElementType();
+}
+
 // ========================================================
 // Lowerings
 // ========================================================
@@ -85,7 +94,8 @@ struct ConvertDfgToLLVMPass
 
 LogicalResult insertTeardownFunctionFromPush(
     ModuleOp parentModule,
-    PushOp pushOp,
+    Value chan,
+    Location loc,
     OpBuilder &rewriter)
 {
     // create function name for PushOp in LLVM IR
@@ -97,33 +107,35 @@ LogicalResult insertTeardownFunctionFromPush(
         parentModule,
         funcName,
         std::nullopt,
-        pushOp.getChan());
+        chan);
 
     func::CallOp::create(
         rewriter,
-        pushOp.getLoc(),
+        loc,
         pushFuncName,
         ArrayRef<Type>(),
-        pushOp.getChan());
+        chan);
 
     return success();
 }
 
 LogicalResult insertTeardownFunctionFromPull(
     ModuleOp parentModule,
-    PullOp pullOp,
+    Value chan,
+    Type elemType,
+    Location loc,
     OpBuilder &rewriter)
 {
-    // create function name for PushOp in LLVM IR
+    // create function name for PullOp in LLVM IR
     std::string funcName = "close_channel";
 
     // Translate to InputType, insert UnrealizedConversionCastOp
     UnrealizedConversionCastOp inputType =
         UnrealizedConversionCastOp::create(
             rewriter,
-            pullOp.getLoc(),
-            rewriter.getType<InputType>(pullOp.getType()),
-            pullOp.getChan());
+            loc,
+            rewriter.getType<InputType>(elemType),
+            chan);
 
     // fetch or create the FlatSymbolRefAttr for the called function
     FlatSymbolRefAttr pushFuncName = getOrInsertFunc(
@@ -135,7 +147,7 @@ LogicalResult insertTeardownFunctionFromPull(
 
     func::CallOp::create(
         rewriter,
-        pullOp.getLoc(),
+        loc,
         pushFuncName,
         ArrayRef<Type>(),
         inputType.getResult(0));
@@ -143,9 +155,42 @@ LogicalResult insertTeardownFunctionFromPull(
     return success();
 }
 
+/// Builds the operand list for a branch to the terminator block: poison
+/// values for the function result arguments, and for each channel that is
+/// passed as a block argument either the channel value (where it dominates
+/// the branch site) or a null pointer (close_channel handles NULL).
+static SmallVector<Value> buildTerminatorArgs(
+    Block* terminatorBlock,
+    unsigned numFuncResults,
+    ArrayRef<Value> chanSrcs,
+    ArrayRef<bool> chanUseValue,
+    Location loc,
+    OpBuilder &rewriter)
+{
+    SmallVector<Value> args;
+    for (unsigned i = 0; i < numFuncResults; i++) {
+        LLVM::PoisonOp poison = LLVM::PoisonOp::create(
+            rewriter, loc, terminatorBlock->getArgument(i).getType());
+        args.push_back(poison);
+    }
+    auto ptrType = LLVM::LLVMPointerType::get(rewriter.getContext());
+    for (auto [src, useValue] : llvm::zip(chanSrcs, chanUseValue)) {
+        if (useValue) {
+            auto cast =
+                UnrealizedConversionCastOp::create(rewriter, loc, ptrType, src);
+            args.push_back(cast.getResult(0));
+        } else {
+            args.push_back(
+                LLVM::ZeroOp::create(rewriter, loc, ptrType).getResult());
+        }
+    }
+    return args;
+}
+
 LogicalResult
-rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter,
-              bool closeAfterPush = false)
+rewritePushOp(PushOp op, Block* terminatorBlock, unsigned numFuncResults,
+              ArrayRef<Value> chanSrcs, ArrayRef<bool> chanUseValue,
+              IRRewriter &rewriter, bool closeAfterPush = false)
 {
     // create function name for PushOp in LLVM IR
     std::string funcName = "push";
@@ -219,14 +264,9 @@ rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter,
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
 
-    // if the terminator block has arguments, insert poison values
-    SmallVector<Value> terminatorArgs;
-    if (terminatorBlock->getNumArguments() > 0) {
-        for (auto ty : terminatorBlock->getArgumentTypes()) {
-            LLVM::PoisonOp poison = LLVM::PoisonOp::create(rewriter, loc, ty);
-            terminatorArgs.push_back(poison);
-        }
-    }
+    SmallVector<Value> terminatorArgs =
+        buildTerminatorArgs(terminatorBlock, numFuncResults, chanSrcs,
+                            chanUseValue, loc, rewriter);
     cf::CondBranchOp::create(
         rewriter,
         pushOperation.getLoc(),
@@ -243,7 +283,8 @@ rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter,
         // instead of deferring the close to the terminator block at the end
         // of the function.
         rewriter.setInsertionPointToStart(newBlock);
-        if (failed(insertTeardownFunctionFromPush(parentModule, op, rewriter)))
+        if (failed(insertTeardownFunctionFromPush(
+                parentModule, op.getChan(), op.getLoc(), rewriter)))
             return failure();
     }
 
@@ -253,7 +294,9 @@ rewritePushOp(PushOp op, Block* terminatorBlock, IRRewriter &rewriter,
 }
 
 LogicalResult
-rewritePullOp(PullOp op, Block* terminatorBlock, IRRewriter &rewriter)
+rewritePullOp(PullOp op, Block* terminatorBlock, unsigned numFuncResults,
+              ArrayRef<Value> chanSrcs, ArrayRef<bool> chanUseValue,
+              IRRewriter &rewriter)
 {
     // create function name for PullOp in LLVM IR
     std::string funcName = "pull";
@@ -321,14 +364,9 @@ rewritePullOp(PullOp op, Block* terminatorBlock, IRRewriter &rewriter)
     // insert conditional jump to the break block
     rewriter.setInsertionPointToEnd(currentBlock);
 
-    // if the terminator block has arguments, insert poison values
-    SmallVector<Value> terminatorArgs;
-    if (terminatorBlock->getNumArguments() > 0) {
-        for (auto ty : terminatorBlock->getArgumentTypes()) {
-            LLVM::PoisonOp poison = LLVM::PoisonOp::create(rewriter, loc, ty);
-            terminatorArgs.push_back(poison);
-        }
-    }
+    SmallVector<Value> terminatorArgs =
+        buildTerminatorArgs(terminatorBlock, numFuncResults, chanSrcs,
+                            chanUseValue, loc, rewriter);
     cf::CondBranchOp::create(
         rewriter,
         valid.getLoc(),
@@ -532,13 +570,84 @@ void ConvertDfgToLLVMPass::runOnOperation()
         if (pullOps.empty() && pushOps.empty()) return WalkResult::advance();
         // if (pushOps.empty()) return WalkResult::advance();
 
+        // Collect the channels whose teardown is inserted into the
+        // terminator block (deduplicated; one-shot push channels are closed
+        // at their push site instead).
+        SmallVector<Value> teardownChans;
+        SmallPtrSet<Value, 16> seenChans;
+        for (PushOp push : pushOps) {
+            Value in = push.getChan();
+            if (oneShotChans.contains(in)) continue;
+            if (seenChans.insert(in).second) teardownChans.push_back(in);
+        }
+        for (PullOp pull : pullOps) {
+            Value out = pull.getChan();
+            if (seenChans.insert(out).second) teardownChans.push_back(out);
+        }
+
+        // A teardown channel can be referenced directly inside the
+        // terminator block only if its definition dominates every block that
+        // branches to the terminator block (i.e. every push/pull site and
+        // every return). This does not hold when a channel is created only
+        // after a push that may fail (e.g. loops with input channels create
+        // their output channel after the graph was instantiated). Such
+        // channels are passed as additional terminator block arguments
+        // instead; edges where the channel is not yet available pass a
+        // null pointer (close_channel handles NULL).
+        DominanceInfo domInfo(funcOp);
+        SmallVector<Operation*> sites;
+        for (PushOp push : pushOps) sites.push_back(push);
+        for (PullOp pull : pullOps) sites.push_back(pull);
+        funcOp->walk([&](func::ReturnOp ret) { sites.push_back(ret); });
+
+        // does the channel value dominate the given site? (block arguments,
+        // e.g. lowered scf.for results used as channels, only dominate from
+        // their own block onwards)
+        auto dominatesSite = [&](Value chan, Operation* site) -> bool {
+            if (Operation* def = chan.getDefiningOp())
+                return domInfo.properlyDominates(def, site);
+            if (auto arg = dyn_cast<BlockArgument>(chan))
+                return domInfo.dominates(arg.getOwner(), site->getBlock());
+            return true; // function argument
+        };
+
+        auto dominatesAllSites = [&](Value chan) -> bool {
+            for (Operation* site : sites)
+                if (!dominatesSite(chan, site)) return false;
+            return true;
+        };
+        // channels that need to be passed as terminator block arguments
+        SmallVector<Value> chanSrcs;
+        SmallVector<Type> chanArgTypes;
+        for (Value chan : teardownChans) {
+            if (dominatesAllSites(chan)) continue;
+            chanSrcs.push_back(chan);
+            chanArgTypes.push_back(
+                getLLVMPointerFromChannelType(getChannelElementType(chan.getType())));
+        }
+
+        auto useValueAt = [&](Operation* site) {
+            SmallVector<bool> flags;
+            for (Value src : chanSrcs)
+                flags.push_back(dominatesSite(src, site));
+            return flags;
+        };
+
         Block* terminatorBlock = funcOp.addBlock();
-        if (funcOp.getNumResults() > 0) {
+        unsigned numFuncResults = funcOp.getNumResults();
+        if (numFuncResults > 0) {
             SmallVector<Location> locs;
-            for (unsigned i = 0; i < funcOp.getNumResults(); i++)
+            for (unsigned i = 0; i < numFuncResults; i++)
                 locs.push_back(funcOp.getLoc());
             terminatorBlock->addArguments(funcOp.getResultTypes(), locs);
         }
+        if (!chanArgTypes.empty()) {
+            SmallVector<Location> locs(chanArgTypes.size(), funcOp.getLoc());
+            terminatorBlock->addArguments(chanArgTypes, locs);
+        }
+        SmallVector<Value> chanArgs;
+        for (unsigned i = 0; i < chanSrcs.size(); i++)
+            chanArgs.push_back(terminatorBlock->getArgument(numFuncResults + i));
 
         // search all returns, forward to TerminatorBlock
         funcOp->walk([&](func::ReturnOp ret) {
@@ -549,10 +658,25 @@ void ConvertDfgToLLVMPass::runOnOperation()
             // NOTE(feliix42): replaceWithNewOp does *not* work here!
             // localRewriter.create<cf::BranchOp>(ret->getLoc(),
             // terminatorBlock);
+            SmallVector<Value> operands(ret.getOperands());
+            auto ptrType = LLVM::LLVMPointerType::get(ret->getContext());
+            for (auto [src, useValue] :
+                 llvm::zip(chanSrcs, useValueAt(ret))) {
+                if (useValue) {
+                    operands.push_back(
+                        UnrealizedConversionCastOp::create(
+                            localRewriter, ret->getLoc(), ptrType, src)
+                            .getResult(0));
+                } else {
+                    operands.push_back(LLVM::ZeroOp::create(
+                                           localRewriter, ret->getLoc(), ptrType)
+                                           .getResult());
+                }
+            }
             cf::BranchOp::create(
                 localRewriter,
                 ret->getLoc(),
-                ret.getOperands(),
+                operands,
                 terminatorBlock);
             ret->erase();
         });
@@ -564,6 +688,19 @@ void ConvertDfgToLLVMPass::runOnOperation()
         // insert teardown function calls for push and pull ops
         ModuleOp parent = funcOp->getParentOfType<ModuleOp>();
 
+        // for channels passed as block arguments, close the argument (cast
+        // back to the channel type); all other channels are closed directly
+        auto closeValueFor = [&](Value chan) -> Value {
+            for (auto [src, arg] : llvm::zip(chanSrcs, chanArgs)) {
+                if (src == chan) {
+                    return UnrealizedConversionCastOp::create(
+                               rewriter, funcOp.getLoc(), chan.getType(), arg)
+                        .getResult(0);
+                }
+            }
+            return chan;
+        };
+
         SmallPtrSet<Value, 16> inpSet;
         for (PushOp push : pushOps) {
             Value in = push.getChan();
@@ -571,8 +708,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
             if (oneShotChans.contains(in)) continue;
             if (!inpSet.contains(in)) {
                 inpSet.insert(in);
-                if (failed(
-                        insertTeardownFunctionFromPush(parent, push, rewriter)))
+                if (failed(insertTeardownFunctionFromPush(
+                        parent, closeValueFor(in), push.getLoc(), rewriter)))
                     return WalkResult::interrupt();
             }
         }
@@ -581,23 +718,25 @@ void ConvertDfgToLLVMPass::runOnOperation()
             Value out = pull.getChan();
             if (!outSet.contains(out)) {
                 outSet.insert(out);
-                if (failed(
-                        insertTeardownFunctionFromPull(parent, pull, rewriter)))
+                if (failed(insertTeardownFunctionFromPull(
+                        parent, closeValueFor(out), pull.getType(),
+                        pull.getLoc(), rewriter)))
                     return WalkResult::interrupt();
             }
         }
-        func::ReturnOp::create(
-            rewriter,
-            funcOp->getLoc(),
-            terminatorBlock->getArguments());
+        SmallVector<Value> retArgs;
+        for (unsigned i = 0; i < numFuncResults; i++)
+            retArgs.push_back(terminatorBlock->getArgument(i));
+        func::ReturnOp::create(rewriter, funcOp->getLoc(), retArgs);
 
         for (PushOp replace : pushOps) {
             // ConversionPatternRewriter pushRewriter(replace->getContext());
             IRRewriter pushRewriter(replace->getContext());
             pushRewriter.setInsertionPointAfter(replace);
             bool closeAfterPush = oneShotChans.contains(replace.getChan());
-            if (failed(rewritePushOp(
-                    replace, terminatorBlock, pushRewriter, closeAfterPush)))
+            if (failed(rewritePushOp(replace, terminatorBlock, numFuncResults,
+                                     chanSrcs, useValueAt(replace), pushRewriter,
+                                     closeAfterPush)))
                 return WalkResult::interrupt();
         }
 
@@ -605,7 +744,9 @@ void ConvertDfgToLLVMPass::runOnOperation()
             // ConversionPatternRewriter pullRewriter(replace->getContext());
             IRRewriter pullRewriter(replace->getContext());
             pullRewriter.setInsertionPointAfter(replace);
-            if (failed(rewritePullOp(replace, terminatorBlock, pullRewriter)))
+            if (failed(rewritePullOp(replace, terminatorBlock, numFuncResults,
+                                     chanSrcs, useValueAt(replace),
+                                     pullRewriter)))
                 return WalkResult::interrupt();
         }
 
@@ -613,6 +754,71 @@ void ConvertDfgToLLVMPass::runOnOperation()
     });
 
     if (res.wasInterrupted()) signalPassFailure();
+
+    // =======================================================================
+    // Pre-convert dfg-typed values that cross block boundaries.
+    //
+    // The dialect conversion framework's branch pattern cannot build a
+    // replacement for channel-typed branch operands (remapValues fails on
+    // convertType of the operand value), so loops whose scf.for carried a
+    // state channel (lowered to cf blocks with channel-typed block
+    // arguments and branch operands) would not legalize. Convert these
+    // values manually with unrealized_conversion_cast, mirroring what
+    // ChannelOpLowering does for channel results: non-entry block arguments
+    // of dfg type become !llvm.ptr (with a cast back to the dfg type at the
+    // start of the block), and dfg-typed branch operands are cast to
+    // !llvm.ptr right before the branch.
+    {
+        SmallVector<Block *> blocksToFix;
+        struct BranchOperandFix {
+            Operation *op;
+            unsigned idx;
+            Type newType;
+        };
+        SmallVector<BranchOperandFix> branchFixes;
+        op->walk([&](Operation *inner) {
+            for (Region &region : inner->getRegions())
+                for (Block &block : region)
+                    if (!block.isEntryBlock() &&
+                        llvm::any_of(block.getArguments(),
+                                     [](BlockArgument arg) {
+                                         return isa<InputType, OutputType>(
+                                             arg.getType());
+                                     }))
+                        blocksToFix.push_back(&block);
+            if (auto branch = dyn_cast<BranchOpInterface>(inner))
+                for (auto [idx, operand] : llvm::enumerate(inner->getOperands()))
+                    if (isa<InputType, OutputType>(operand.getType()))
+                        branchFixes.push_back(
+                            {branch.getOperation(), (unsigned)idx,
+                             getLLVMPointerFromChannelType(
+                                 getChannelElementType(operand.getType()))});
+            return WalkResult::advance();
+        });
+
+        IRRewriter rewriter(op->getContext());
+        for (Block *block : blocksToFix) {
+            for (BlockArgument arg : block->getArguments()) {
+                Type oldType = arg.getType();
+                if (!isa<InputType, OutputType>(oldType))
+                    continue;
+                Type newType =
+                    getLLVMPointerFromChannelType(getChannelElementType(oldType));
+                arg.setType(newType);
+                rewriter.setInsertionPointToStart(block);
+                Value cast = UnrealizedConversionCastOp::create(
+                    rewriter, arg.getLoc(), oldType, arg).getResult(0);
+                arg.replaceAllUsesExcept(cast, cast.getDefiningOp());
+            }
+        }
+        for (const BranchOperandFix &fix : branchFixes) {
+            rewriter.setInsertionPoint(fix.op);
+            Value cast = UnrealizedConversionCastOp::create(
+                rewriter, fix.op->getLoc(), fix.newType,
+                fix.op->getOperand(fix.idx)).getResult(0);
+            fix.op->setOperand(fix.idx, cast);
+        }
+    }
 
     // =======================================================================
 
