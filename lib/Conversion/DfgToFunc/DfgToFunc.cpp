@@ -153,6 +153,9 @@ static LLVM::LLVMFuncOp getOrInsertLLVMFunc(ModuleOp module, StringRef name,
 /// Notes: `pthread_t` is treated as i64 (glibc LP64). The unrealized casts are
 /// folded away by DfgToLLVM's type converter (!dfg.* -> !llvm.ptr) later.
 struct PthreadSpawnStrategy final : public SpawnStrategy {
+    explicit PthreadSpawnStrategy(size_t thunkIndexWidth)
+        : thunkIndexWidth(thunkIndexWidth) {}
+
     void emitParallelGroup(OpBuilder &builder, Location loc,
                            ArrayRef<InstantiateOp> group) const override
     {
@@ -246,10 +249,12 @@ struct PthreadSpawnStrategy final : public SpawnStrategy {
         // Thunk at module level (must be an llvm.func: llvm.addressof only
         // references llvm dialect symbols). Signature is the raw pthread start
         // routine `void* (*)(void*)`: one packed-args pointer in, null out.
+        std::string index = std::to_string(thunkCounter++);
+        if (index.size() < thunkIndexWidth)
+            index.insert(0, thunkIndexWidth - index.size(), '0');
+
         std::string thunkName =
-            (llvm::Twine("dfg_thunk_") + op.getNodeName() + "_" +
-             std::to_string(thunkCounter++))
-                .str();
+            (llvm::Twine("dfg_thunk_") + op.getNodeName() + "_" + index).str();
         OpBuilder mb(module.getBody(), module.getBody()->end());
         auto thunk = LLVM::LLVMFuncOp::create(
             mb, loc, thunkName,
@@ -306,17 +311,19 @@ struct PthreadSpawnStrategy final : public SpawnStrategy {
         return tidSlot;
     }
 
+    const size_t thunkIndexWidth;
     mutable unsigned thunkCounter = 0;
 };
 } // namespace
 
-std::unique_ptr<SpawnStrategy> mlir::createSpawnStrategy(ParallelBackend backend)
+std::unique_ptr<SpawnStrategy> mlir::createSpawnStrategy(
+    ParallelBackend backend, std::size_t thunkIndexWidth)
 {
     switch (backend) {
     case ParallelBackend::Omp:
         return std::make_unique<OmpSpawnStrategy>();
     case ParallelBackend::Pthread:
-        return std::make_unique<PthreadSpawnStrategy>();
+        return std::make_unique<PthreadSpawnStrategy>(thunkIndexWidth);
     }
     llvm_unreachable("unknown parallel backend");
 }
@@ -492,8 +499,6 @@ void ConvertDfgToFuncPass::runOnOperation()
     TypeConverter converter;
     converter.addConversion([](Type t) { return t; });
 
-    std::unique_ptr<SpawnStrategy> spawnStrategy = createSpawnStrategy(backend);
-
     // wrap groups of successive instantiations in the parallel backend's
     // spawning construct (e.g. omp::ParallelOp + omp::SectionsOp, or
     // pthread_create/pthread_join calls)
@@ -503,6 +508,7 @@ void ConvertDfgToFuncPass::runOnOperation()
     SmallVector<SmallVector<InstantiateOp>> rewriteGroups;
 
     // whether an open group is being filled
+    size_t instantiateCount = 0;
     bool openGroup = false;
     WalkResult res = op->walk([&](InstantiateOp instantiation) -> WalkResult {
         if (!openGroup) {
@@ -514,6 +520,7 @@ void ConvertDfgToFuncPass::runOnOperation()
 
         SmallVector<InstantiateOp> &group = rewriteGroups.back();
         group.push_back(instantiation);
+        ++instantiateCount;
 
         if (!isa_and_nonnull<InstantiateOp>(instantiation->getNextNode())) {
             // the next node is NOT an instantiation, so break here
@@ -522,6 +529,10 @@ void ConvertDfgToFuncPass::runOnOperation()
 
         return WalkResult::advance();
     });
+
+    const auto maxIndex = instantiateCount > 0 ? instantiateCount - 1 : 0;
+    auto spawnStrategy = createSpawnStrategy(
+        backend, std::to_string(maxIndex).size());
 
     for (auto &group : rewriteGroups) {
         OpBuilder localRewriter(group[0]->getContext());

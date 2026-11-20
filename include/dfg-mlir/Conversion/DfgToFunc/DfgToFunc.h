@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 #include "dfg-mlir/Dialect/dfg/IR/Ops.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -49,7 +51,8 @@ public:
 };
 
 /// Create the spawn strategy for the given parallel backend.
-std::unique_ptr<SpawnStrategy> createSpawnStrategy(ParallelBackend backend);
+std::unique_ptr<SpawnStrategy> createSpawnStrategy(
+    ParallelBackend backend, std::size_t thunkIndexWidth = 1);
 
 void populateDfgToFuncConversionPatterns(
     TypeConverter typeConverter,
