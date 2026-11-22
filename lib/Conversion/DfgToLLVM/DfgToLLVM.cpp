@@ -407,7 +407,7 @@ struct ChannelOpLowering : public OpConversionPattern<ChannelOp> {
             rewriter,
             op.getLoc(),
             nullPtrTy,
-            nullPtrTy,
+            encapsulatedType,
             nullOp.getResult(),
             ArrayRef<LLVM::GEPArg>{1});
         LLVM::PtrToIntOp bytewidthOp = LLVM::PtrToIntOp::create(
