@@ -65,6 +65,32 @@ struct ConvertAnyOperatorToEquivalentProcess
             mapper.map(oldArg, newArg);
 
         rewriter.setInsertionPointToEnd(processBlock);
+        // Operators without input channels must not be wrapped in a dfg.loop
+        if (numInputs == 0) {
+            for (auto &opi : op.getBody().getOps()) {
+                if (isa<OutputOp>(opi)) {
+                    auto newOp = rewriter.clone(opi, mapper);
+                    for (auto [pushedValue, OutputChannel] : llvm::zip(
+                             newOp->getOperands(),
+                             processOp.getBody()
+                                 .getArguments()
+                                 .drop_front(numInputs)
+                                 .take_front(numOutputs))) {
+                        PushOp::create(
+                            rewriter, loc, pushedValue, OutputChannel);
+                    }
+                    rewriter.eraseOp(newOp);
+                    break;
+                } else {
+                    if (isa<arith::ConstantOp>(opi))
+                        rewriter.setInsertionPointToStart(processBlock);
+                    rewriter.clone(opi, mapper);
+                    rewriter.setInsertionPointToEnd(processBlock);
+                }
+            }
+            rewriter.eraseOp(op);
+            return success();
+        }
         SmallVector<Value> iterArgs;
         for (auto &opi : op.getInitBody().getOps()) {
             if (isa<YieldOp>(opi)) {
