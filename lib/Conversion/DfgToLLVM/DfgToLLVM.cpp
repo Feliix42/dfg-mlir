@@ -633,6 +633,11 @@ void ConvertDfgToLLVMPass::runOnOperation()
             return flags;
         };
 
+        // Precompute per-site channel flags before we split blocks through rewrites
+        llvm::DenseMap<Operation*, SmallVector<bool>> siteChanFlags;
+        for (Operation* site : sites)
+            siteChanFlags[site] = useValueAt(site);
+
         Block* terminatorBlock = funcOp.addBlock();
         unsigned numFuncResults = funcOp.getNumResults();
         if (numFuncResults > 0) {
@@ -661,7 +666,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
             SmallVector<Value> operands(ret.getOperands());
             auto ptrType = LLVM::LLVMPointerType::get(ret->getContext());
             for (auto [src, useValue] :
-                 llvm::zip(chanSrcs, useValueAt(ret))) {
+                 llvm::zip(chanSrcs, siteChanFlags[ret])) {
                 if (useValue) {
                     operands.push_back(
                         UnrealizedConversionCastOp::create(
@@ -735,8 +740,8 @@ void ConvertDfgToLLVMPass::runOnOperation()
             pushRewriter.setInsertionPointAfter(replace);
             bool closeAfterPush = oneShotChans.contains(replace.getChan());
             if (failed(rewritePushOp(replace, terminatorBlock, numFuncResults,
-                                     chanSrcs, useValueAt(replace), pushRewriter,
-                                     closeAfterPush)))
+                                     chanSrcs, siteChanFlags[replace],
+                                     pushRewriter, closeAfterPush)))
                 return WalkResult::interrupt();
         }
 
@@ -745,7 +750,7 @@ void ConvertDfgToLLVMPass::runOnOperation()
             IRRewriter pullRewriter(replace->getContext());
             pullRewriter.setInsertionPointAfter(replace);
             if (failed(rewritePullOp(replace, terminatorBlock, numFuncResults,
-                                     chanSrcs, useValueAt(replace),
+                                     chanSrcs, siteChanFlags[replace],
                                      pullRewriter)))
                 return WalkResult::interrupt();
         }
