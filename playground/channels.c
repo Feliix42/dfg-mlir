@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sched.h>
 
 /*#include <stdio.h>*/
 
@@ -17,6 +18,12 @@ struct chan {
     uint64_t capacity;
     _Atomic uint64_t occupancy;
     _Atomic bool connected;
+    /* Number of endpoints still holding this channel. Initialized to 2
+     * (producer + consumer); each endpoint drops its reference in
+     * close_channel, and the last one out frees the channel. This prevents
+     * use-after-free when one endpoint closes while the other is still
+     * inside push/pull. */
+    _Atomic uint64_t refs;
 };
 
 struct chan* channel(uint64_t bytewidth)
@@ -33,6 +40,7 @@ struct chan* channel(uint64_t bytewidth)
     channel->capacity = CHANSIZE;
     atomic_init(&(channel->occupancy), 0);
     atomic_init(&(channel->connected), true);
+    atomic_init(&(channel->refs), 2);
     return channel;
 }
 
@@ -40,7 +48,7 @@ bool push(struct chan* sender, char* to_send)
 {
     /*printf("Beginning Send\n");*/
     while (true) {
-        if (!atomic_load_explicit(&(sender->connected), memory_order_relaxed))
+        if (!atomic_load(&(sender->connected)))
             return false;
 
         uint64_t occupancy = atomic_load(&(sender->occupancy));
@@ -56,7 +64,7 @@ bool push(struct chan* sender, char* to_send)
 
             return true;
         } else {
-/*#pragma omp taskyield*/
+            sched_yield();
             continue;
         }
     }
@@ -65,7 +73,7 @@ bool push(struct chan* sender, char* to_send)
 bool push_n(struct chan* sender, char* to_send, uint64_t item_count)
 {
     while (true) {
-        if (!atomic_load_explicit(&(sender->connected), memory_order_relaxed))
+        if (!atomic_load(&(sender->connected)))
             return false;
 
         uint64_t occupancy = atomic_load(&(sender->occupancy));
@@ -98,7 +106,7 @@ bool push_n(struct chan* sender, char* to_send, uint64_t item_count)
 
             return true;
         } else {
-/*#pragma omp taskyield*/
+            sched_yield();
             continue;
         }
     }
@@ -116,8 +124,8 @@ bool pull(struct chan* recv, char* result)
                 continue;
             }
 
-                // if the queue is not dead, just wait
-/*#pragma omp taskyield*/
+            // if the queue is not dead, just wait
+            sched_yield();
             continue;
         } else {
             // non-empty
@@ -172,7 +180,7 @@ bool pull_n(struct chan* recv, char* result, uint64_t item_count)
             }
 
             // if the queue is not dead, just wait
-/*#pragma omp taskyield*/
+            sched_yield();
             continue;
         } else {
             // non-empty
@@ -212,9 +220,13 @@ void close_channel(struct chan* sender)
     if (!sender)
         return;
     /*printf("be gone\n");*/
-    bool expected = true;
-    // deallocate if this is the last remaining reference
-    if (!atomic_compare_exchange_strong(&(sender->connected), &expected, false)) {
+    // Mark the channel disconnected so the peer's push/pull observe the
+    // closure (seq_cst store pairs with the seq_cst loads in push/pull).
+    atomic_store(&(sender->connected), false);
+    // Drop this endpoint's reference; the last endpoint to close frees the
+    // channel. Until then the struct stays alive even if the peer is still
+    // inside push/pull on it.
+    if (atomic_fetch_sub(&(sender->refs), 1) == 1) {
         /*printf("de-alloc shimashou!\n");*/
         free(sender->items);
         free(sender);
