@@ -1,4 +1,7 @@
 add_mlir_conversion_library(DFGMLIRDfgTransforms
+    FuseGroups.cpp
+    FusionGroups.cpp
+    VerifyFusionGroups.cpp
     InlineRegion.cpp
     InlineScalarArgument.cpp
     LowerInsideToScf.cpp

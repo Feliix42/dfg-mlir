@@ -16,11 +16,13 @@ def Dfg_Dialect : Dialect {
     let cppNamespace = "::mlir::dfg";
 
     let useDefaultTypePrinterParser = 1;
+    let useDefaultAttributePrinterParser = 1;
     // This section has been removed since Feb 24.
     // let useFoldAPI = kEmitFoldAdaptorFolder;
 
     code extraClassDeclaration = [{
     private:
+        void registerAttributes();
         void registerOps();
         void registerTypes();
     }];

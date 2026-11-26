@@ -12,6 +12,11 @@ using namespace mlir::dfg;
 
 //===- Generated implementation -------------------------------------------===//
 
+#include "llvm/ADT/TypeSwitch.h"
+
+#define GET_ATTRDEF_CLASSES
+#include "dfg-mlir/Dialect/dfg/IR/Attributes.cpp.inc"
+
 #include "dfg-mlir/Dialect/dfg/IR/Dialect.cpp.inc"
 
 //===----------------------------------------------------------------------===//
@@ -22,7 +27,15 @@ using namespace mlir::dfg;
 
 void DfgDialect::initialize()
 {
-    // registerAttributes();
+    registerAttributes();
     registerOps();
     registerTypes();
+}
+
+void DfgDialect::registerAttributes()
+{
+    addAttributes<
+#define GET_ATTRDEF_LIST
+#include "dfg-mlir/Dialect/dfg/IR/Attributes.cpp.inc"
+        >();
 }

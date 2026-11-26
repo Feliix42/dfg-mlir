@@ -9,6 +9,7 @@
 
 include "dfg-mlir/Dialect/dfg/Enums.td"
 include "dfg-mlir/Dialect/dfg/Interfaces/Interfaces.td"
+include "dfg-mlir/Dialect/dfg/IR/Attrs.td"
 include "dfg-mlir/Dialect/dfg/IR/Dialect.td"
 include "dfg-mlir/Dialect/dfg/IR/Types.td"
 include "mlir/Interfaces/CallInterfaces.td"

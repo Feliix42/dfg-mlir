@@ -9,6 +9,31 @@
 
 include "mlir/Pass/PassBase.td"
 
+def DfgFuseGroups : Pass<"dfg-fuse-groups">
+{
+    let summary = "Fuses dfg.instantiate ops annotated with the same !dfg.fusion group into a single node";
+    let description = [{
+        Collects all `dfg.instantiate` ops carrying the same `!dfg.fusion<"name">`
+        annotation in one region and fuses them into the group head (chosen by
+        dataflow dominance over the internal edge graph). Internal channels become
+        direct SSA values; member bodies are inlined inside the head's dfg.loop.
+        Illegal groups are skipped with a warning.
+    }];
+
+    let constructor = "mlir::dfg::createDfgFuseGroupsPass()";
+}
+
+def DfgVerifyFusionGroups : Pass<"dfg-verify-fusion-groups">
+{
+    let summary = "Verifies legality of all !dfg.fusion groups (hard errors)";
+    let description = [{
+        Runs the same legality checks as `dfg-fuse-groups` on every fusion group
+        and reports errors. Useful for validating annotations without fusing.
+    }];
+
+    let constructor = "mlir::dfg::createDfgVerifyFusionGroupsPass()";
+}
+
 def DfgInlineRegion : Pass<"dfg-inline-region">
 {
     let summary = "Inlines region contents based on the specified strategy";
